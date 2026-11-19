@@ -30,6 +30,9 @@ type record struct {
 
 type config struct {
 	Path string `json:"path"`
+	// MaxBytes > 0 时按大小轮转;Keep 是保留的轮转文件数(默认 2)。
+	MaxBytes int64 `json:"maxBytes,omitempty"`
+	Keep     int   `json:"keep,omitempty"`
 }
 
 // Plugin 返回 audit-log 插件:按配置路径追加 JSONL。
@@ -42,12 +45,32 @@ func Plugin() kernel.Plugin {
 		if conf.Path == "" {
 			return nil, kernel.Fail(kernel.CodeInvalid, "audit-log: 必须配置 path")
 		}
+		if conf.MaxBytes < 0 || conf.Keep < 0 {
+			return nil, kernel.Fail(kernel.CodeInvalid, "audit-log: maxBytes/keep 不能为负")
+		}
+		keep := conf.Keep
+		if keep == 0 {
+			keep = 2
+		}
 		f, err := os.OpenFile(conf.Path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 		if err != nil {
 			return nil, fmt.Errorf("audit-log: 打开审计文件失败: %w", err)
 		}
 
 		var mu sync.Mutex
+		rotate := func() {
+			_ = f.Close()
+			for i := keep; i >= 1; i-- {
+				from := conf.Path
+				if i > 1 {
+					from = fmt.Sprintf("%s.%d", conf.Path, i-1)
+				}
+				to := fmt.Sprintf("%s.%d", conf.Path, i)
+				_ = os.Remove(to)
+				_ = os.Rename(from, to)
+			}
+			f, _ = os.OpenFile(conf.Path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+		}
 		write := func(event string, payload any) {
 			mu.Lock()
 			defer mu.Unlock()
@@ -56,6 +79,11 @@ func Plugin() kernel.Plugin {
 			})
 			if err != nil {
 				return
+			}
+			if conf.MaxBytes > 0 {
+				if info, statErr := f.Stat(); statErr == nil && info.Size()+int64(len(data))+1 > conf.MaxBytes {
+					rotate()
+				}
 			}
 			_, _ = f.Write(append(data, '\n'))
 		}

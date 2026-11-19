@@ -75,3 +75,52 @@ func TestMissingPath(t *testing.T) {
 		t.Fatalf("缺 path 应失败")
 	}
 }
+
+// 4. 按大小轮转,保留 keep 个历史文件。
+func TestRotation(t *testing.T) {
+	path := t.TempDir() + "/audit.jsonl"
+	app := kernel.New(kernel.Options{})
+	t.Cleanup(func() { _ = app.Stop(context.Background()) })
+	if _, err := app.Plugin(auditlog.Plugin(), kernel.NewConfig(map[string]any{
+		"path": path, "maxBytes": int64(1), "keep": 2,
+	})); err != nil {
+		t.Fatalf("挂载失败: %v", err)
+	}
+	app.Root().Emit(seamfs.EventObserve, map[string]any{"n": 1})
+	app.Root().Emit(seamfs.EventObserve, map[string]any{"n": 2})
+	app.Root().Emit(seamfs.EventObserve, map[string]any{"n": 3})
+
+	read := func(p string) string {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("读 %s 失败: %v", p, err)
+		}
+		return string(data)
+	}
+	if !strings.Contains(read(path), `"n":3`) {
+		t.Fatalf("当前文件应含第 3 条")
+	}
+	if !strings.Contains(read(path+".1"), `"n":2`) {
+		t.Fatalf(".1 应含第 2 条")
+	}
+	if !strings.Contains(read(path+".2"), `"n":1`) {
+		t.Fatalf(".2 应含第 1 条")
+	}
+}
+
+// 5. 非法轮转配置 → 插件失败。
+func TestRotationInvalid(t *testing.T) {
+	app := kernel.New(kernel.Options{})
+	t.Cleanup(func() { _ = app.Stop(context.Background()) })
+	fiber, err := app.Plugin(auditlog.Plugin(), kernel.NewConfig(map[string]any{
+		"path": t.TempDir() + "/a.jsonl", "maxBytes": int64(-1),
+	}))
+	if err != nil {
+		t.Fatalf("挂载调用失败: %v", err)
+	}
+	rctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := fiber.Ready(rctx); err == nil {
+		t.Fatalf("负 maxBytes 应失败")
+	}
+}
