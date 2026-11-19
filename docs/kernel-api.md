@@ -137,6 +137,7 @@ type EffectInfo struct{ Fiber, Plugin, Label string }
 9. **停机与注册表**:`Fiber.Dispose` 与 `App.Stop` 都会把实例从注册表移除,`Inspect` 不会列出已卸载的 fiber;`Stop` 之后 `Inspect` 为空。
 10. **可观测**:`Inspect` 只返回快照,不返回 disposer;`Effects` 按登记顺序列出每个 fiber 当前登记的副作用标签,卸载后立即消失。
 11. **闲置回收**:`Fiber.Touch()` 标记活动(服务解析自动 touch);`App.ReclaimIdle(ctx, ttl, now)` 回收超过 ttl 无活动且没有 dependents 的 fiber,返回被回收的 id。`now` 由调用方传入,便于测试;有依赖者的提供者分轮回收,避免一次调用拆散依赖链。
+12. **调用者身份**:`Context.Principal()` 返回插件名,`Context.Context()` 返回携带 principal 的 `context.Context`;`kernel.Principal(ctx)`/`kernel.WithPrincipal(ctx,id)` 读写。安全策略(如 `policy/caps-gate`)据此做能力授权;缺少 principal 必须按拒绝处理。
 
 ## 4. 错误码(M1 子集)
 
@@ -155,10 +156,10 @@ type EffectInfo struct{ Fiber, Plugin, Label string }
 
 ## 6. M1 实现状态(2026-11-19)
 
-已落地:`kernel/`(生产 2368 行,测试 1018 行)+ `kernel/schema` + `cmd/ada-demo` + `scripts/guard.ps1` + `docs/adr/0001`。
+已落地:`kernel/`(生产 2396 行,测试 1062 行)+ `kernel/schema` + `cmd/ada-demo` + `scripts/guard.ps1` + `docs/adr/0001`。
 
 ```powershell
-go test -race -count=1 -timeout 120s ./...   # 27 + 7 个用例全绿
+go test -race -count=1 -timeout 120s ./...   # 29 + 7 个用例全绿
 go test -run xxx -bench . -benchmem ./kernel # 性能基线
 go run ./cmd/ada-demo                        # 依赖门控、级联重载演示
 pwsh scripts/guard.ps1                       # 门禁:词汇/依赖/gofmt/build/vet/staticcheck/race/交叉编译/预算

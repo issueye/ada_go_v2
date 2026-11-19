@@ -129,6 +129,21 @@ func (c *Context) TryService(name string) (any, bool) {
 	return im.value, true
 }
 
+// Principal 返回当前 fiber 的插件名(无 fiber 时为空)。
+func (c *Context) Principal() string {
+	if c.fiber == nil {
+		return ""
+	}
+	return c.fiber.plugin.Name()
+}
+
+// Context 返回携带调用者身份的 context,供跨插件服务调用使用。
+//
+// 不缓存:身份只取决于 fiber;调用方每次拿一个新 context 更安全(不会被篡改)。
+func (c *Context) Context() context.Context {
+	return WithPrincipal(context.Background(), c.Principal())
+}
+
 // Service 是类型化取服务的辅助函数；类型不符会明确报错而不是返回零值。
 func Service[T any](c *Context, name string) (T, error) {
 	var zero T

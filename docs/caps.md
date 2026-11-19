@@ -7,6 +7,7 @@
 ```
 caps/       L2 基础设施:能力名语法、信任等级、授权表(Broker)、拒绝审计
 plugin/     清单新增 caps / trust 字段并在校验期拒绝非法值
+plugins/policy/caps-gate/  调用点强制(fs/shell):principal → Broker 授权
 ```
 
 本刀**只做静态授权本身**,不做调用点强制:能力真正的强制点在装饰器/服务层(fs/shell),
@@ -54,8 +55,8 @@ broker.Authorize(ctx, "plugin-a", "fs.write", "/workspace/a") // → *DeniedErro
 
 ## 5. 偏差与边界
 
-1. **没有调用点强制**:`fs-sandbox` / `shell-guard` 目前只走 sandbox 判定,
-   没有向 `caps.Broker` 查「这个插件有没有 fs.write/exec」;缺少调用者身份传递。
+1. **调用点强制已落地(fs/shell)**:`policy/caps-gate` 从 `kernel.Principal(ctx)` 取调用者,向 Broker 查能力;
+   缺少身份/未授权一律拒绝。目前 grants 来自插件 config,清单 `caps` 还没有自动灌进 Broker。
 2. **清单未装载进 Broker**:`plugin.Manifest.Caps/Trust` 已能解析与校验,
    但 loader/assemble 还没把它们灌进 Broker;也没有 preset 层的信任覆盖。
 3. **没有安装同意**:design 的「安装时展示能力并征得同意」未实现;`third-party` 的签名升级未实现。
@@ -68,6 +69,9 @@ broker.Authorize(ctx, "plugin-a", "fs.write", "/workspace/a") // → *DeniedErro
 
 | 场景 | 用例 |
 |---|---|
+| fs 授权放行/未授权/无身份拒绝 | `capsgate.TestFSAuthorization` |
+| shell exec 授权 | `capsgate.TestShellAuthorization` |
+| 内核集成:`ctx.Context()` 携带身份,background 绕过被拒 | `capsgate.TestKernelIntegration` |
 | 能力名合法/非法集合 | `caps.TestParse` |
 | 通配匹配(主机/名字/命名空间不放宽) | `caps.TestGrantsWildcard` |
 | 授权 fail-closed、拒绝错误码、审计、撤销 | `caps.TestBrokerAuthorize` |
@@ -78,8 +82,8 @@ broker.Authorize(ctx, "plugin-a", "fs.write", "/workspace/a") // → *DeniedErro
 
 ## 7. 下一步
 
-1. 把调用者身份带进强制点(方案之一:fs/shell 装饰器按插件 id 包装,或内核在 Context 上暴露调用者)。
-2. assemble/loader 把清单的 `caps`/`trust` 灌进 Broker,并在 plan 报告里展示。
+1. assemble/loader 把清单的 `caps`/`trust`、install 的 trust 自动灌进 Broker(替代 config grants)。
+2. 在 plan 报告里展示能力清单与 trust。
 3. 安装同意 + 签名(§13.4)与 trust 来源判定。
 4. JSONL 审计出口与脱敏。
 
