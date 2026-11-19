@@ -190,3 +190,32 @@ func TestListEmpty(t *testing.T) {
 		t.Fatalf("空列表输出不正确: code=%d err=%s out=%s", code, errOut, out)
 	}
 }
+
+// 14. uninstall:卸载后 list 为空。
+func TestUninstall(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "plugin.json"),
+		[]byte(`{"id":"un-demo","version":"0.1.0","kind":"go"}`), 0o644); err != nil {
+		t.Fatalf("写清单失败: %v", err)
+	}
+	dest := t.TempDir()
+	if code, _, errOut := run("install", src, "-dest", dest); code != 0 {
+		t.Fatalf("安装失败: code=%d err=%s", code, errOut)
+	}
+	code, out, errOut := run("uninstall", "un-demo", "-dest", dest)
+	if code != 0 || !strings.Contains(out, "已卸载: un-demo") {
+		t.Fatalf("卸载输出不正确: code=%d err=%s out=%s", code, errOut, out)
+	}
+	code, out, _ = run("list", "-dest", dest)
+	if code != 0 || !strings.Contains(out, "(空)") {
+		t.Fatalf("卸载后 list 应为空: code=%d out=%s", code, out)
+	}
+}
+
+// 15. uninstall:未知 id → 退出码 1。
+func TestUninstallUnknown(t *testing.T) {
+	code, _, errOut := run("uninstall", "nope", "-dest", t.TempDir())
+	if code != 1 || !strings.Contains(errOut, "卸载失败") {
+		t.Fatalf("未知 id 应返回 1: code=%d err=%s", code, errOut)
+	}
+}

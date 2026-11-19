@@ -65,6 +65,7 @@ go run ./cmd/ada verify examples/plugins-ts/hello-ts
 go run ./cmd/ada verify <目录> -keys keys.json -require-signature
 go run ./cmd/ada install <目录> -dest <安装根> -keys keys.json -require-signature -yes
 go run ./cmd/ada list -dest <安装根>
+go run ./cmd/ada uninstall un-demo -dest <安装根>
 ```
 
 `keys.json` 格式:
@@ -74,11 +75,12 @@ go run ./cmd/ada list -dest <安装根>
 ```
 
 退出码:0 成功 / 1 校验或安装失败 / 2 用法错误(含未确认安装)。
+`uninstall` 删除该 id 的**全部版本**并清理索引;只有索引登记、且位于安装根之下的目录才会被删除。
 `-yes` 是**安装同意**:插件声明了 `caps` 时,没有 `-yes` 会先展示 id/版本/信任/能力并拒绝安装(退出码 2)。
 
 ## 6. 偏差与边界
 
-1. **本机索引已实现,在线能力未做**:`index.json` 记录 id/version/trust/signed/caps;下载、版本解析、更新、回滚、卸载都未实现。
+1. **本机索引/卸载已实现,在线与更新未做**:`index.json` 记录 id/version/trust/signed/caps;`uninstall` 可删除全部版本;没有下载、版本解析、更新与回滚,也没有并发锁。
 2. **安装同意只有 CLI 级**:`-yes` 让 `ada install` 在展示能力后继续;桌面确认框/逐项授权未实现,`-yes` 是一次性整体同意。
 3. **没有 `$ADA_HOME/keys` 与官方 keyring**:key ring 由调用方显式提供。
 4. **trust 未进入 caps 强制**:安装得到 trust 后,没有把 `caps` 授权与 trust 关联(调用点强制仍缺)。
@@ -101,6 +103,8 @@ go run ./cmd/ada list -dest <安装根>
 | CLI:verify 能力清单、install 同意(-yes) | `host/cli.TestVerifyCaps`、`host/cli.TestInstallConsent` |
 | 索引写入与 List / 空索引 / 索引损坏 | `install.TestIndexWrittenAndListed`、`TestListEmpty`、`TestListCorrupt` |
 | CLI list:安装后条目、空列表 | `host/cli.TestList`、`host/cli.TestListEmpty` |
+| 卸载:删除全部版本 + 清理索引 / 未知 id / 索引越界拒绝 | `install.TestUninstall`、`TestUninstallUnknown`、`TestUninstallRejectsOutside` |
+| CLI uninstall:卸载后列表为空 / 未知 id | `host/cli.TestUninstall`、`host/cli.TestUninstallUnknown` |
 
 ## 8. 下一步
 

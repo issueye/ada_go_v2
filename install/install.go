@@ -253,6 +253,50 @@ func addIndexEntry(destRoot string, info *Info) error {
 	return writeIndex(destRoot, kept)
 }
 
+// Uninstall 删除某插件的全部已安装版本,并更新索引。
+//
+// 安全:只删除索引里登记、且位于 destRoot 之下的目录;索引被篡改指向外部时拒绝。
+func Uninstall(destRoot, id string) (int, error) {
+	if id == "" {
+		return 0, fmt.Errorf("install: 插件 id 不能为空")
+	}
+	entries, err := List(destRoot)
+	if err != nil {
+		return 0, err
+	}
+	rootAbs, err := filepath.Abs(destRoot)
+	if err != nil {
+		return 0, fmt.Errorf("install: 解析安装根目录失败: %w", err)
+	}
+	var kept []IndexEntry
+	removed := 0
+	for _, e := range entries {
+		if e.ID != id {
+			kept = append(kept, e)
+			continue
+		}
+		dirAbs, err := filepath.Abs(e.Dir)
+		if err != nil {
+			return removed, fmt.Errorf("install: 解析已安装目录失败: %w", err)
+		}
+		rel, err := filepath.Rel(rootAbs, dirAbs)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return removed, fmt.Errorf("install: 索引里的目录不在安装根之下,拒绝删除: %s", e.Dir)
+		}
+		if err := os.RemoveAll(dirAbs); err != nil {
+			return removed, fmt.Errorf("install: 删除 %s 失败: %w", e.Dir, err)
+		}
+		removed++
+	}
+	if removed == 0 {
+		return 0, fmt.Errorf("install: 插件 %q 未安装", id)
+	}
+	if err := writeIndex(destRoot, kept); err != nil {
+		return removed, err
+	}
+	return removed, nil
+}
+
 // Install 校验后原子安装到 <DestRoot>/<id>@<version>/。
 func Install(srcDir, destRoot string, opts Options) (*Info, error) {
 	info, err := VerifyDir(srcDir, opts)

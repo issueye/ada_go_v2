@@ -247,3 +247,67 @@ func TestListCorrupt(t *testing.T) {
 		t.Fatalf("损坏索引应报错,实际 %v", err)
 	}
 }
+
+// 12. 卸载:删除该 id 的全部版本并清空索引条目。
+func TestUninstall(t *testing.T) {
+	dest := t.TempDir()
+	// 两个版本(不同版本号目录)。
+	for _, ver := range []string{"0.1.0", "0.2.0"} {
+		src := t.TempDir()
+		manifest := `{"id":"un-demo","version":"` + ver + `","kind":"go"}`
+		if err := os.WriteFile(filepath.Join(src, "plugin.json"), []byte(manifest), 0o644); err != nil {
+			t.Fatalf("写清单失败: %v", err)
+		}
+		if _, err := install.Install(src, dest, install.Options{}); err != nil {
+			t.Fatalf("安装 %s 失败: %v", ver, err)
+		}
+	}
+	entries, err := install.List(dest)
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("安装后索引应有 2 条: %v %d", err, len(entries))
+	}
+
+	removed, err := install.Uninstall(dest, "un-demo")
+	if err != nil {
+		t.Fatalf("卸载失败: %v", err)
+	}
+	if removed != 2 {
+		t.Fatalf("应删除 2 个版本,实际 %d", removed)
+	}
+	entries, err = install.List(dest)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("卸载后索引应为空: %v %d", err, len(entries))
+	}
+	for _, ver := range []string{"0.1.0", "0.2.0"} {
+		if _, err := os.Stat(filepath.Join(dest, "un-demo@"+ver)); err == nil {
+			t.Fatalf("版本目录应被删除: %s", ver)
+		}
+	}
+}
+
+// 13. 卸载未知 id 报错。
+func TestUninstallUnknown(t *testing.T) {
+	if _, err := install.Uninstall(t.TempDir(), "nope"); err == nil {
+		t.Fatalf("未安装的 id 应报错")
+	}
+}
+
+// 14. 索引指向安装根之外的目录 → 拒绝删除。
+func TestUninstallRejectsOutside(t *testing.T) {
+	dest := t.TempDir()
+	outside := t.TempDir()
+	marker := filepath.Join(outside, "keep.txt")
+	if err := os.WriteFile(marker, []byte("keep"), 0o644); err != nil {
+		t.Fatalf("写标记失败: %v", err)
+	}
+	index := `{"entries":[{"id":"evil","version":"0.1.0","kind":"go","dir":"` + strings.ReplaceAll(outside, `\`, `\\`) + `","trust":"builtin"}]}`
+	if err := os.WriteFile(filepath.Join(dest, install.IndexFile), []byte(index), 0o644); err != nil {
+		t.Fatalf("写索引失败: %v", err)
+	}
+	if _, err := install.Uninstall(dest, "evil"); err == nil {
+		t.Fatalf("安装根之外的目录应拒绝删除")
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("外部文件不应被删除: %v", err)
+	}
+}

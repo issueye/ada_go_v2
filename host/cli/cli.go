@@ -42,6 +42,8 @@ func Run(args []string, out, errOut io.Writer) int {
 		return cmdInstall(args[1:], out, errOut)
 	case "list":
 		return cmdList(args[1:], out, errOut)
+	case "uninstall":
+		return cmdUninstall(args[1:], out, errOut)
 	default:
 		usage(errOut)
 		return 2
@@ -56,6 +58,7 @@ func usage(w io.Writer) {
   ada verify  <插件目录> [-keys 密钥文件] [-require-signature]
   ada install <插件目录> -dest <安装根> [-keys 密钥文件] [-require-signature] [-yes]
   ada list    -dest <安装根>
+  ada uninstall <插件 id> -dest <安装根>
 
 退出码:0=成功,1=计划不可执行/装配或校验失败,2=用法错误。
 `)
@@ -428,6 +431,46 @@ func cmdVerify(args []string, out, errOut io.Writer) int {
 }
 
 // parseInstallArgs 解析 install 参数;-dest 是 install 专属,不能走 verify 的参数解析。
+func cmdUninstall(args []string, out, errOut io.Writer) int {
+	id := ""
+	dest := ""
+	for i := 0; i < len(args); i++ {
+		switch a := args[i]; {
+		case a == "-dest":
+			if i+1 >= len(args) {
+				fmt.Fprintln(errOut, "-dest 缺少目录参数")
+				usage(errOut)
+				return 2
+			}
+			dest = args[i+1]
+			i++
+		case strings.HasPrefix(a, "-"):
+			fmt.Fprintln(errOut, "未知参数 "+a)
+			usage(errOut)
+			return 2
+		default:
+			if id != "" {
+				fmt.Fprintln(errOut, "多余的参数 "+a)
+				usage(errOut)
+				return 2
+			}
+			id = a
+		}
+	}
+	if id == "" || dest == "" {
+		fmt.Fprintln(errOut, "需要插件 id 与 -dest 安装根目录")
+		usage(errOut)
+		return 2
+	}
+	removed, err := install.Uninstall(dest, id)
+	if err != nil {
+		fmt.Fprintln(errOut, "卸载失败:", err)
+		return 1
+	}
+	fmt.Fprintf(out, "已卸载: %s(删除 %d 个版本)\n", id, removed)
+	return 0
+}
+
 // cmdList 列出安装根目录的索引。
 func cmdList(args []string, out, errOut io.Writer) int {
 	dest := ""
