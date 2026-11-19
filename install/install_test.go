@@ -751,3 +751,28 @@ func TestUpdateFromRemote(t *testing.T) {
 		t.Fatalf("已是最新应失败")
 	}
 }
+
+// 30. 安装锁:被占用时拒绝,正常结束后锁清理。
+func TestInstallLock(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "plugin.json"),
+		[]byte(`{"id":"lock-demo","version":"0.1.0","kind":"go"}`), 0o644); err != nil {
+		t.Fatalf("写清单失败: %v", err)
+	}
+	dest := t.TempDir()
+	lock := filepath.Join(dest, install.LockFile)
+	if err := os.WriteFile(lock, []byte("held"), 0o644); err != nil {
+		t.Fatalf("写锁失败: %v", err)
+	}
+	if _, err := install.Install(src, dest, install.Options{}); err == nil || !strings.Contains(err.Error(), "正在被另一个安装进程") {
+		t.Fatalf("锁被占用应拒绝,实际 %v", err)
+	}
+	_ = os.Remove(lock)
+
+	if _, err := install.Install(src, dest, install.Options{}); err != nil {
+		t.Fatalf("释放锁后应安装成功: %v", err)
+	}
+	if _, err := os.Stat(lock); err == nil {
+		t.Fatalf("安装结束后锁文件应被删除")
+	}
+}

@@ -262,7 +262,7 @@ func addIndexEntry(destRoot string, info *Info) error {
 // Uninstall 删除某插件的全部已安装版本,并更新索引。
 //
 // 安全:只删除索引里登记、且位于 destRoot 之下的目录;索引被篡改指向外部时拒绝。
-func Uninstall(destRoot, id string) (int, error) {
+func uninstallUnlocked(destRoot, id string) (int, error) {
 	if id == "" {
 		return 0, fmt.Errorf("install: 插件 id 不能为空")
 	}
@@ -307,7 +307,7 @@ func Uninstall(destRoot, id string) (int, error) {
 //
 // 语义:先安装新版本(原子),再删除同 id 的旧版本目录并把索引收敛到最新一条。
 // 拒绝降级与同版本重复;分开两步意味着「清理失败时新版本仍已安装」,需要宿主提示。
-func Upgrade(src, destRoot string, opts Options) (*Info, error) {
+func upgradeUnlocked(src, destRoot string, opts Options) (*Info, error) {
 	preview, err := VerifyDir(src, opts)
 	if err != nil {
 		return nil, err
@@ -346,7 +346,7 @@ func Upgrade(src, destRoot string, opts Options) (*Info, error) {
 		return nil, fmt.Errorf("install: 拒绝降级(%s → %s)", newest.Version, preview.Version)
 	}
 
-	info, err := Install(src, destRoot, opts)
+	info, err := installUnlocked(src, destRoot, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -362,7 +362,7 @@ func Upgrade(src, destRoot string, opts Options) (*Info, error) {
 // Rollback 删除当前最新版本,索引回退到次新版本;没有旧版本时报错。
 //
 // 前提:升级时使用了 KeepPrevious(否则旧目录已被清理,无从回滚)。
-func Rollback(destRoot, id string) (string, error) {
+func rollbackUnlocked(destRoot, id string) (string, error) {
 	if id == "" {
 		return "", fmt.Errorf("install: 插件 id 不能为空")
 	}
@@ -467,7 +467,7 @@ func cleanupOlderVersions(destRoot string, cur *Info) error {
 }
 
 // Install 校验后原子安装到 <DestRoot>/<id>@<version>/。
-func Install(srcDir, destRoot string, opts Options) (*Info, error) {
+func installUnlocked(srcDir, destRoot string, opts Options) (*Info, error) {
 	info, err := VerifyDir(srcDir, opts)
 	if err != nil {
 		return nil, err
