@@ -2,7 +2,7 @@
 
 > 给在本仓库工作的 AI 代理与人类协作者。**动代码之前先读这一份**；它与设计文档冲突时，以本文件的红线为准，并立刻提 issue 修正文档。
 
-**当前阶段:M1 内核、M2 执行层、M3 装配、M4 编排(`sched`/`quota`/`flow`)、M4.5 seam 第一刀已落地**,M5(安全与宿主)尚未开始。本文件始终生效:先用它约束设计,再用它约束实现。
+**当前阶段:M1 内核、M2 执行层、M3 装配、M4 编排(`sched`/`quota`/`flow`)、M4.5 seam、M5 安全第一刀(`fs`/`fs-local`/`fs-sandbox`)已落地**,M5 剩余 sandbox/shell/审批/签名/宿主。本文件始终生效:先用它约束设计,再用它约束实现。
 
 ---
 
@@ -42,6 +42,7 @@
 | [seam-session.md](docs/seam-session.md) | seam/session 与 session-memory:契约、契约测试与已知边界 |
 | [m4-orchestration.md](docs/m4-orchestration.md) | M4 编排:sched(时钟/cron/周期与定时任务)与 quota(配额与回压) |
 | [m4-flow.md](docs/m4-flow.md) | M4 流水线:声明式 flow、受限表达式、checkpoint/resume |
+| [seam-fs.md](docs/seam-fs.md) | M5 安全第一刀:seam/fs、fs-local 实现与 fs-sandbox 策略 |
 
 ---
 
