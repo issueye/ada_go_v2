@@ -2,7 +2,7 @@
 
 **一个以插件为核心的程序基座**：Go 内核 + TypeScript 插件（纯 Go 编译与执行，无需 Node 环境）+ Cordis 式的作用域与编排。
 
-> 当前处于 **M1**：内核骨架已落地（`kernel/` + demo + 门禁脚本），其余仍为设计。
+> 当前处于 **M2 执行层第一刀**:M1 内核已落地,`compile/`(esbuild)+ `jsrt/`(moejs)+ `bridge/` 已能把 TS 插件跑在进程内(无 Node);装配与插件清单仍为设计。
 > **工作约定/红线**：[AGENTS.md](AGENTS.md)（动代码或改设计前先读）
 > 设计文档：[docs/plugin-kernel-design.md](docs/plugin-kernel-design.md)
 > seam 契约：[docs/seam-api.md](docs/seam-api.md)（llm / tools / session / prompts）
@@ -51,6 +51,7 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 | [seam-api.md](docs/seam-api.md) | **首批 seam 契约**：llm / tools / session / prompts 的 Go 接口、事件、管线、不变量与契约测试 |
 | [seam-api-security.md](docs/seam-api-security.md) | **安全 seam 契约**：sandbox / fs / shell 的三道闸、虚拟路径、装饰器强制链、拒绝矩阵 |
 | [kernel-api.md](docs/kernel-api.md) | M1 冻结的内核 API 与实现边界 |
+| [m2-execution.md](docs/m2-execution.md) | M2 执行层第一刀:compile / jsrt / bridge 的契约、测试矩阵与已知边界 |
 | [spikes.md](docs/spikes.md) | M0 验证报告（S1/S2/S6/S8/S9 通过） |
 
 ## 实测基线（Go 1.27.1 / windows/amd64 / CGO=0）
@@ -64,17 +65,18 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 
 `Transform` 单文件 0.77–0.88 ms；moejs 新建 Runtime 1.39 µs、加载插件 71 µs、单次调用 6.86 µs、每 Runtime 常驻 80.5 KiB。
 
-## 当前状态:M1 已落地(2026-11-19 修复轮)
+## 当前状态:M1 已落地;M2 执行层第一刀已落地
 
 ```powershell
-go test -race -count=1 -timeout 120s ./...   # 内核 21 个用例 + schema 7 个用例
+go test -race -count=1 -timeout 300s ./...   # kernel 21 + schema 7 + compile 6 + jsrt 5 + bridge 2
 go run ./cmd/ada-demo                        # 依赖门控 + 级联重载演示
 pwsh scripts/guard.ps1                       # 门禁:词汇/依赖/gofmt/build/vet/staticcheck/race/交叉编译/预算
+go run ./cmd/ada-ts-demo                     # M2:TS 插件编译→加载→挂到内核(无 Node)
 pwsh scripts/bench.ps1                       # 性能预算:≤20 μs/次、50 插件冷启动 ≤150 ms
 ```
 
-已完成:`kernel/`(Context / Fiber / Service / Effect / Event / Config / Schema)、`kernel/schema`、`cmd/ada-demo`、`scripts/guard.ps1`、`docs/kernel-api.md`、`docs/spikes.md`、`docs/adr/0001`。
-未开始:`compile/`(esbuild)、`jsrt/`(moejs)、`assemble/`、`plugins/seam/*`。
+已完成:`kernel/`(Context / Fiber / Service / Effect / Event / Config / Schema)、`kernel/schema`、`cmd/ada-demo`、`cmd/ada-ts-demo`、`compile/`(esbuild)、`jsrt/`(moejs)、`bridge/`、`scripts/guard.ps1`、`scripts/bench.ps1`、`docs/kernel-api.md`、`docs/m2-execution.md`、`docs/adr/0001`、`docs/adr/0002`。
+未开始:`assemble/`(M3 装配)、`plugins/seam/*`(M4.5)、`host/*`(M5);M2 剩余:装配隔离、完整 `ctx.*` JS API、CJS/OOM 用例。
 
 本轮修复了 M1 评审中复现的缺陷(waterfall 超时幽灵执行、兄弟插件被误拆、failed 不可复活、卸载错误被吞、fiber 注册表泄漏、Intercept 合并反向、Stop 后仍派发、schema 静默放行),每条都有回归用例;清单见 [kernel-api.md §6](docs/kernel-api.md)。
 

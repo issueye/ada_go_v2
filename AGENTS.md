@@ -2,7 +2,7 @@
 
 > 给在本仓库工作的 AI 代理与人类协作者。**动代码之前先读这一份**；它与设计文档冲突时，以本文件的红线为准，并立刻提 issue 修正文档。
 
-**当前阶段：M1 内核骨架已落地**（`kernel/`、`kernel/schema`、`cmd/ada-demo`、`scripts/guard.ps1`），M2（esbuild + moejs 执行层）尚未开始。本文件始终生效：先用它约束设计，再用它约束实现。
+**当前阶段:M1 内核骨架已落地;M2 执行层第一刀(`compile`/`jsrt`/`bridge`)已落地**,装配、插件清单与权限尚未开始。本文件始终生效:先用它约束设计,再用它约束实现。
 
 ---
 
@@ -37,6 +37,7 @@
 | [seam-api-security.md](docs/seam-api-security.md) | 安全 seam 契约：sandbox / fs / shell |
 | [kernel-api.md](docs/kernel-api.md) | M1 冻结的内核 API 与已知边界 |
 | [spikes.md](docs/spikes.md) | M0 验证报告（5 个已通过，7 个待做） |
+| [m2-execution.md](docs/m2-execution.md) | M2 执行层第一刀:compile / jsrt / bridge 的契约、测试矩阵与已知边界 |
 
 ---
 
