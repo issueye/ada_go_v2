@@ -41,18 +41,27 @@ fs-sandbox / shell-guard ──可选 inject "approval"──▶ 拒绝时 Ask()
   挂起的审批人不能阻塞调用方。
 - **升级触发点**:fs 在 sandbox `Escalatable` 时问审批;shell 在「shell 门拒绝 / 只读白名单拒绝」时问审批。
   不可升级的拒绝直接拒绝,不打扰审批人。
-- **事件**:审批完成后发 `approval/decided`(Emit),载荷含 source/op/target/allow/approver/reason;
+- **事件**:调用审批人**之前**发 `approval/requested`(id/source/op/target/reason/plugin),完成后发 `approval/decided`(source/op/target/allow/approver/reason);
   只观察、不阻断。
 - **批准即放行本次操作**(policy-only 后端下等价于临时提升);OS 级后端需要重新施加约束,尚未实现。
 
 ## 4. 偏差与边界
 
 1. **只有默认拒绝审批人**:没有交互式 UI/CLI 审批人;`core/approval`(M4.5)未实现。
-2. **没有 `approval/requested` 事件**:只发 decided;请求侧审计仍缺。
+2. **`approval/requested` 已实现**:`Registry.SetNotifier` 在 `Ask` 等待决定前广播;没有审批人时不广播(fail-closed 先决)。
 3. **批准绕过沙箱判定**:批准后的放行由策略层决定,OS 级后端尚未实现「按批准临时提升模式」。
 4. **无 caps broker**:审批与能力授权仍分离;审批不是能力授权的替代。
 5. **审批人选择**:默认按名字排序,没有「按 op/来源路由」的策略。
 6. **事件时机**:`approval/decided` 在装饰器内同步发出;事件派发失败不会回滚审批结果。
+
+### 3.1 事件载荷
+
+| 事件 | 字段 |
+|---|---|
+| `approval/requested` | `id`、`source`、`op`、`target`、`reason`、`plugin`(调用者身份,可缺省) |
+| `approval/decided` | `source`、`op`、`target`、`allow`、`approver`、`reason` |
+
+`requested` 由 seam/approval 插件接入 `Registry.SetNotifier` 发出;通知器 panic 不影响审批结果(测试覆盖)。
 
 ## 5. 测试矩阵
 
@@ -67,7 +76,7 @@ fs-sandbox / shell-guard ──可选 inject "approval"──▶ 拒绝时 Ask()
 
 ## 6. 下一步
 
-1. `approval/requested` 事件与审计字段(会话 id、调用方)。
+1. 审计字段补全会话 id 与目标摘要(当前只有 id/source/op/target/reason/plugin)。
 2. `core/approval` 交互式审批人(UI/CLI),与 preset 的 approval 策略联动。
 3. caps broker:静态能力授权先于动态沙箱/审批。
 4. 审批人路由(按 op/来源);批量审批与会话级「记住本次决定」。

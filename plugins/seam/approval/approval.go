@@ -19,6 +19,9 @@ import (
 // DefaultTimeout 是单次审批的默认等待时间。
 const DefaultTimeout = 30 * time.Second
 
+// EventRequested 是审批请求事件:在调用审批人之前广播,供 UI/审计渲染。
+const EventRequested = "approval/requested"
+
 // Request 是一次升级审批请求。
 type Request struct {
 	ID      string
@@ -50,6 +53,7 @@ type Approver interface {
 type Registry struct {
 	mu        sync.RWMutex
 	approvers map[string]Approver
+	notifier  func(context.Context, Request)
 }
 
 // NewRegistry 创建空注册表。
@@ -78,6 +82,27 @@ func (r *Registry) Register(impl Approver) (kernel.Dispose, error) {
 		r.mu.Unlock()
 		return nil
 	}, nil
+}
+
+// SetNotifier 设置请求通知器(通常由 seam/approval 插件接到 approval/requested 事件)。
+func (r *Registry) SetNotifier(fn func(context.Context, Request)) {
+	r.mu.Lock()
+	r.notifier = fn
+	r.mu.Unlock()
+}
+
+// notify 在调用审批人前广播请求;通知器 panic 不影响审批(fail-closed 由审批人决定)。
+func (r *Registry) notify(ctx context.Context, req Request) {
+	r.mu.RLock()
+	fn := r.notifier
+	r.mu.RUnlock()
+	if fn == nil {
+		return
+	}
+	func() {
+		defer func() { _ = recover() }()
+		fn(ctx, req)
+	}()
 }
 
 // Names 返回已注册审批人(排序)。
@@ -119,7 +144,18 @@ const pluginID = "seam-approval"
 // Plugin 返回 seam/approval 插件:只提供 approval 服务(Registry)。
 func Plugin() kernel.Plugin {
 	return kernel.Func(pluginID, func(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, error) {
-		_, err := ctx.Provide("approval", NewRegistry(), kernel.WithVersion(1), kernel.WithKind("object"))
+		registry := NewRegistry()
+		registry.SetNotifier(func(callCtx context.Context, req Request) {
+			payload := map[string]any{
+				"id": req.ID, "source": req.Source, "op": req.Op,
+				"target": req.Target, "reason": req.Reason,
+			}
+			if id, ok := kernel.Principal(callCtx); ok {
+				payload["plugin"] = id
+			}
+			ctx.Emit(EventRequested, payload)
+		})
+		_, err := ctx.Provide("approval", registry, kernel.WithVersion(1), kernel.WithKind("object"))
 		return nil, err
 	}).WithProvide("approval")
 }
@@ -142,6 +178,9 @@ func Ask(ctx context.Context, registry *Registry, backend string, req Request) (
 	}
 	actx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+
+	// 先广播「有人请求审批」,再等待决定;UI 可以据此弹窗,审计可以据此落账。
+	registry.notify(ctx, req)
 
 	dec, err := approver.Approve(actx, req)
 	if err != nil {
