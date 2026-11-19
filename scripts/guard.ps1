@@ -116,6 +116,31 @@ if ($prod -gt 3000) {
     Pass "kernel 行数预算(生产 $prod / 3000,测试 $test 行)"
 }
 
+# 7.1 host 预算(AGENTS §5.3;ADR 0002 临时例外:总 ≤2500,cli ≤1500,其它 ≤800)。
+$hostRoot = (Resolve-Path host).Path
+$hostFiles = Get-ChildItem host -Recurse -Include *.go |
+    Where-Object { $_.Name -notlike '*_test.go' }
+$hostTotal = ($hostFiles | Get-Content | Measure-Object -Line).Lines
+$perAdapter = @{}
+foreach ($file in $hostFiles) {
+    $rel = $file.FullName.Substring($hostRoot.Length).TrimStart('\', '/')
+    $adapter = ($rel -split '\\')[0]
+    $lines = (Get-Content $file.FullName | Measure-Object -Line).Lines
+    if (-not $perAdapter.ContainsKey($adapter)) { $perAdapter[$adapter] = 0 }
+    $perAdapter[$adapter] += $lines
+}
+$otherMax = ($perAdapter.GetEnumerator() | Where-Object { $_.Key -ne 'cli' } |
+    Measure-Object -Property Value -Maximum).Maximum
+if ($hostTotal -gt 2500) {
+    Fail "host 行数预算" @("生产合计 $hostTotal 行,超过 2500(ADR 0002)")
+} elseif ($perAdapter['cli'] -gt 1500) {
+    Fail "host 行数预算" @("host/cli $($perAdapter['cli']) 行,超过 1500(ADR 0002)")
+} elseif ($otherMax -gt 800) {
+    Fail "host 行数预算" @("其它适配器最大 $otherMax 行,超过 800")
+} else {
+    Pass "host 行数预算(总 $hostTotal / 2500,cli $($perAdapter['cli']) / 1500,其它最大 $otherMax / 800)"
+}
+
 if ($fail -ne 0) {
     Write-Host "`n门禁失败。" -ForegroundColor Red
     exit 1
