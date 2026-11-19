@@ -479,6 +479,8 @@ type Projection interface {
 | 投影 | `changed=false` 不触发下游；版本变化触发重放 |
 | 冷启动 | 持久化后重开，尾段重放结果一致 |
 
+> 实现进度、与契约的偏差以及 provider 约定见 [seam-session.md](seam-session.md)。
+
 ---
 
 ## 5. `seam/prompts`
