@@ -32,6 +32,16 @@ var (
 	ErrBroken = errors.New("jsrt: 运行时已损坏")
 )
 
+// Host 是 JS 侧 ctx 对象能调到的宿主能力。
+//
+// 回调在 JS 的 worker goroutine 上执行,所以实现方必须自己保证线程安全,
+// 并且**不得**直接操作内核状态——桥接层负责把请求暂存,回到内核协程再提交。
+// 回调返回 error 会变成 JS 异常;nil 表示该能力未启用。
+type Host struct {
+	Provide func(name string, value any) error
+	Emit    func(event string, payload any) error
+}
+
 // Options 描述一次运行时装配。
 type Options struct {
 	Artifact *compile.Artifact
@@ -39,8 +49,10 @@ type Options struct {
 	MemoryLimit int64
 	// DisableDynamicCode 关闭 eval 与 Function 构造器。
 	DisableDynamicCode bool
-	// Logf 接收 JS 侧 __adaLog 的日志;nil 表示丢弃。
+	// Logf 接收 JS 侧 ctx.log / __adaLog 的日志;nil 表示丢弃。
 	Logf func(format string, args ...any)
+	// Host 提供 ctx.provide / ctx.emit 的落地实现。
+	Host Host
 }
 
 // Runtime 是一个插件实例的 JS 世界。
@@ -56,6 +68,7 @@ type Runtime struct {
 	mu     sync.Mutex
 	raw    *moejs.Runtime
 	hooks  map[string]moejs.Hook
+	host   moejs.Value // 传给 apply 的 ctx 对象;只在 worker goroutine 上使用
 	broken bool
 	closed bool
 }
@@ -133,15 +146,34 @@ func (r *Runtime) load() error {
 		MemoryLimit:        r.opts.MemoryLimit,
 		DisableDynamicCode: r.opts.DisableDynamicCode,
 	})
-	// 宿主函数必须在 Load 之前注入:模块顶层就可能调用它们。
+	// 宿主能力必须在 Load 之前注入:模块顶层就可能调用它们。
 	// 裸 Runtime 没有 console(C4),所以日志必须显式给。
 	//
-	// 这里直接写 Realm.Global.SetProp 而不是 SetGlobal:SetGlobal 会走 FromGo,
+	// 这里直接写 Realm 的 SetProp 而不是 SetGlobal:SetGlobal 会走 FromGo,
 	// 而 FromGo 不认 engine.Value(函数值),结果会把它变成空对象。
 	realm := raw.Realm()
+	ctxObj := realm.NewObject()
+	setFn := func(name string, fn moejs.NativeFunc) error {
+		return ctxObj.SetProp(realm, realm.KeyFromGoString(name), raw.Function(name, 2, fn))
+	}
+	if err := setFn("log", r.nativeLog(raw)); err != nil {
+		return fmt.Errorf("jsrt: 注入 ctx.log 失败: %w", err)
+	}
+	if err := setFn("provide", r.nativeProvide(raw)); err != nil {
+		return fmt.Errorf("jsrt: 注入 ctx.provide 失败: %w", err)
+	}
+	if err := setFn("emit", r.nativeEmit(raw)); err != nil {
+		return fmt.Errorf("jsrt: 注入 ctx.emit 失败: %w", err)
+	}
+	host := engine.ObjectValue(ctxObj)
+	// __adaCtx 只是调试入口;插件作者应该用 apply(ctx, config) 的第一个参数。
+	if err := realm.Global.SetProp(realm, realm.KeyFromGoString("__adaCtx"), host); err != nil {
+		return fmt.Errorf("jsrt: 注入 __adaCtx 失败: %w", err)
+	}
 	if err := realm.Global.SetProp(realm, realm.KeyFromGoString("__adaLog"), raw.Function("__adaLog", 2, r.nativeLog(raw))); err != nil {
 		return fmt.Errorf("jsrt: 注入 __adaLog 失败: %w", err)
 	}
+	r.host = host
 
 	mods := make(map[string]*moejs.Module, len(r.art.Files))
 	for name, code := range r.art.Files {
@@ -186,13 +218,84 @@ func (r *Runtime) load() error {
 	return nil
 }
 
-// nativeLog 把 JS 的 __adaLog(msg) 转成宿主日志。
+// nativeLog 把 JS 的 ctx.log(...args) 转成宿主日志。
 func (r *Runtime) nativeLog(raw *moejs.Runtime) moejs.NativeFunc {
 	return func(_ *engine.Realm, _ engine.Value, args []engine.Value) (engine.Value, error) {
-		if r.opts.Logf != nil && len(args) > 0 {
-			if v, err := raw.ToGo(args[0]); err == nil {
-				r.opts.Logf("%v", v)
+		if r.opts.Logf == nil || len(args) == 0 {
+			return engine.Undefined(), nil
+		}
+		parts := make([]any, 0, len(args))
+		for _, a := range args {
+			v, err := raw.ToGo(a)
+			if err != nil {
+				v = "<无法转换>"
 			}
+			parts = append(parts, v)
+		}
+		if len(parts) == 1 {
+			r.opts.Logf("%v", parts[0])
+		} else {
+			r.opts.Logf("%v", parts)
+		}
+		return engine.Undefined(), nil
+	}
+}
+
+// nativeProvide 实现 ctx.provide(name, value):值经 JSON 转成 Go 值后交给桥接层。
+func (r *Runtime) nativeProvide(raw *moejs.Runtime) moejs.NativeFunc {
+	return func(_ *engine.Realm, _ engine.Value, args []engine.Value) (engine.Value, error) {
+		if r.opts.Host.Provide == nil {
+			return engine.Undefined(), fmt.Errorf("ctx.provide 未启用")
+		}
+		if len(args) < 2 {
+			return engine.Undefined(), fmt.Errorf("ctx.provide(name, value) 需要两个参数")
+		}
+		rawName, err := raw.ToGo(args[0])
+		if err != nil {
+			return engine.Undefined(), fmt.Errorf("ctx.provide 的服务名无法转换: %w", err)
+		}
+		name, ok := rawName.(string)
+		if !ok || name == "" {
+			return engine.Undefined(), fmt.Errorf("ctx.provide 的服务名必须是非空字符串")
+		}
+		value, err := raw.ToGo(args[1])
+		if err != nil {
+			return engine.Undefined(), fmt.Errorf("ctx.provide 的值无法转换: %w", err)
+		}
+		if err := r.opts.Host.Provide(name, value); err != nil {
+			return engine.Undefined(), err
+		}
+		return engine.Undefined(), nil
+	}
+}
+
+// nativeEmit 实现 ctx.emit(event, payload):桥接层负责把它排到内核协程上派发。
+func (r *Runtime) nativeEmit(raw *moejs.Runtime) moejs.NativeFunc {
+	return func(_ *engine.Realm, _ engine.Value, args []engine.Value) (engine.Value, error) {
+		if r.opts.Host.Emit == nil {
+			return engine.Undefined(), fmt.Errorf("ctx.emit 未启用")
+		}
+		if len(args) < 1 {
+			return engine.Undefined(), fmt.Errorf("ctx.emit(event, payload) 至少需要一个参数")
+		}
+		rawEvent, err := raw.ToGo(args[0])
+		if err != nil {
+			return engine.Undefined(), fmt.Errorf("ctx.emit 的事件名无法转换: %w", err)
+		}
+		event, ok := rawEvent.(string)
+		if !ok || event == "" {
+			return engine.Undefined(), fmt.Errorf("ctx.emit 的事件名必须是非空字符串")
+		}
+		var payload any
+		if len(args) > 1 {
+			v, err := raw.ToGo(args[1])
+			if err != nil {
+				return engine.Undefined(), fmt.Errorf("ctx.emit 的载荷无法转换: %w", err)
+			}
+			payload = v
+		}
+		if err := r.opts.Host.Emit(event, payload); err != nil {
+			return engine.Undefined(), err
 		}
 		return engine.Undefined(), nil
 	}
@@ -209,6 +312,16 @@ type callResult struct {
 // ctx 取消时会 Interrupt 正在运行的 JS;若 JS 在 interruptGrace 内仍未收尾,
 // 运行时被标记为损坏,后续调用直接失败——把可能半执行的运行时继续复用更危险。
 func (r *Runtime) Call(ctx context.Context, export string, args ...any) (any, error) {
+	return r.call(ctx, export, false, args...)
+}
+
+// CallWithHost 在参数最前面插入 ctx 对象。
+// 插件入口按 AGENTS §6.2 的约定写成 apply(ctx, config)。
+func (r *Runtime) CallWithHost(ctx context.Context, export string, args ...any) (any, error) {
+	return r.call(ctx, export, true, args...)
+}
+
+func (r *Runtime) call(ctx context.Context, export string, withHost bool, args ...any) (any, error) {
 	payload := make([][]byte, len(args))
 	for i, a := range args {
 		b, err := json.Marshal(a)
@@ -219,7 +332,7 @@ func (r *Runtime) Call(ctx context.Context, export string, args ...any) (any, er
 	}
 
 	res := make(chan callResult, 1)
-	job := func() { res <- r.callOnWorker(export, payload) }
+	job := func() { res <- r.callOnWorker(export, payload, withHost) }
 	if err := r.enqueue(ctx, job); err != nil {
 		return nil, err
 	}
@@ -247,7 +360,7 @@ func (r *Runtime) Call(ctx context.Context, export string, args ...any) (any, er
 }
 
 // callOnWorker 只在 worker goroutine 上执行。
-func (r *Runtime) callOnWorker(export string, payload [][]byte) callResult {
+func (r *Runtime) callOnWorker(export string, payload [][]byte, withHost bool) callResult {
 	r.mu.Lock()
 	raw, hooks, broken := r.raw, r.hooks, r.broken
 	r.mu.Unlock()
@@ -261,13 +374,16 @@ func (r *Runtime) callOnWorker(export string, payload [][]byte) callResult {
 	if !ok {
 		return callResult{err: fmt.Errorf("jsrt: 模块未导出 %q", export)}
 	}
-	vals := make([]moejs.Value, len(payload))
+	vals := make([]moejs.Value, 0, len(payload)+1)
+	if withHost {
+		vals = append(vals, r.host)
+	}
 	for i, b := range payload {
 		v, err := raw.ParseJSON(b)
 		if err != nil {
 			return callResult{err: fmt.Errorf("jsrt: 参数 %d 不是合法 JSON: %w", i, err)}
 		}
-		vals[i] = v
+		vals = append(vals, v)
 	}
 	out, err := raw.Call(h, vals...)
 	if err != nil {

@@ -71,12 +71,12 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 go test -race -count=1 -timeout 300s ./...   # kernel 21 + schema 7 + compile 6 + jsrt 5 + bridge 2
 go run ./cmd/ada-demo                        # 依赖门控 + 级联重载演示
 pwsh scripts/guard.ps1                       # 门禁:词汇/依赖/gofmt/build/vet/staticcheck/race/交叉编译/预算
-go run ./cmd/ada-ts-demo                     # M2:TS 插件编译→加载→挂到内核(无 Node)
+go run ./cmd/ada-ts-demo                     # M2:TS 插件编译→加载→提供服务/派发事件→内核消费
 pwsh scripts/bench.ps1                       # 性能预算:≤20 μs/次、50 插件冷启动 ≤150 ms
 ```
 
 已完成:`kernel/`(Context / Fiber / Service / Effect / Event / Config / Schema)、`kernel/schema`、`cmd/ada-demo`、`cmd/ada-ts-demo`、`compile/`(esbuild)、`jsrt/`(moejs)、`bridge/`、`scripts/guard.ps1`、`scripts/bench.ps1`、`docs/kernel-api.md`、`docs/m2-execution.md`、`docs/adr/0001`、`docs/adr/0002`。
-未开始:`assemble/`(M3 装配)、`plugins/seam/*`(M4.5)、`host/*`(M5);M2 剩余:装配隔离、完整 `ctx.*` JS API、CJS/OOM 用例。
+未开始:`assemble/`(M3 装配)、`plugins/seam/*`(M4.5)、`host/*`(M5);M2 剩余:反向回调(`ctx.on`/`ctx.effect`/服务方法)、`async apply`、CJS/OOM 用例。
 
 本轮修复了 M1 评审中复现的缺陷(waterfall 超时幽灵执行、兄弟插件被误拆、failed 不可复活、卸载错误被吞、fiber 注册表泄漏、Intercept 合并反向、Stop 后仍派发、schema 静默放行),每条都有回归用例;清单见 [kernel-api.md §6](docs/kernel-api.md)。
 
