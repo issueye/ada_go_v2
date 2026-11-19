@@ -5,8 +5,8 @@
 ## 1. 范围
 
 ```
-install/     L2 基础设施:清单校验、Artifact 摘要、Ed25519 验签、原子安装
-cmd/ada      verify / install 两个子命令
+install/     L2 基础设施:清单校验、Artifact 摘要、Ed25519 验签、原子安装、本机索引(index.json)
+host/cli     verify / install / list 命令
 ```
 
 本刀只做「校验 + 落地」;**不包含**在线拉取、索引、更新、回滚与安装同意(见 §6)。
@@ -64,6 +64,7 @@ go run ./cmd/ada verify examples/plugins-ts/hello-ts
 
 go run ./cmd/ada verify <目录> -keys keys.json -require-signature
 go run ./cmd/ada install <目录> -dest <安装根> -keys keys.json -require-signature -yes
+go run ./cmd/ada list -dest <安装根>
 ```
 
 `keys.json` 格式:
@@ -77,7 +78,7 @@ go run ./cmd/ada install <目录> -dest <安装根> -keys keys.json -require-sig
 
 ## 6. 偏差与边界
 
-1. **没有在线拉取与索引**:`index.json`、下载、版本解析、更新、回滚都未实现。
+1. **本机索引已实现,在线能力未做**:`index.json` 记录 id/version/trust/signed/caps;下载、版本解析、更新、回滚、卸载都未实现。
 2. **安装同意只有 CLI 级**:`-yes` 让 `ada install` 在展示能力后继续;桌面确认框/逐项授权未实现,`-yes` 是一次性整体同意。
 3. **没有 `$ADA_HOME/keys` 与官方 keyring**:key ring 由调用方显式提供。
 4. **trust 未进入 caps 强制**:安装得到 trust 后,没有把 `caps` 授权与 trust 关联(调用点强制仍缺)。
@@ -98,6 +99,8 @@ go run ./cmd/ada install <目录> -dest <安装根> -keys keys.json -require-sig
 | 符号链接拒绝 | `install.TestRejectsSymlink`(平台不支持时跳过) |
 | 文件数/总大小上限 | `install.TestInstallLimits` |
 | CLI:verify 能力清单、install 同意(-yes) | `host/cli.TestVerifyCaps`、`host/cli.TestInstallConsent` |
+| 索引写入与 List / 空索引 / 索引损坏 | `install.TestIndexWrittenAndListed`、`TestListEmpty`、`TestListCorrupt` |
+| CLI list:安装后条目、空列表 | `host/cli.TestList`、`host/cli.TestListEmpty` |
 
 ## 8. 下一步
 

@@ -13,7 +13,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/adag/ada-go/v2/caps"
 	"github.com/adag/ada-go/v2/compile"
@@ -23,6 +25,26 @@ import (
 
 // SignatureFile 是插件目录里的签名文件名。
 const SignatureFile = "plugin.sig.json"
+
+// IndexFile 是安装根目录下的索引文件名(记录已安装插件)。
+const IndexFile = "index.json"
+
+// IndexEntry 是索引里的一条已安装插件记录。
+type IndexEntry struct {
+	ID        string    `json:"id"`
+	Version   string    `json:"version"`
+	Kind      string    `json:"kind"`
+	Dir       string    `json:"dir"`
+	Digest    string    `json:"digest,omitempty"`
+	Trust     string    `json:"trust"`
+	Signed    bool      `json:"signed"`
+	Caps      []string  `json:"caps,omitempty"`
+	Installed time.Time `json:"installed"`
+}
+
+type indexDoc struct {
+	Entries []IndexEntry `json:"entries"`
+}
 
 // MessagePrefix 是签名原文的前缀(区分「插件签名」与其它用途的签名)。
 const MessagePrefix = "ada-plugin-v2\n"
@@ -163,6 +185,74 @@ func VerifyDir(srcDir string, opts Options) (*Info, error) {
 	return info, nil
 }
 
+// List 读取安装根目录的索引;索引不存在时返回空列表。
+func List(destRoot string) ([]IndexEntry, error) {
+	data, err := os.ReadFile(filepath.Join(destRoot, IndexFile))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("install: 读取索引失败: %w", err)
+	}
+	var doc indexDoc
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("install: 索引损坏: %w", err)
+	}
+	return doc.Entries, nil
+}
+
+func writeIndex(destRoot string, entries []IndexEntry) error {
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].ID != entries[j].ID {
+			return entries[i].ID < entries[j].ID
+		}
+		return entries[i].Version < entries[j].Version
+	})
+	data, err := json.MarshalIndent(indexDoc{Entries: entries}, "", "  ")
+	if err != nil {
+		return fmt.Errorf("install: 序列化索引失败: %w", err)
+	}
+	tmp, err := os.CreateTemp(destRoot, ".index-*")
+	if err != nil {
+		return fmt.Errorf("install: 创建索引临时文件失败: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("install: 写索引失败: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("install: 关闭索引临时文件失败: %w", err)
+	}
+	if err := os.Rename(tmpName, filepath.Join(destRoot, IndexFile)); err != nil {
+		return fmt.Errorf("install: 原子写索引失败: %w", err)
+	}
+	return nil
+}
+
+// addIndexEntry 把已安装插件写入索引(同 id@version 替换)。
+func addIndexEntry(destRoot string, info *Info) error {
+	entries, err := List(destRoot)
+	if err != nil {
+		return err
+	}
+	entry := IndexEntry{
+		ID: info.ID, Version: info.Version, Kind: info.Kind, Dir: info.Dir,
+		Digest: info.Digest, Trust: string(info.Trust), Signed: info.Signed,
+		Caps: info.Manifest.Caps, Installed: time.Now().UTC(),
+	}
+	kept := entries[:0]
+	for _, e := range entries {
+		if e.ID == entry.ID && e.Version == entry.Version {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	kept = append(kept, entry)
+	return writeIndex(destRoot, kept)
+}
+
 // Install 校验后原子安装到 <DestRoot>/<id>@<version>/。
 func Install(srcDir, destRoot string, opts Options) (*Info, error) {
 	info, err := VerifyDir(srcDir, opts)
@@ -198,6 +288,11 @@ func Install(srcDir, destRoot string, opts Options) (*Info, error) {
 		return nil, fmt.Errorf("install: 原子重命名失败: %w", err)
 	}
 	info.Dir = final
+	if err := addIndexEntry(destRoot, info); err != nil {
+		// 索引写失败 → 回滚已安装目录,不留下「装了但没人知道」的状态。
+		_ = os.RemoveAll(final)
+		return nil, fmt.Errorf("install: 写入索引失败(已回滚): %w", err)
+	}
 	return info, nil
 }
 

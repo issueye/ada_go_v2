@@ -40,6 +40,8 @@ func Run(args []string, out, errOut io.Writer) int {
 		return cmdVerify(args[1:], out, errOut)
 	case "install":
 		return cmdInstall(args[1:], out, errOut)
+	case "list":
+		return cmdList(args[1:], out, errOut)
 	default:
 		usage(errOut)
 		return 2
@@ -53,6 +55,7 @@ func usage(w io.Writer) {
   ada inspect <插件目录|--preset 文件> [-json]
   ada verify  <插件目录> [-keys 密钥文件] [-require-signature]
   ada install <插件目录> -dest <安装根> [-keys 密钥文件] [-require-signature] [-yes]
+  ada list    -dest <安装根>
 
 退出码:0=成功,1=计划不可执行/装配或校验失败,2=用法错误。
 `)
@@ -425,6 +428,54 @@ func cmdVerify(args []string, out, errOut io.Writer) int {
 }
 
 // parseInstallArgs 解析 install 参数;-dest 是 install 专属,不能走 verify 的参数解析。
+// cmdList 列出安装根目录的索引。
+func cmdList(args []string, out, errOut io.Writer) int {
+	dest := ""
+	for i := 0; i < len(args); i++ {
+		switch a := args[i]; {
+		case a == "-dest":
+			if i+1 >= len(args) {
+				fmt.Fprintln(errOut, "-dest 缺少目录参数")
+				usage(errOut)
+				return 2
+			}
+			dest = args[i+1]
+			i++
+		case strings.HasPrefix(a, "-"):
+			fmt.Fprintln(errOut, "未知参数 "+a)
+			usage(errOut)
+			return 2
+		default:
+			fmt.Fprintln(errOut, "多余的参数 "+a)
+			usage(errOut)
+			return 2
+		}
+	}
+	if dest == "" {
+		fmt.Fprintln(errOut, "缺少 -dest 安装根目录")
+		usage(errOut)
+		return 2
+	}
+	entries, err := install.List(dest)
+	if err != nil {
+		fmt.Fprintln(errOut, "读取索引失败:", err)
+		return 1
+	}
+	if len(entries) == 0 {
+		fmt.Fprintln(out, "已安装插件: (空)")
+		return 0
+	}
+	fmt.Fprintf(out, "已安装插件(%d):\n", len(entries))
+	for _, e := range entries {
+		capsList := strings.Join(e.Caps, ", ")
+		if capsList == "" {
+			capsList = "(无)"
+		}
+		fmt.Fprintf(out, "  %s@%s trust=%s signed=%v caps=%s\n", e.ID, e.Version, e.Trust, e.Signed, capsList)
+	}
+	return 0
+}
+
 func parseInstallArgs(args []string) (dir, dest, keys string, require, yes bool, bad string) {
 	for i := 0; i < len(args); i++ {
 		switch a := args[i]; {

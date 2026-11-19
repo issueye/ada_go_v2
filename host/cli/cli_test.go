@@ -162,3 +162,31 @@ func TestInstallConsent(t *testing.T) {
 		t.Fatalf("安装产物缺失: %v", err)
 	}
 }
+
+// 12. list:安装后能看到索引条目。
+func TestList(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "plugin.json"),
+		[]byte(`{"id":"list-demo","version":"0.1.0","kind":"go","caps":["fs.read"]}`), 0o644); err != nil {
+		t.Fatalf("写清单失败: %v", err)
+	}
+	dest := t.TempDir()
+	if code, _, errOut := run("install", src, "-dest", dest, "-yes"); code != 0 {
+		t.Fatalf("安装失败: code=%d err=%s", code, errOut)
+	}
+	code, out, errOut := run("list", "-dest", dest)
+	if code != 0 {
+		t.Fatalf("list 应成功,code=%d err=%s", code, errOut)
+	}
+	if !strings.Contains(out, "list-demo@0.1.0") || !strings.Contains(out, "trust=builtin") || !strings.Contains(out, "caps=fs.read") {
+		t.Fatalf("list 输出不正确:\n%s", out)
+	}
+}
+
+// 13. list:空安装根目录。
+func TestListEmpty(t *testing.T) {
+	code, out, errOut := run("list", "-dest", t.TempDir())
+	if code != 0 || !strings.Contains(out, "(空)") {
+		t.Fatalf("空列表输出不正确: code=%d err=%s out=%s", code, errOut, out)
+	}
+}

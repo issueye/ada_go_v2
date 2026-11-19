@@ -198,3 +198,52 @@ func TestInstallLimits(t *testing.T) {
 		t.Fatalf("总大小超限应拒绝,实际 %v", err)
 	}
 }
+
+// 9. 安装后写索引;List 能读回。
+func TestIndexWrittenAndListed(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "plugin.json"),
+		[]byte(`{"id":"idx-demo","version":"0.1.0","kind":"go","caps":["fs.read"]}`), 0o644); err != nil {
+		t.Fatalf("写清单失败: %v", err)
+	}
+	dest := t.TempDir()
+	if _, err := install.Install(src, dest, install.Options{}); err != nil {
+		t.Fatalf("安装失败: %v", err)
+	}
+	entries, err := install.List(dest)
+	if err != nil {
+		t.Fatalf("读取索引失败: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("索引应有 1 条,实际 %d", len(entries))
+	}
+	e := entries[0]
+	if e.ID != "idx-demo" || e.Trust != string(caps.TrustBuiltin) || e.Signed {
+		t.Fatalf("索引条目不正确: %+v", e)
+	}
+	if len(e.Caps) != 1 || e.Caps[0] != "fs.read" {
+		t.Fatalf("索引未记录能力: %+v", e)
+	}
+}
+
+// 10. 空目录:List 返回空,不报错。
+func TestListEmpty(t *testing.T) {
+	entries, err := install.List(t.TempDir())
+	if err != nil {
+		t.Fatalf("空目录不应报错: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("空目录应无条目,实际 %d", len(entries))
+	}
+}
+
+// 11. 索引损坏:明确报错。
+func TestListCorrupt(t *testing.T) {
+	dest := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dest, install.IndexFile), []byte("not json"), 0o644); err != nil {
+		t.Fatalf("写坏索引失败: %v", err)
+	}
+	if _, err := install.List(dest); err == nil || !strings.Contains(err.Error(), "损坏") {
+		t.Fatalf("损坏索引应报错,实际 %v", err)
+	}
+}
