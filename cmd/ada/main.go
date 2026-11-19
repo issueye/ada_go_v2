@@ -9,6 +9,8 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -16,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/adag/ada-go/v2/assemble"
+	"github.com/adag/ada-go/v2/install"
 	"github.com/adag/ada-go/v2/kernel"
 	"github.com/adag/ada-go/v2/loader"
 	"github.com/adag/ada-go/v2/plugin"
@@ -34,6 +37,10 @@ func main() {
 		os.Exit(cmdUp(os.Args[2:]))
 	case "inspect":
 		os.Exit(cmdInspect(os.Args[2:]))
+	case "verify":
+		os.Exit(cmdVerify(os.Args[2:]))
+	case "install":
+		os.Exit(cmdInstall(os.Args[2:]))
 	default:
 		usage()
 		os.Exit(2)
@@ -45,8 +52,10 @@ func usage() {
   ada plan    <插件目录|--preset 文件> [-json]
   ada up      <插件目录|--preset 文件>
   ada inspect <插件目录|--preset 文件> [-json]
+  ada verify  <插件目录> [-keys 密钥文件] [-require-signature]
+  ada install <插件目录> -dest <安装根> [-keys 密钥文件] [-require-signature]
 
-退出码:0=成功,1=计划不可执行或装配失败,2=用法错误。
+退出码:0=成功,1=计划不可执行/装配或校验失败,2=用法错误。
 `)
 }
 
@@ -329,5 +338,118 @@ func cmdInspect(args []string) int {
 		fmt.Printf("  %-12s %s\n", e.Plugin, e.Label)
 	}
 	fmt.Println("events:", strings.Join(snap.Events, ", "))
+	return 0
+}
+
+// keyFile 是密钥文件:keyId → {public(base64), trust}。
+type keyFileEntry struct {
+	Public string `json:"public"`
+	Trust  string `json:"trust"`
+}
+
+func loadKeyRing(path string) (map[string]install.Key, error) {
+	if path == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var raw map[string]keyFileEntry
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	out := make(map[string]install.Key, len(raw))
+	for id, entry := range raw {
+		pub, err := base64.StdEncoding.DecodeString(entry.Public)
+		if err != nil {
+			return nil, fmt.Errorf("密钥 %q 不是合法 base64: %w", id, err)
+		}
+		trust, err := install.TrustFromKey(entry.Trust)
+		if err != nil {
+			return nil, err
+		}
+		out[id] = install.Key{Public: ed25519.PublicKey(pub), Trust: trust}
+	}
+	return out, nil
+}
+
+func parseVerifyArgs(args []string) (dir, keys string, require bool, bad string) {
+	for i := 0; i < len(args); i++ {
+		switch a := args[i]; {
+		case a == "-keys":
+			if i+1 >= len(args) {
+				return "", "", false, "-keys 缺少文件参数"
+			}
+			keys = args[i+1]
+			i++
+		case a == "-require-signature":
+			require = true
+		case strings.HasPrefix(a, "-"):
+			return "", "", false, "未知参数 " + a
+		default:
+			if dir != "" {
+				return "", "", false, "多余的参数 " + a
+			}
+			dir = a
+		}
+	}
+	if dir == "" {
+		return "", "", false, "需要给出插件目录"
+	}
+	return dir, keys, require, ""
+}
+
+func cmdVerify(args []string) int {
+	dir, keysPath, require, bad := parseVerifyArgs(args)
+	if bad != "" {
+		fmt.Fprintln(os.Stderr, bad)
+		usage()
+		return 2
+	}
+	keys, err := loadKeyRing(keysPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "加载密钥失败:", err)
+		return 1
+	}
+	info, err := install.VerifyDir(dir, install.Options{Keys: keys, RequireSignature: require})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "校验失败:", err)
+		return 1
+	}
+	fmt.Printf("插件: %s@%s(%s)\n摘要: %s\n信任: %s\n已签名: %v\n",
+		info.ID, info.Version, info.Kind, info.Digest, info.Trust, info.Signed)
+	return 0
+}
+
+func cmdInstall(args []string) int {
+	dir, keysPath, require, bad := parseVerifyArgs(args)
+	if bad != "" {
+		fmt.Fprintln(os.Stderr, bad)
+		usage()
+		return 2
+	}
+	dest := ""
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-dest" && i+1 < len(args) {
+			dest = args[i+1]
+		}
+	}
+	if dest == "" {
+		fmt.Fprintln(os.Stderr, "缺少 -dest 安装根目录")
+		usage()
+		return 2
+	}
+	keys, err := loadKeyRing(keysPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "加载密钥失败:", err)
+		return 1
+	}
+	info, err := install.Install(dir, dest, install.Options{Keys: keys, RequireSignature: require})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "安装失败:", err)
+		return 1
+	}
+	fmt.Printf("已安装: %s@%s → %s(信任 %s,已签名 %v)\n", info.ID, info.Version, info.Dir, info.Trust, info.Signed)
 	return 0
 }
