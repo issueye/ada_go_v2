@@ -15,7 +15,7 @@ RealClock / FakeClock ──▶ Scheduler
 ```
 
 它是 **L2 基础设施(不是插件)**:只懂「时间」与「回调」,不懂业务;内核不依赖它
-(guard 的 `go list -deps ./kernel` 强制)。插件通过宿主注入的服务使用它;配额与回压由同层的 `quota.Governor` 提供(见 §4)。
+(guard 的 `go list -deps ./kernel` 强制)。插件通过宿主注入的服务使用它;配额与回压由同层的 `quota.Governor` 提供(见 §4);声明式流水线见 [m4-flow.md](m4-flow.md)。
 
 ## 2. API
 
@@ -82,7 +82,7 @@ RealClock / FakeClock ──▶ Scheduler
 
 ## 6. 已知边界与下一步
 
-1. **`flow` 流水线未做**:§12.2(3) 的声明式跨插件流程(use/event/when/retry/checkpoint/resume)是 M4 的主干。
+1. **`flow` 只做了顺序子集**:use/event/when/abort/retry/timeout/checkpoint/resume 已落地(见 [m4-flow.md](m4-flow.md));parallel/fanout/forEach/subflow/Compensate 未做。
 2. **激活与闲置回收未做**:§12.3 的 `onService/onCron/...` 延迟激活、`idleTTL` 回收需要 kernel 侧调度挂钩。
 3. **配额只做了速率与并发**:`MaxCPUTime`/`MaxMemory` 需要计量,全局 governor 与跨插件总并发上限未做。
 4. **jobs 的补跑策略未做**:`skip/once/all` 与 `store` 租约(防多窗口重复执行)。
