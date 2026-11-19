@@ -148,6 +148,7 @@ type Runtime interface {
 | retry 成功 / 用尽失败 | `flow.TestRetrySucceeds`、`flow.TestRetryExhausted` |
 | 步骤超时 | `flow.TestStepTimeout` |
 | checkpoint / resume | `flow.TestCheckpointResume` |
+| FileStore 往返/runID 校验/原子写 | `flow.TestFileStoreRoundTrip`、`TestFileStoreRunID`、`TestFileStoreNoTemp` |
 | OnFailure 步骤 | `flow.TestOnFailureSteps` |
 | 声明式 JSON 解析与校验 | `flow.TestParseFlowJSON` |
 | 并行分支结果合并 + 后续引用 | `flow.TestParallelBranches` |
@@ -172,7 +173,7 @@ type Runtime interface {
 2. **没有子流水线**:`subflow` 与 trace 共享未实现。
 3. **补偿已实现**:逆序、尽力而为;没有「补偿成功后回滚状态」的语义,也不保证重试全部补偿步骤。
 4. **参数模板只有 `$.path`**:不支持在 args 里写表达式;需要时先做求值器扩展。
-5. **检查点只有内存实现**:`MemoryStore` 供测试;落 `ctx.store` 需要 store seam(M4.5/M6)。
+5. **检查点有内存与文件两种实现**:`MemoryStore`(测试)与 `FileStore`(JSON 文件、原子写、runID 白名单);没有跨进程锁与 fsync,`ctx.store` 仍需 store seam(M4.5/M6)。
 6. **没有 flow 服务插件**:目前由宿主/插件在代码里调用 `flow.Run`;还没有 `flow` 服务与清单入口。
 7. **JS 侧不可用**:bridge 尚未暴露 flow API。
 
