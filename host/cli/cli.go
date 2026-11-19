@@ -54,6 +54,8 @@ func Run(args []string, out, errOut io.Writer) int {
 		return cmdCaps(args[1:], out, errOut)
 	case "repo":
 		return cmdRepo(args[1:], out, errOut)
+	case "check":
+		return cmdCheck(args[1:], out, errOut)
 	case "update":
 		return cmdUpdate(args[1:], out, errOut)
 	default:
@@ -75,6 +77,7 @@ func usage(w io.Writer) {
   ada rollback <插件 id> -dest <安装根>
   ada caps    <插件目录|--preset 文件> [-json]
   ada repo    <仓库索引 URL> [-keys 密钥文件] [-require-repo-signature] [-json]
+  ada check   <插件目录|--preset 文件> [-json]
   ada update  <插件 id> -repo <仓库目录> |-repo-url <索引 URL> -dest <安装根> [-keys 密钥文件] [-require-signature] [-require-repo-signature] [-yes]
 
 退出码:0=成功,1=计划不可执行/装配或校验失败,2=用法错误。

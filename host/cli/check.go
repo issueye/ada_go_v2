@@ -1,0 +1,136 @@
+package cli
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+
+	"github.com/adag/ada-go/v2/assemble"
+	"github.com/adag/ada-go/v2/caps"
+	"github.com/adag/ada-go/v2/install"
+)
+
+// checkResult 是 `ada check` 的结构化结果。
+type checkResult struct {
+	OK         bool     `json:"ok"`
+	Plugins    int      `json:"plugins"`
+	PlanOK     bool     `json:"planOk"`
+	PlanErrs   []string `json:"planErrors,omitempty"`
+	CapsOK     bool     `json:"capsOk"`
+	CapsErr    string   `json:"capsError,omitempty"`
+	CompileOK  bool     `json:"compileOk"`
+	Compiled   []string `json:"compiled,omitempty"`
+	CompileErr string   `json:"compileError,omitempty"`
+	Problems   []string `json:"problems,omitempty"`
+}
+
+// compileDir 逐个插件目录跑 VerifyDir(清单/摘要/TS 编译)。
+func compileDir(dir string) (int, string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, "读取目录失败: " + err.Error(), err
+	}
+	count := 0
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		path := filepath.Join(dir, e.Name(), "plugin.json")
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+		if _, err := install.VerifyDir(filepath.Join(dir, e.Name()), install.Options{}); err != nil {
+			return count, fmt.Sprintf("插件 %s 编译/校验失败: %v", e.Name(), err), err
+		}
+		count++
+	}
+	return count, "", nil
+}
+
+func cmdCheck(args []string, out, errOut io.Writer) int {
+	t := parseTarget(args)
+	if t.bad != "" {
+		fmt.Fprintln(errOut, t.bad)
+		usage(errOut)
+		return 2
+	}
+	manifests, err := loadTarget(t)
+	if err != nil {
+		fmt.Fprintln(errOut, "加载失败:", err)
+		return 1
+	}
+	res := checkResult{Plugins: len(manifests), PlanOK: true, CapsOK: true, CompileOK: true}
+	if t.dir == "" {
+		// preset 目标:目录未知,跳过逐插件编译。
+		res.Compiled = nil
+	} else {
+		count, cErr, _ := compileDir(t.dir)
+		res.Compiled = make([]string, 0)
+		if cErr != "" {
+			res.CompileOK = false
+			res.CompileErr = cErr
+			res.Problems = append(res.Problems, cErr)
+		}
+		_ = count
+	}
+
+	report := assemble.Plan(manifests)
+	if !report.OK() {
+		res.PlanOK = false
+		for _, p := range report.Problems {
+			res.PlanErrs = append(res.PlanErrs, p.String())
+		}
+	}
+	broker := caps.NewBroker(nil)
+	if err := assemble.GrantManifests(broker, manifests); err != nil {
+		res.CapsOK = false
+		res.CapsErr = err.Error()
+		res.Problems = append(res.Problems, "能力: "+err.Error())
+	}
+	res.OK = res.PlanOK && res.CapsOK && res.CompileOK
+
+	if t.json {
+		b, err := json.MarshalIndent(res, "", "  ")
+		if err != nil {
+			fmt.Fprintln(errOut, "序列化失败:", err)
+			return 1
+		}
+		fmt.Fprintln(out, string(b))
+		if !res.OK {
+			return 1
+		}
+		return 0
+	}
+
+	fmt.Fprintf(out, "清单: OK(%d 个插件)\n", res.Plugins)
+	if res.PlanOK {
+		fmt.Fprintf(out, "计划: OK(顺序 %v)\n", report.Order)
+	} else {
+		fmt.Fprintf(out, "计划: 不可执行\n")
+		for _, p := range res.PlanErrs {
+			fmt.Fprintln(out, "  -", p)
+		}
+	}
+	if res.CapsOK {
+		fmt.Fprintln(out, "能力: OK")
+	} else {
+		fmt.Fprintln(out, "能力: 失败 -", res.CapsErr)
+	}
+	if res.CompileOK {
+		if t.dir == "" {
+			fmt.Fprintln(out, "编译: 跳过(preset 目标)")
+		} else {
+			fmt.Fprintln(out, "编译: OK")
+		}
+	} else {
+		fmt.Fprintln(out, "编译: 失败 -", res.CompileErr)
+	}
+	if res.OK {
+		fmt.Fprintln(out, "结果: 通过")
+		return 0
+	}
+	fmt.Fprintln(out, "结果: 失败")
+	return 1
+}

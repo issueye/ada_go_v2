@@ -552,3 +552,48 @@ func TestUpdateRemote(t *testing.T) {
 		t.Fatalf("旧版本应被清理")
 	}
 }
+
+// 28. check:合法目录通过;TS 目录编译通过;非法 caps 失败。
+func TestCheck(t *testing.T) {
+	code, out, errOut := run("check", "../../examples/plugins")
+	if code != 0 || !strings.Contains(out, "结果: 通过") {
+		t.Fatalf("check 失败: code=%d err=%s out=%s", code, errOut, out)
+	}
+	code, out, errOut = run("check", "../../examples/plugins-ts")
+	if code != 0 || !strings.Contains(out, "编译: OK") {
+		t.Fatalf("TS check 失败: code=%d err=%s out=%s", code, errOut, out)
+	}
+
+	bad := t.TempDir()
+	sub := filepath.Join(bad, "bad")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatalf("建目录失败: %v", err)
+	}
+	manifest := `{"id":"bad","version":"0.1.0","kind":"go","trust":"third-party","caps":["fs.write"]}`
+	if err := os.WriteFile(filepath.Join(sub, "plugin.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("写清单失败: %v", err)
+	}
+	code, out, errOut = run("check", bad)
+	if code != 1 || !strings.Contains(out, "能力: 失败") {
+		t.Fatalf("非法 caps 应失败: code=%d err=%s out=%s", code, errOut, out)
+	}
+}
+
+// 29. check -json:结构化输出。
+func TestCheckJSON(t *testing.T) {
+	code, out, _ := run("check", "../../examples/plugins", "-json")
+	if code != 0 {
+		t.Fatalf("check -json 应通过: code=%d", code)
+	}
+	var payload struct {
+		OK     bool `json:"ok"`
+		PlanOK bool `json:"planOk"`
+		CapsOK bool `json:"capsOk"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("输出不是合法 JSON: %v\n%s", err, out)
+	}
+	if !payload.OK || !payload.PlanOK || !payload.CapsOK {
+		t.Fatalf("JSON 内容不正确: %+v", payload)
+	}
+}

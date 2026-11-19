@@ -25,6 +25,7 @@ cmd/ada/     只做 os.Exit(cli.Run(os.Args[1:], os.Stdout, os.Stderr))
 | `verify <目录> [-keys 文件] [-require-signature]` | 清单/摘要/验签/信任 |
 | `caps <目录|--preset 文件> [-json]` | 静态能力自检:清单 caps/trust → Broker 授权 |
 | `repo <索引 URL> [-keys] [-require-repo-signature] [-json]` | 在线读取仓库索引(可选验签) |
+| `check <目录|--preset 文件> [-json]` | 清单 + 依赖图 + caps + 逐插件编译校验 |
 | `install <目录> -dest <根> [-keys 文件] [-require-signature]` | 校验后原子安装 |
 
 退出码:`0` 成功 / `1` 计划不可执行或装配/校验失败 / `2` 用法错误。
