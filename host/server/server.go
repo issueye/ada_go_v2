@@ -8,7 +8,9 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -36,6 +38,26 @@ type Options struct {
 	RateLimit int
 	// Now 可注入时钟(测试用);nil 表示 time.Now。
 	Now func() time.Time
+}
+
+// Serve 在 ln 上提供只读 HTTP API,ctx 取消时优雅关闭(返回 nil)。
+func Serve(ctx context.Context, opts Options, ln net.Listener) error {
+	h, err := NewHandler(opts)
+	if err != nil {
+		return err
+	}
+	srv := &http.Server{Handler: h}
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdownCtx)
+	}()
+	err = srv.Serve(ln)
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+	return err
 }
 
 // Server 是只读 HTTP 适配器。

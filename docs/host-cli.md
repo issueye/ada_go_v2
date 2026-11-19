@@ -27,6 +27,7 @@ cmd/ada/     只做 os.Exit(cli.Run(os.Args[1:], os.Stdout, os.Stderr))
 | `repo <索引 URL> [-keys] [-require-repo-signature] [-json]` | 在线读取仓库索引(可选验签) |
 | `check <目录|--preset 文件> [-json]` | 清单 + 依赖图 + caps + 逐插件编译校验 |
 | `serve-repo -root <目录> -addr <地址> [-token]` | 只读仓库服务(SIGINT 优雅停止) |
+| `serve -root <目录> -addr <地址> [-token] [-rate-limit N]` | 只读 HTTP API 服务(SIGINT 优雅停止) |
 | `install <目录> -dest <根> [-keys 文件] [-require-signature]` | 校验后原子安装 |
 
 退出码:`0` 成功 / `1` 计划不可执行或装配/校验失败 / `2` 用法错误。

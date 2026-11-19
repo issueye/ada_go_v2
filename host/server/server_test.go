@@ -1,7 +1,10 @@
 package server_test
 
 import (
+	"context"
 	"encoding/json"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -264,5 +267,38 @@ func TestRateLimit(t *testing.T) {
 	now = now.Add(time.Second)
 	if rec := get(); rec.Code != http.StatusOK {
 		t.Fatalf("窗口复位后应 200,实际 %d", rec.Code)
+	}
+}
+
+// 12. Serve:监听 :0 + 请求 + ctx 取消优雅关闭。
+func TestServeGraceful(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("监听失败: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- server.Serve(ctx, server.Options{Root: "../../examples"}, ln)
+	}()
+	resp, err := http.Get("http://" + ln.Addr().String() + "/api/plan?path=plugins")
+	if err != nil {
+		cancel()
+		t.Fatalf("请求失败: %v", err)
+	}
+	_, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		cancel()
+		t.Fatalf("状态码不正确: %d", resp.StatusCode)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("优雅关闭应返回 nil: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatalf("Serve 未在超时内退出")
 	}
 }

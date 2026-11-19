@@ -9,10 +9,12 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 
 	"github.com/adag/ada-go/v2/assemble"
 	"github.com/adag/ada-go/v2/caps"
 	"github.com/adag/ada-go/v2/host/registry"
+	"github.com/adag/ada-go/v2/host/server"
 	"github.com/adag/ada-go/v2/install"
 )
 
@@ -193,6 +195,80 @@ func cmdServeRepo(args []string, out, errOut io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	if err := registry.Serve(ctx, registry.Options{Root: root, Token: token}, ln); err != nil {
+		fmt.Fprintln(errOut, "服务失败:", err)
+		return 1
+	}
+	fmt.Fprintln(out, "已停止。")
+	return 0
+}
+
+func cmdServe(args []string, out, errOut io.Writer) int {
+	root := ""
+	addr := "127.0.0.1:8080"
+	token := ""
+	rateLimit := 0
+	bad := ""
+	for i := 0; i < len(args); i++ {
+		switch a := args[i]; {
+		case a == "-root":
+			if i+1 >= len(args) {
+				bad = "-root 缺少目录参数"
+				break
+			}
+			root = args[i+1]
+			i++
+		case a == "-addr":
+			if i+1 >= len(args) {
+				bad = "-addr 缺少地址参数"
+				break
+			}
+			addr = args[i+1]
+			i++
+		case a == "-token":
+			if i+1 >= len(args) {
+				bad = "-token 缺少值"
+				break
+			}
+			token = args[i+1]
+			i++
+		case a == "-rate-limit":
+			if i+1 >= len(args) {
+				bad = "-rate-limit 缺少数值"
+				break
+			}
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil {
+				bad = "-rate-limit 必须是整数"
+			} else {
+				rateLimit = n
+			}
+			i++
+		default:
+			bad = "未知参数 " + a
+		}
+		if bad != "" {
+			break
+		}
+	}
+	if bad != "" {
+		fmt.Fprintln(errOut, bad)
+		usage(errOut)
+		return 2
+	}
+	if root == "" {
+		fmt.Fprintln(errOut, "需要 -root 根目录")
+		usage(errOut)
+		return 2
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		fmt.Fprintln(errOut, "监听失败:", err)
+		return 1
+	}
+	fmt.Fprintf(out, "HTTP 服务: http://%s\n", ln.Addr().String())
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	if err := server.Serve(ctx, server.Options{Root: root, Token: token, RateLimit: rateLimit}, ln); err != nil {
 		fmt.Fprintln(errOut, "服务失败:", err)
 		return 1
 	}

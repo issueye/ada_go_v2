@@ -30,11 +30,11 @@ host/server/   只读 HTTP API:plan / caps / list
 `resolve` 做三层检查:相对路径 + lexical 越界 + `EvalSymlinks` 后的越界(防止符号链接逃逸)。
 根目录在 `NewHandler` 时解析为绝对路径并解析符号链接一次。
 
-## 5. 测试
+## 4.1 Serve 与 CLI\n\n- `server.Serve(ctx, opts, ln)` 在 listener 上服务,ctx 取消时 `Shutdown` 并返回 nil;\n- `ada serve -root <目录> -addr <地址> [-token] [-rate-limit N]`:监听并打印地址,SIGINT 优雅停止;\n\n## 5. 测试
 
 `host/server.Test*` 用 `httptest` 直接打 handler:
 
-- plan 顺序、caps 授权、路径逃逸 400、POST 405、list 索引、根路由、inspect 内置栈快照、verify 插件、Token 认证、限流;
+- plan 顺序、caps 授权、路径逃逸 400、POST 405、list 索引、根路由、inspect 内置栈快照、verify 插件、Token 认证、限流、Serve 优雅退出;
 - 不启动真实端口,不依赖网络。
 
 ## 6. 偏差与边界
