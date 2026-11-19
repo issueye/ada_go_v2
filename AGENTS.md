@@ -2,7 +2,7 @@
 
 > 给在本仓库工作的 AI 代理与人类协作者。**动代码之前先读这一份**；它与设计文档冲突时，以本文件的红线为准，并立刻提 issue 修正文档。
 
-**当前阶段:M1 内核、M2 执行层、M3 装配、M4 编排(`sched`/`quota`/`flow`/`bundle`,内核支持闲置回收)、M4.5 seam、M5 安全(`fs`/`fs-local`/`fs-sandbox`、`shell`/`shell-local`/`shell-guard`、`sandbox`/`sandbox-none`,且 fs/shell 策略已调用 sandbox.Resolve、可升级拒绝走 approval、caps 静态授权、install 校验与原子落盘)已落地**,M5 剩余 caps 调用点强制/安装同意/宿主/OS 级沙箱。本文件始终生效:先用它约束设计,再用它约束实现。
+**当前阶段:M1 内核、M2 执行层、M3 装配、M4 编排(`sched`/`quota`/`flow`/`bundle`,内核支持闲置回收)、M4.5 seam、M5 安全(`fs`/`fs-local`/`fs-sandbox`、`shell`/`shell-local`/`shell-guard`、`sandbox`/`sandbox-none`,且 fs/shell 策略已调用 sandbox.Resolve、可升级拒绝走 approval、caps 静态授权、install 校验与原子落盘、`host/cli` 宿主适配器)已落地**,M5 剩余 caps 调用点强制/安装同意/desktop·server 宿主/OS 级沙箱。本文件始终生效:先用它约束设计,再用它约束实现。
 
 ---
 
@@ -44,6 +44,7 @@
 | [m4-flow.md](docs/m4-flow.md) | M4 流水线:声明式 flow、受限表达式、checkpoint/resume |
 | [m4-composition.md](docs/m4-composition.md) | M4 组合层:bundle / profile(整体替换与补丁) |
 | [version.md](docs/version.md) | 版本与引擎约束:semver 解析与 engine/engines 校验 |
+| [host-cli.md](docs/host-cli.md) | M5 宿主适配器第一刀:host/cli 命令实现与测试 |
 | [seam-fs.md](docs/seam-fs.md) | M5 安全第一刀:seam/fs、fs-local 实现与 fs-sandbox 策略 |
 | [seam-shell.md](docs/seam-shell.md) | M5 安全第二刀:seam/shell、shell-local 实现与 shell-guard 策略 |
 | [seam-sandbox.md](docs/seam-sandbox.md) | M5 安全第三刀:seam/sandbox 与 sandbox-none(policy-only) |
