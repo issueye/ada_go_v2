@@ -189,6 +189,7 @@ go run ./cmd/ada up   --preset examples/presets/ts-only.preset.json
 | TriggerOnCron 参数校验/注册冲突/Dispose | `assemble.TestTriggerOnCronValidation`、`TestTriggerOnCronRegister` |
 | 并发 Ensure 只挂载一次(-race) | `assemble.TestDeferredConcurrentEnsure` |
 | 并发 TriggerOnCron 只成功一次 | `assemble.TestDeferredConcurrentTrigger` |
+| TriggerOnEvent 触发/取消/参数 | `assemble.TestTriggerOnEvent` |
 | 清单信息不足/未知 kind / 扫描排除规则 | `loader.TestTSLookupErrors`、`loader.TestCollectSources` |
 
 ## 9. 已知边界与下一步
@@ -200,7 +201,7 @@ go run ./cmd/ada up   --preset examples/presets/ts-only.preset.json
 5. **Go 插件无法从 CLI 动态加载**:Go 插件必须编译进宿主,CLI 只对 ts 插件完整可用。
 6. **隔离槽**:`Isolate` 语义还没进入清单(`isolate: { shell: true }`)。
 7. **热重载/增量编译**未做:每次 `ada up` 都是全量编译。
-8. **自动触发未做**:延迟激活只有宿主显式 `Ensure`;`onService`/`onCron` 触发器未实现。
+8. **触发 helper 已做**:`EnsureForService`/`TriggerOnCron`/`TriggerOnEvent`;真正的事件源(onPage/命令面板)仍由宿主产生。
 
 ## 10. 验证命令
 

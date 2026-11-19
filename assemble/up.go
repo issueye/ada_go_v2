@@ -130,11 +130,12 @@ func mountOne(app *kernel.App, m *plugin.Manifest, lookup Lookup, report *UpRepo
 
 // Deferred 是延迟激活插件的句柄:宿主在需要时调用 Ensure 挂载。
 type Deferred struct {
-	app      *kernel.App
-	byID     map[string]*plugin.Manifest
-	lookup   Lookup
-	mounted  map[string]*kernel.Fiber
-	triggers map[string]bool
+	app           *kernel.App
+	byID          map[string]*plugin.Manifest
+	lookup        Lookup
+	mounted       map[string]*kernel.Fiber
+	triggers      map[string]bool
+	eventTriggers map[string]bool
 
 	// mu 保护 mounted / triggers;并发 Ensure 也由它保证只挂载一次。
 	mu sync.Mutex
@@ -273,6 +274,47 @@ func (d *Deferred) TriggerOnCron(s *sched.Scheduler, store sched.JobStore, id, c
 	return func(ctx context.Context) error {
 		d.mu.Lock()
 		delete(d.triggers, id)
+		d.mu.Unlock()
+		return dispose(ctx)
+	}, nil
+}
+
+// TriggerOnEvent 订阅一个根事件,事件到达时 Ensure 指定的 on-demand 插件。
+//
+// 用于 onPage/onCommand 等宿主事件;返回 Dispose 取消订阅。事件处理器里的错误
+// 会返回给事件总线(不会回滚已挂载插件)。
+func (d *Deferred) TriggerOnEvent(event, id string) (kernel.Dispose, error) {
+	if event == "" {
+		return nil, fmt.Errorf("assemble: 事件名不能为空")
+	}
+	m, ok := d.byID[id]
+	if !ok {
+		return nil, fmt.Errorf("assemble: 未知的延迟插件 %q", id)
+	}
+	if m.Activation != "on-demand" {
+		return nil, fmt.Errorf("assemble: 插件 %q 不是 on-demand(activation=%q)", id, m.Activation)
+	}
+	key := event + "|" + id
+	d.mu.Lock()
+	if d.eventTriggers == nil {
+		d.eventTriggers = map[string]bool{}
+	}
+	if d.eventTriggers[key] {
+		d.mu.Unlock()
+		return nil, fmt.Errorf("assemble: 事件 %q 已订阅过插件 %q", event, id)
+	}
+	d.eventTriggers[key] = true
+	d.mu.Unlock()
+
+	dispose := d.app.Root().On(event, func(ctx context.Context, _ *kernel.Context, _ []any) (any, error) {
+		if _, err := d.Ensure(ctx, id); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	})
+	return func(ctx context.Context) error {
+		d.mu.Lock()
+		delete(d.eventTriggers, key)
 		d.mu.Unlock()
 		return dispose(ctx)
 	}, nil

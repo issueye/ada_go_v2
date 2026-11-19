@@ -344,3 +344,38 @@ func TestDeferredConcurrentTrigger(t *testing.T) {
 	}
 	mu.Unlock()
 }
+
+// 11. TriggerOnEvent:事件触发 on-demand 挂载;Dispose 取消。
+func TestTriggerOnEvent(t *testing.T) {
+	app := newApp(t)
+	ms := lazyManifests()
+	plan := assemble.Plan(ms)
+	_, deferred, err := assemble.UpLazy(app, ms, plan, lazyLookup(t))
+	if err != nil {
+		t.Fatalf("UpLazy 失败: %v", err)
+	}
+	if _, err := deferred.TriggerOnEvent("page/open", "nope"); err == nil {
+		t.Fatalf("未知插件应报错")
+	}
+	if _, err := deferred.TriggerOnEvent("page/open", "startup"); err == nil {
+		t.Fatalf("非 on-demand 应报错")
+	}
+	dispose, err := deferred.TriggerOnEvent("page/open", "lazy")
+	if err != nil {
+		t.Fatalf("订阅失败: %v", err)
+	}
+	if got := len(app.Inspect().Fibers); got != 1 {
+		t.Fatalf("订阅时不应挂载,实际 %d", got)
+	}
+	app.Root().Emit("page/open")
+	if got := len(app.Inspect().Fibers); got != 2 {
+		t.Fatalf("事件应触发挂载,实际 %d", got)
+	}
+	if err := dispose(context.Background()); err != nil {
+		t.Fatalf("取消订阅失败: %v", err)
+	}
+	app.Root().Emit("page/open")
+	if got := len(app.Inspect().Fibers); got != 2 {
+		t.Fatalf("取消后不应再挂载,实际 %d", got)
+	}
+}
