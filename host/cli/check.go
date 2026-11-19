@@ -207,6 +207,8 @@ func cmdServe(args []string, out, errOut io.Writer) int {
 	addr := "127.0.0.1:8080"
 	token := ""
 	rateLimit := 0
+	certFile := ""
+	keyFile := ""
 	bad := ""
 	for i := 0; i < len(args); i++ {
 		switch a := args[i]; {
@@ -230,6 +232,20 @@ func cmdServe(args []string, out, errOut io.Writer) int {
 				break
 			}
 			token = args[i+1]
+			i++
+		case a == "-cert":
+			if i+1 >= len(args) {
+				bad = "-cert 缺少文件"
+				break
+			}
+			certFile = args[i+1]
+			i++
+		case a == "-key":
+			if i+1 >= len(args) {
+				bad = "-key 缺少文件"
+				break
+			}
+			keyFile = args[i+1]
 			i++
 		case a == "-rate-limit":
 			if i+1 >= len(args) {
@@ -268,7 +284,10 @@ func cmdServe(args []string, out, errOut io.Writer) int {
 	fmt.Fprintf(out, "HTTP 服务: http://%s\n", ln.Addr().String())
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	if err := server.Serve(ctx, server.Options{Root: root, Token: token, RateLimit: rateLimit}, ln); err != nil {
+	if err := server.Serve(ctx, server.Options{
+		Root: root, Token: token, RateLimit: rateLimit,
+		CertFile: certFile, KeyFile: keyFile,
+	}, ln); err != nil {
 		fmt.Fprintln(errOut, "服务失败:", err)
 		return 1
 	}

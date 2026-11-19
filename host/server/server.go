@@ -38,6 +38,9 @@ type Options struct {
 	RateLimit int
 	// Now 可注入时钟(测试用);nil 表示 time.Now。
 	Now func() time.Time
+	// CertFile/KeyFile 成对出现时 Serve 使用 TLS;只出现一个报错。
+	CertFile string
+	KeyFile  string
 }
 
 // Serve 在 ln 上提供只读 HTTP API,ctx 取消时优雅关闭(返回 nil)。
@@ -46,6 +49,9 @@ func Serve(ctx context.Context, opts Options, ln net.Listener) error {
 	if err != nil {
 		return err
 	}
+	if (opts.CertFile == "") != (opts.KeyFile == "") {
+		return fmt.Errorf("host/server: CertFile 与 KeyFile 必须成对提供")
+	}
 	srv := &http.Server{Handler: h}
 	go func() {
 		<-ctx.Done()
@@ -53,7 +59,11 @@ func Serve(ctx context.Context, opts Options, ln net.Listener) error {
 		defer cancel()
 		_ = srv.Shutdown(shutdownCtx)
 	}()
-	err = srv.Serve(ln)
+	if opts.CertFile != "" {
+		err = srv.ServeTLS(ln, opts.CertFile, opts.KeyFile)
+	} else {
+		err = srv.Serve(ln)
+	}
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
