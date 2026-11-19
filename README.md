@@ -59,6 +59,7 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 | [version.md](docs/version.md) | 版本与引擎约束:semver 解析与 engine/engines 校验 |
 | [host-cli.md](docs/host-cli.md) | M5 宿主适配器第一刀:host/cli 命令实现与测试 |
 | [host-server.md](docs/host-server.md) | 第二宿主适配器:host/server 只读 HTTP API |
+| [host-desktop.md](docs/host-desktop.md) | 宿主适配器骨架:host/desktop 视图映射 |
 | [seam-net.md](docs/seam-net.md) | M5 网络能力:seam/net 与 provider/net-http |
 | [seam-secrets.md](docs/seam-secrets.md) | M5 secret 能力:seam/secrets 与 provider/secrets-env |
 | [seam-session.md](docs/seam-session.md) | seam/session 与 session-memory |
@@ -84,7 +85,7 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 ## 当前状态:M1 内核 + M2 执行层 + M3 装配 + M4 编排 + M4.5 seam + M5 安全(fs/shell/sandbox/approval,三闸串联)
 
 ```powershell
-go test -race -count=1 -timeout 300s ./...   # 354 个用例:kernel 29 + schema 7 + compile 6 + jsrt 15 + bridge 3 + plugin 7 + preset 5 + assemble 21 + loader 5 + session 3 + sched 27 + quota 11 + flow 26 + expr 2 + bundle 12 + version 3 + caps 6 + install 29 + fs 12 + shell 17 + sandbox 5 + approval 10 + approval-cli 5 + caps-gate 4 + fs-redact 5 + fs-observe 5 + shell-observe 5 + shell-redact 5 + net-http 6 + net-guard 7 + net-observe 3 + secrets-env 5 + secrets-guard 3 + caps-static 1 + host/builtins 3 + host/cli 27 + host/server 9
+go test -race -count=1 -timeout 300s ./...   # 356 个用例:kernel 29 + schema 7 + compile 6 + jsrt 15 + bridge 3 + plugin 7 + preset 5 + assemble 21 + loader 5 + session 3 + sched 27 + quota 11 + flow 26 + expr 2 + bundle 12 + version 3 + caps 6 + install 29 + fs 12 + shell 17 + sandbox 5 + approval 10 + approval-cli 5 + caps-gate 4 + fs-redact 5 + fs-observe 5 + shell-observe 5 + shell-redact 5 + net-http 6 + net-guard 7 + net-observe 3 + secrets-env 5 + secrets-guard 3 + caps-static 1 + host/builtins 3 + host/cli 27 + host/server 9 + host/desktop 2
 go run ./cmd/ada-demo                        # 依赖门控 + 级联重载演示
 pwsh scripts/guard.ps1                       # 门禁:词汇/依赖/gofmt/build/vet/staticcheck/race/交叉编译/预算
 go run ./cmd/ada-ts-demo                     # M2:TS 插件编译→加载→提供服务/派发事件→内核消费
@@ -102,7 +103,7 @@ go run ./cmd/ada caps examples/plugins -json          # M5:能力自检(caps/tru
 pwsh scripts/bench.ps1                       # 性能预算:≤20 μs/次、50 插件冷启动 ≤150 ms
 ```
 
-已完成:`kernel/`(Context / Fiber / Service / Effect / Event / Config / Schema / 闲置回收)、`kernel/schema`、`cmd/ada`、`cmd/ada-demo`、`cmd/ada-ts-demo`、`compile/`(esbuild)、`jsrt/`(moejs)、`bridge/`、`plugin/`(清单)、`preset/`(组合数据)、`assemble/`(计划/事务)、`loader/`(按 kind 装载)、`assemble/` 延迟激活(`UpLazy`/`Deferred`)、`plugins/seam/session`(seam + 契约测试)、`plugins/provider/session-memory`、`sched/`(调度底座)、`quota/`(配额与回压)、`flow/`(声明式流水线)、`bundle/`(组合层)、`expr/`(受限表达式)、`plugins/seam/fs` + `provider/fs-local` + `policy/fs-sandbox`、`plugins/seam/shell` + `provider/shell-local` + `policy/shell-guard`、`plugins/policy/fs-redact`(脱敏)、`plugins/policy/fs-observe`·`shell-observe`(观察事件)、`shell-redact`(输出脱敏)、`plugins/seam/sandbox` + `provider/sandbox-none`、`plugins/seam/approval` + `provider/approval-deny`、`caps/`(能力授权)、`install/`(安装与签名)、`host/cli`(命令行宿主适配器)、`host/server`(只读 HTTP 宿主)、`host/builtins`(共享内置插件)(M5 安全)、`scripts/guard.ps1`、`scripts/bench.ps1`、`docs/kernel-api.md`、`docs/m2-execution.md`、`docs/m3-assembly.md`、`docs/m4-orchestration.md`、`docs/m4-flow.md`、`docs/seam-session.md`、`docs/seam-fs.md`、`docs/seam-shell.md`、`docs/seam-sandbox.md`、`docs/seam-approval.md`、`docs/adr/0001`、`docs/adr/0002`。
+已完成:`kernel/`(Context / Fiber / Service / Effect / Event / Config / Schema / 闲置回收)、`kernel/schema`、`cmd/ada`、`cmd/ada-demo`、`cmd/ada-ts-demo`、`compile/`(esbuild)、`jsrt/`(moejs)、`bridge/`、`plugin/`(清单)、`preset/`(组合数据)、`assemble/`(计划/事务)、`loader/`(按 kind 装载)、`assemble/` 延迟激活(`UpLazy`/`Deferred`)、`plugins/seam/session`(seam + 契约测试)、`plugins/provider/session-memory`、`sched/`(调度底座)、`quota/`(配额与回压)、`flow/`(声明式流水线)、`bundle/`(组合层)、`expr/`(受限表达式)、`plugins/seam/fs` + `provider/fs-local` + `policy/fs-sandbox`、`plugins/seam/shell` + `provider/shell-local` + `policy/shell-guard`、`plugins/policy/fs-redact`(脱敏)、`plugins/policy/fs-observe`·`shell-observe`(观察事件)、`shell-redact`(输出脱敏)、`plugins/seam/sandbox` + `provider/sandbox-none`、`plugins/seam/approval` + `provider/approval-deny`、`caps/`(能力授权)、`install/`(安装与签名)、`host/cli`(命令行宿主适配器)、`host/server`(只读 HTTP 宿主)、`host/builtins`(共享内置插件)、`host/desktop`(视图映射骨架)(M5 安全)、`scripts/guard.ps1`、`scripts/bench.ps1`、`docs/kernel-api.md`、`docs/m2-execution.md`、`docs/m3-assembly.md`、`docs/m4-orchestration.md`、`docs/m4-flow.md`、`docs/seam-session.md`、`docs/seam-fs.md`、`docs/seam-shell.md`、`docs/seam-sandbox.md`、`docs/seam-approval.md`、`docs/adr/0001`、`docs/adr/0002`。
 未开始:M5 剩余(caps 运行时接线(CLI 内置栈)/在线更新/`host/desktop`·`host/server`/Windows Job Object 进程树终止/OS 级沙箱后端)、剩余 seam(`prompts`/`llm`/`tools`);M4 剩余:flow 的 fanout、触发器接线(`onCron`/`onPage`,onService 已有 helper);M4.5 剩余:投影、session-jsonl、core/session。
 
 本轮修复了 M1 评审中复现的缺陷(waterfall 超时幽灵执行、兄弟插件被误拆、failed 不可复活、卸载错误被吞、fiber 注册表泄漏、Intercept 合并反向、Stop 后仍派发、schema 静默放行),每条都有回归用例;清单见 [kernel-api.md §6](docs/kernel-api.md)。
