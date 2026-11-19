@@ -20,15 +20,40 @@ const PolicyName = "net-guard"
 // Priority 是装饰器优先级。
 const Priority = 200
 
-// New 构造授权装饰器(测试可直接使用)。
+// Resolver 解析域名到 IP(测试可注入);返回错误即视为解析失败。
+type Resolver func(ctx context.Context, host string) ([]net.IP, error)
+
+// defaultResolver 用标准解析器。
+func defaultResolver(ctx context.Context, host string) ([]net.IP, error) {
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	ips := make([]net.IP, 0, len(addrs))
+	for _, a := range addrs {
+		ips = append(ips, a.IP)
+	}
+	return ips, nil
+}
+
+// New 构造授权装饰器(使用标准解析器)。
 func New(inner seamnet.Client, broker *caps.Broker, allowPrivate bool) seamnet.Client {
-	return &guard{inner: inner, broker: broker, allowPrivate: allowPrivate}
+	return NewWithResolver(inner, broker, allowPrivate, defaultResolver)
+}
+
+// NewWithResolver 构造授权装饰器,并注入解析器。
+func NewWithResolver(inner seamnet.Client, broker *caps.Broker, allowPrivate bool, resolver Resolver) seamnet.Client {
+	if resolver == nil {
+		resolver = defaultResolver
+	}
+	return &guard{inner: inner, broker: broker, allowPrivate: allowPrivate, resolver: resolver}
 }
 
 type guard struct {
 	inner        seamnet.Client
 	broker       *caps.Broker
 	allowPrivate bool
+	resolver     Resolver
 }
 
 func (g *guard) Do(ctx context.Context, req seamnet.Request) (seamnet.Response, error) {
@@ -37,8 +62,22 @@ func (g *guard) Do(ctx context.Context, req seamnet.Request) (seamnet.Response, 
 		return seamnet.Response{}, seamnet.Invalid("URL 非法: " + req.URL)
 	}
 	host := strings.ToLower(u.Hostname())
-	if !g.allowPrivate && isPrivateHost(host) {
-		return seamnet.Response{}, seamnet.Denied("禁止访问私有/本地地址: " + host)
+	if !g.allowPrivate {
+		if isPrivateHost(host) {
+			return seamnet.Response{}, seamnet.Denied("禁止访问私有/本地地址: " + host)
+		}
+		// 域名可能解析到私网:解析后逐个检查;解析失败按拒绝处理(fail-closed)。
+		if net.ParseIP(host) == nil {
+			ips, err := g.resolver(ctx, host)
+			if err != nil {
+				return seamnet.Response{}, seamnet.Denied("域名解析失败: " + host)
+			}
+			for _, ip := range ips {
+				if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
+					return seamnet.Response{}, seamnet.Denied("域名解析到私有/本地地址: " + host)
+				}
+			}
+		}
 	}
 	id, ok := kernel.Principal(ctx)
 	if !ok {

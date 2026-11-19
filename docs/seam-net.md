@@ -33,12 +33,12 @@ plugins/policy/net-guard/    策略:principal + net.fetch.<host> + 私网段拒�
 
 ## 4. 偏差与边界
 
-1. **策略只有 `net-guard`**:caps 强制与私网拒绝已有;审批(访问未知 host 升级)与响应脱敏未实现;`net-http` 本身仍可访问任意 http(s),不装 net-guard 就没有门禁。
+1. **策略只有 `net-guard`**:caps 强制、字面私网与**域名解析后私网**拒绝已有;审批(访问未知 host 升级)与响应脱敏未实现;`net-http` 本身仍可访问任意 http(s),不装 net-guard 就没有门禁。
 2. **没有请求体大小上限**:`Request.Body` 由调用方控制;provider 不限制。
 3. **响应体全量读入内存**(到上限为止),没有流式接口。
 4. **没有代理/证书/HTTP2 配置**;用默认 Transport。
 5. **没有重试/退避**;一次失败即返回。
-6. **没有 SSRF 防护**(除 scheme 白名单);私有网段/域名解析在 provider 层不拦。
+6. **SSRF 防护在 policy 层**:`net-guard` 拒绝字面私网与解析后的私网 IP;但存在 **TOCTOU**(校验时解析与请求时解析可能不同),且 provider 直接用默认 Transport,不做连接级地址校验。
 7. **重定向后的最终 URL** 记录在 `Response.URL`,但中间跳转不可见。
 
 ## 5. 测试矩阵
@@ -53,6 +53,9 @@ plugins/policy/net-guard/    策略:principal + net.fetch.<host> + 私网段拒�
 | 内核集成(seam + provider + consumer) | `nethttp.TestKernelIntegration` |
 | net-guard:host/通配授权、未授权/无身份、私网拒绝 | `netguard.TestAllowed`、`TestDenied`、`TestPrivateDenied` |
 | net-guard 使用注入的 caps 服务 | `netguard.TestServiceBroker` |
+| net-guard:DNS 解析到私网拒绝 | `netguard.TestResolvedPrivateDenied` |
+| net-guard:DNS 解析公网放行 | `netguard.TestResolvedPublicAllowed` |
+| net-guard:DNS 解析失败拒绝 | `netguard.TestResolverErrorDenied` |
 
 ## 6. 下一步
 

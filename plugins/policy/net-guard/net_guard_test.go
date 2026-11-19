@@ -2,6 +2,7 @@ package netguard_test
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -116,5 +117,53 @@ func TestServiceBroker(t *testing.T) {
 	}
 	if body != "ok" {
 		t.Fatalf("抓取内容不正确: %q", body)
+	}
+}
+
+type fakeClient struct{ called bool }
+
+func (f *fakeClient) Do(context.Context, seamnet.Request) (seamnet.Response, error) {
+	f.called = true
+	return seamnet.Response{Status: 200, Body: []byte("ok")}, nil
+}
+
+// 5. 域名解析到私网 → 拒绝。
+func TestResolvedPrivateDenied(t *testing.T) {
+	fake := &fakeClient{}
+	b := brokerWith(t, map[string][]string{"p1": {"net.fetch.evil.example"}})
+	g := netguard.NewWithResolver(fake, b, false, func(context.Context, string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("10.0.0.1")}, nil
+	})
+	if _, err := g.Do(kernel.WithPrincipal(context.Background(), "p1"), seamnet.Request{URL: "http://evil.example/x"}); err == nil {
+		t.Fatalf("解析到私网应拒绝")
+	}
+	if fake.called {
+		t.Fatalf("拒绝时不应调用底层")
+	}
+}
+
+// 6. 域名解析到公网 → 放行。
+func TestResolvedPublicAllowed(t *testing.T) {
+	fake := &fakeClient{}
+	b := brokerWith(t, map[string][]string{"p1": {"net.fetch.example.com"}})
+	g := netguard.NewWithResolver(fake, b, false, func(context.Context, string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("93.184.216.34")}, nil
+	})
+	if _, err := g.Do(kernel.WithPrincipal(context.Background(), "p1"), seamnet.Request{URL: "http://example.com/x"}); err != nil {
+		t.Fatalf("公网域名应放行: %v", err)
+	}
+	if !fake.called {
+		t.Fatalf("放行时应调用底层")
+	}
+}
+
+// 7. 解析失败 → 拒绝(fail-closed)。
+func TestResolverErrorDenied(t *testing.T) {
+	b := brokerWith(t, map[string][]string{"p1": {"net.fetch"}})
+	g := netguard.NewWithResolver(&fakeClient{}, b, false, func(context.Context, string) ([]net.IP, error) {
+		return nil, context.DeadlineExceeded
+	})
+	if _, err := g.Do(kernel.WithPrincipal(context.Background(), "p1"), seamnet.Request{URL: "http://flaky.example/x"}); err == nil {
+		t.Fatalf("解析失败应拒绝")
 	}
 }
