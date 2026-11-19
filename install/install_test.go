@@ -440,3 +440,97 @@ func TestRollbackNoPrevious(t *testing.T) {
 		t.Fatalf("单版本应拒绝回滚,实际 %v", err)
 	}
 }
+
+func writeRepoPlugin(t *testing.T, repoRoot, id, ver string) (string, string) {
+	t.Helper()
+	rel := filepath.Join("plugins", id+"@"+ver)
+	abs := filepath.Join(repoRoot, rel)
+	if err := os.MkdirAll(abs, 0o755); err != nil {
+		t.Fatalf("建目录失败: %v", err)
+	}
+	manifest := `{"id":"` + id + `","version":"` + ver + `","kind":"go"}`
+	if err := os.WriteFile(filepath.Join(abs, "plugin.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("写清单失败: %v", err)
+	}
+	info, err := install.VerifyDir(abs, install.Options{})
+	if err != nil {
+		t.Fatalf("校验失败: %v", err)
+	}
+	return rel, info.Digest
+}
+
+func writeRepoIndex(t *testing.T, repoRoot string, entries []install.RepoEntry) {
+	t.Helper()
+	data, err := json.Marshal(map[string]any{"entries": entries})
+	if err != nil {
+		t.Fatalf("序列化失败: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, install.RepoFile), data, 0o644); err != nil {
+		t.Fatalf("写索引失败: %v", err)
+	}
+}
+
+// 20. LoadRepo/Latest 按 semver 选最高版本。
+func TestRepoLatest(t *testing.T) {
+	repo := t.TempDir()
+	writeRepoIndex(t, repo, []install.RepoEntry{
+		{ID: "r-demo", Version: "0.1.0", Dir: "x"},
+		{ID: "r-demo", Version: "10.0.0", Dir: "y"},
+		{ID: "r-demo", Version: "0.2.0", Dir: "z"},
+	})
+	entries, err := install.LoadRepo(repo)
+	if err != nil {
+		t.Fatalf("读仓库失败: %v", err)
+	}
+	latest, ok, err := install.LatestRepoEntry(entries, "r-demo")
+	if err != nil || !ok || latest.Version != "10.0.0" {
+		t.Fatalf("最新版本不正确: %+v ok=%v err=%v", latest, ok, err)
+	}
+}
+
+// 21. UpdateFromRepo:安装更高版本并清理旧版本。
+func TestUpdateFromRepo(t *testing.T) {
+	dest := t.TempDir()
+	installVersion(t, dest, "0.1.0")
+	repo := t.TempDir()
+	rel, digest := writeRepoPlugin(t, repo, "up-demo", "0.2.0")
+	writeRepoIndex(t, repo, []install.RepoEntry{{ID: "up-demo", Version: "0.2.0", Dir: rel, Digest: digest}})
+
+	info, err := install.UpdateFromRepo(repo, "up-demo", dest, install.Options{})
+	if err != nil {
+		t.Fatalf("更新失败: %v", err)
+	}
+	if info.Version != "0.2.0" {
+		t.Fatalf("更新版本不正确: %s", info.Version)
+	}
+	entries, err := install.List(dest)
+	if err != nil || len(entries) != 1 || entries[0].Version != "0.2.0" {
+		t.Fatalf("更新后索引应只剩 0.2.0: %v %+v", err, entries)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "up-demo@0.1.0")); err == nil {
+		t.Fatalf("旧版本应被清理")
+	}
+}
+
+// 22. 已是最新/摘要不匹配/目录逃逸都拒绝。
+func TestUpdateFromRepoRejects(t *testing.T) {
+	dest := t.TempDir()
+	installVersion(t, dest, "0.2.0")
+	repo := t.TempDir()
+	rel, digest := writeRepoPlugin(t, repo, "up-demo", "0.2.0")
+	writeRepoIndex(t, repo, []install.RepoEntry{{ID: "up-demo", Version: "0.2.0", Dir: rel, Digest: digest}})
+	if _, err := install.UpdateFromRepo(repo, "up-demo", dest, install.Options{}); err == nil || !strings.Contains(err.Error(), "最新") {
+		t.Fatalf("同版本应报最新,实际 %v", err)
+	}
+
+	rel3, digest3 := writeRepoPlugin(t, repo, "up-demo", "0.3.0")
+	writeRepoIndex(t, repo, []install.RepoEntry{{ID: "up-demo", Version: "0.3.0", Dir: rel3, Digest: "bad-" + digest3}})
+	if _, err := install.UpdateFromRepo(repo, "up-demo", dest, install.Options{}); err == nil || !strings.Contains(err.Error(), "摘要不匹配") {
+		t.Fatalf("摘要不匹配应报错,实际 %v", err)
+	}
+
+	writeRepoIndex(t, repo, []install.RepoEntry{{ID: "up-demo", Version: "0.3.0", Dir: "../outside"}})
+	if _, err := install.UpdateFromRepo(repo, "up-demo", dest, install.Options{}); err == nil || !strings.Contains(err.Error(), "逃逸") {
+		t.Fatalf("目录逃逸应报错,实际 %v", err)
+	}
+}

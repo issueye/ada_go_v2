@@ -51,6 +51,8 @@ func Run(args []string, out, errOut io.Writer) int {
 		return cmdRollback(args[1:], out, errOut)
 	case "caps":
 		return cmdCaps(args[1:], out, errOut)
+	case "update":
+		return cmdUpdate(args[1:], out, errOut)
 	default:
 		usage(errOut)
 		return 2
@@ -69,6 +71,7 @@ func usage(w io.Writer) {
   ada upgrade <插件目录> -dest <安装根> [-keys 密钥文件] [-require-signature] [-yes] [-keep]
   ada rollback <插件 id> -dest <安装根>
   ada caps    <插件目录|--preset 文件> [-json]
+  ada update  <插件 id> -repo <仓库目录> -dest <安装根> [-keys 密钥文件] [-require-signature] [-yes]
 
 退出码:0=成功,1=计划不可执行/装配或校验失败,2=用法错误。
 `)
@@ -589,6 +592,87 @@ func cmdCaps(args []string, out, errOut io.Writer) int {
 		return 1
 	}
 	fmt.Fprintln(out, "结果: 可授权")
+	return 0
+}
+
+func cmdUpdate(args []string, out, errOut io.Writer) int {
+	id := ""
+	repo := ""
+	dest := ""
+	keysPath := ""
+	require := false
+	yes := false
+	bad := ""
+	for i := 0; i < len(args); i++ {
+		switch a := args[i]; {
+		case a == "-repo":
+			if i+1 >= len(args) {
+				bad = "-repo 缺少目录参数"
+				break
+			}
+			repo = args[i+1]
+			i++
+		case a == "-dest":
+			if i+1 >= len(args) {
+				bad = "-dest 缺少目录参数"
+				break
+			}
+			dest = args[i+1]
+			i++
+		case a == "-keys":
+			if i+1 >= len(args) {
+				bad = "-keys 缺少文件参数"
+				break
+			}
+			keysPath = args[i+1]
+			i++
+		case a == "-require-signature":
+			require = true
+		case a == "-yes":
+			yes = true
+		case strings.HasPrefix(a, "-"):
+			bad = "未知参数 " + a
+		default:
+			if id != "" {
+				bad = "多余的参数 " + a
+			} else {
+				id = a
+			}
+		}
+		if bad != "" {
+			break
+		}
+	}
+	if bad != "" {
+		fmt.Fprintln(errOut, bad)
+		usage(errOut)
+		return 2
+	}
+	if id == "" || repo == "" || dest == "" {
+		fmt.Fprintln(errOut, "需要插件 id、-repo 仓库目录与 -dest 安装根")
+		usage(errOut)
+		return 2
+	}
+	keys, err := loadKeyRing(keysPath)
+	if err != nil {
+		fmt.Fprintln(errOut, "加载密钥失败:", err)
+		return 1
+	}
+	opts := install.Options{Keys: keys, RequireSignature: require}
+	preview, err := install.PreviewRepoUpdate(repo, id, opts)
+	if err != nil {
+		fmt.Fprintln(errOut, "校验仓库版本失败:", err)
+		return 1
+	}
+	if !consent(preview, yes, out, errOut) {
+		return 2
+	}
+	info, err := install.UpdateFromRepo(repo, id, dest, opts)
+	if err != nil {
+		fmt.Fprintln(errOut, "更新失败:", err)
+		return 1
+	}
+	fmt.Fprintf(out, "已更新: %s@%s → %s\n", info.ID, info.Version, info.Dir)
 	return 0
 }
 

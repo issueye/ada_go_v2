@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/adag/ada-go/v2/host/cli"
+	"github.com/adag/ada-go/v2/install"
 )
 
 func run(args ...string) (int, string, string) {
@@ -391,5 +392,54 @@ func TestUpBuiltinSecurityStack(t *testing.T) {
 	}
 	if !strings.Contains(out, "已停止。") {
 		t.Fatalf("up 输出不正确:\n%s", out)
+	}
+}
+
+// 24. update:从离线仓库更新到更高版本;再次更新提示已是最新。
+func TestUpdateFromRepo(t *testing.T) {
+	dest := t.TempDir()
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "plugin.json"),
+		[]byte(`{"id":"up-demo","version":"0.1.0","kind":"go"}`), 0o644); err != nil {
+		t.Fatalf("写清单失败: %v", err)
+	}
+	if code, _, errOut := run("install", src, "-dest", dest); code != 0 {
+		t.Fatalf("安装失败: %s", errOut)
+	}
+
+	repo := t.TempDir()
+	rel := filepath.Join("plugins", "up-demo@0.2.0")
+	abs := filepath.Join(repo, rel)
+	if err := os.MkdirAll(abs, 0o755); err != nil {
+		t.Fatalf("建目录失败: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(abs, "plugin.json"),
+		[]byte(`{"id":"up-demo","version":"0.2.0","kind":"go"}`), 0o644); err != nil {
+		t.Fatalf("写仓库清单失败: %v", err)
+	}
+	info, err := install.VerifyDir(abs, install.Options{})
+	if err != nil {
+		t.Fatalf("校验仓库插件失败: %v", err)
+	}
+	index := map[string]any{"entries": []install.RepoEntry{
+		{ID: "up-demo", Version: "0.2.0", Dir: rel, Digest: info.Digest},
+	}}
+	data, _ := json.Marshal(index)
+	if err := os.WriteFile(filepath.Join(repo, install.RepoFile), data, 0o644); err != nil {
+		t.Fatalf("写仓库索引失败: %v", err)
+	}
+
+	code, out, errOut := run("update", "up-demo", "-repo", repo, "-dest", dest)
+	if code != 0 || !strings.Contains(out, "已更新: up-demo@0.2.0") {
+		t.Fatalf("更新失败: code=%d err=%s out=%s", code, errOut, out)
+	}
+	code, out, _ = run("list", "-dest", dest)
+	if code != 0 || !strings.Contains(out, "up-demo@0.2.0") || strings.Contains(out, "0.1.0") {
+		t.Fatalf("更新后 list 不正确:\n%s", out)
+	}
+
+	code, _, errOut = run("update", "up-demo", "-repo", repo, "-dest", dest)
+	if code != 1 || !strings.Contains(errOut, "更新失败") {
+		t.Fatalf("已是最新应失败: code=%d err=%s", code, errOut)
 	}
 }
