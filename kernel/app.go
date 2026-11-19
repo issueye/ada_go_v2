@@ -273,7 +273,17 @@ type ServiceInfo struct {
 type Snapshot struct {
 	Fibers   []FiberInfo
 	Services []ServiceInfo
+	Effects  []EffectInfo
 	Events   []string
+}
+
+// EffectInfo 是诊断快照里的一个副作用登记项。
+//
+// 只给标签与归属,不给 disposer:Inspect 是只读视图,不能顺手回收别人的资源。
+type EffectInfo struct {
+	Fiber  string
+	Plugin string
+	Label  string
 }
 
 // Inspect 返回当前运行态快照。
@@ -293,6 +303,9 @@ func (a *App) Inspect() Snapshot {
 			parent = f.parent.id
 		}
 		snap.Fibers = append(snap.Fibers, FiberInfo{ID: f.id, Plugin: f.plugin.Name(), State: st.String(), Epoch: epoch, Parent: parent})
+		for _, label := range f.effectLabels() {
+			snap.Effects = append(snap.Effects, EffectInfo{Fiber: f.id, Plugin: f.plugin.Name(), Label: label})
+		}
 	}
 	snap.Services = svc.snapshot()
 	sort.Slice(snap.Services, func(i, j int) bool { return snap.Services[i].Name < snap.Services[j].Name })

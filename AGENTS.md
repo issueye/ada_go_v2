@@ -38,7 +38,7 @@
 | [kernel-api.md](docs/kernel-api.md) | M1 冻结的内核 API 与已知边界 |
 | [spikes.md](docs/spikes.md) | M0 验证报告（5 个已通过，7 个待做） |
 | [m2-execution.md](docs/m2-execution.md) | M2 执行层第一刀:compile / jsrt / bridge 的契约、测试矩阵与已知边界 |
-| [m3-assembly.md](docs/m3-assembly.md) | M3 装配层:清单、依赖图、preset、事务化装配与 `ada plan`/`up` |
+| [m3-assembly.md](docs/m3-assembly.md) | M3 装配层:清单、依赖图、preset、事务化装配与 `ada plan`/`up`/`inspect` |
 
 ---
 

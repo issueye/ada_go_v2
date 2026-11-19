@@ -76,11 +76,12 @@ go run ./cmd/ada-ts-demo                     # M2:TS 插件编译→加载→提
 go run ./cmd/ada plan examples/plugins       # M3:读清单→依赖图→装配顺序/问题报告
 go run ./cmd/ada up examples/plugins-ts      # M3:现场编译 TS 插件并真的挂载一遍
 go run ./cmd/ada plan --preset examples/presets/base.preset.json   # M3:preset(多目录/disabled/patch)
+go run ./cmd/ada inspect --preset examples/presets/ts-only.preset.json  # M3:诊断快照(fiber/服务/effect)
 pwsh scripts/bench.ps1                       # 性能预算:≤20 μs/次、50 插件冷启动 ≤150 ms
 ```
 
 已完成:`kernel/`(Context / Fiber / Service / Effect / Event / Config / Schema)、`kernel/schema`、`cmd/ada`、`cmd/ada-demo`、`cmd/ada-ts-demo`、`compile/`(esbuild)、`jsrt/`(moejs)、`bridge/`、`plugin/`(清单)、`preset/`(组合数据)、`assemble/`(计划/事务)、`loader/`(按 kind 装载)、`scripts/guard.ps1`、`scripts/bench.ps1`、`docs/kernel-api.md`、`docs/m2-execution.md`、`docs/m3-assembly.md`、`docs/adr/0001`、`docs/adr/0002`。
-未开始:`plugins/seam/*`(M4.5)、`host/*`(M5);M3 剩余:install/签名/capability、bundle/profile、`ada inspect`、版本约束、隔离槽。
+未开始:`plugins/seam/*`(M4.5)、`host/*`(M5);M3 剩余:install/签名/capability、bundle/profile、版本约束、隔离槽。
 
 本轮修复了 M1 评审中复现的缺陷(waterfall 超时幽灵执行、兄弟插件被误拆、failed 不可复活、卸载错误被吞、fiber 注册表泄漏、Intercept 合并反向、Stop 后仍派发、schema 静默放行),每条都有回归用例;清单见 [kernel-api.md §6](docs/kernel-api.md)。
 

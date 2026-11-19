@@ -149,3 +149,17 @@ func (s *scope) size() int {
 	defer s.mu.Unlock()
 	return len(s.entries)
 }
+
+// labels 返回当前登记的副作用标签(按登记顺序),供 Inspect 诊断使用。
+//
+// 只暴露标签,不暴露 disposer:诊断需要的是「有什么、属于谁」,
+// 而不是拿到一个能提前触发回收的函数。
+func (s *scope) labels() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, 0, len(s.entries))
+	for _, e := range s.entries {
+		out = append(out, e.label)
+	}
+	return out
+}

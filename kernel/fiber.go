@@ -365,6 +365,17 @@ func (f *Fiber) markDependencyLost(ctx context.Context) {
 	}
 }
 
+// effectLabels 返回当前作用域上的副作用标签(诊断用)。
+func (f *Fiber) effectLabels() []string {
+	f.mu.Lock()
+	sc := f.scope
+	f.mu.Unlock()
+	if sc == nil {
+		return nil
+	}
+	return sc.labels()
+}
+
 // safeApply 把插件回调的 panic 转成错误,绝不让它穿过内核。
 func safeApply(f *Fiber, ctx *Context, cfg Config) (d Dispose, err error) {
 	defer func() {

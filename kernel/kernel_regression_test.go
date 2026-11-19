@@ -281,3 +281,38 @@ func TestStopSealsEventsAndRegistry(t *testing.T) {
 		t.Fatalf("Stop 后注册表应清空,实际 %d 个 fiber", got)
 	}
 }
+
+// 12. Inspect 必须能看到 effect 登记:没有 inspect 的能力等于没有交付(P9)。
+func TestInspectShowsEffects(t *testing.T) {
+	a := newApp(t)
+	f := mustPlugin(t, a, kernel.Func("p", func(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, error) {
+		ctx.On("x/y", func(context.Context, *kernel.Context, []any) (any, error) { return nil, nil })
+		if _, err := ctx.Effect("res", func() (kernel.Dispose, error) {
+			return func(context.Context) error { return nil }, nil
+		}); err != nil {
+			return nil, err
+		}
+		_, err := ctx.Provide("svc", 1)
+		return nil, err
+	}))
+
+	labels := map[string]bool{}
+	for _, e := range a.Inspect().Effects {
+		if e.Fiber != f.ID() {
+			t.Fatalf("effect 归属错误: %+v", e)
+		}
+		labels[e.Label] = true
+	}
+	for _, want := range []string{"listener", "res", "provide:svc"} {
+		if !labels[want] {
+			t.Fatalf("快照缺少 effect %q: %v", want, labels)
+		}
+	}
+
+	if err := f.Dispose(context.Background()); err != nil {
+		t.Fatalf("卸载失败: %v", err)
+	}
+	if got := len(a.Inspect().Effects); got != 0 {
+		t.Fatalf("卸载后不应残留 effect 快照,实际 %d", got)
+	}
+}

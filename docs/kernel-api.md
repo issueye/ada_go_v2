@@ -108,9 +108,13 @@ func (a *App) Stop(ctx context.Context) error
 type Snapshot struct {
     Fibers   []FiberInfo    // 只含仍在注册表的实例
     Services []ServiceInfo
+	Effects  []EffectInfo
     Events   []string
 }
 type FiberInfo struct{ ID, Plugin, State string; Epoch uint64; Parent string }
+
+// EffectInfo 是诊断快照里的一个副作用登记项(标签与归属,不含 disposer)。
+type EffectInfo struct{ Fiber, Plugin, Label string }
 ```
 
 ## 3. 语义要点(实现必须遵守)
@@ -129,6 +133,7 @@ type FiberInfo struct{ ID, Plugin, State string; Epoch uint64; Parent string }
    - `Stop` 之后事件总线封口,不再派发。
 8. **Config**:先用 schema 补默认值并校验,再交给 `Apply`;校验失败 → `CodeConfig`,不进入 `Apply`。
 9. **停机与注册表**:`Fiber.Dispose` 与 `App.Stop` 都会把实例从注册表移除,`Inspect` 不会列出已卸载的 fiber;`Stop` 之后 `Inspect` 为空。
+10. **可观测**:`Inspect` 只返回快照,不返回 disposer;`Effects` 按登记顺序列出每个 fiber 当前登记的副作用标签,卸载后立即消失。
 
 ## 4. 错误码(M1 子集)
 
@@ -141,15 +146,16 @@ type FiberInfo struct{ ID, Plugin, State string; Epoch uint64; Parent string }
 - Effect 逆序回收、父子级联;卸载错误聚合上报;重载 100 次无重复监听、无残留副作用;
 - 卸载消费者不影响兄弟插件;失败的插件可经 `Reload` 复活;
 - waterfall 超时后下游不执行;监听器在超时时收到 ctx 取消;
+- `Inspect` 能列出 fiber/服务/effect 标签,卸载后立即消失;
 - `go test -race ./...` 全绿;
 - `kernel/` 无 agent 词汇、无 `os/exec|net/http|os.Open`、生产代码 ≤ 3000 行(gofmt、交叉编译同属门禁)。
 
 ## 6. M1 实现状态(2026-11-19)
 
-已落地:`kernel/`(生产 2276 行,测试 849 行)+ `kernel/schema` + `cmd/ada-demo` + `scripts/guard.ps1` + `docs/adr/0001`。
+已落地:`kernel/`(生产 2311 行,测试 881 行)+ `kernel/schema` + `cmd/ada-demo` + `scripts/guard.ps1` + `docs/adr/0001`。
 
 ```powershell
-go test -race -count=1 -timeout 120s ./...   # 21 + 7 个用例全绿
+go test -race -count=1 -timeout 120s ./...   # 22 + 7 个用例全绿
 go test -run xxx -bench . -benchmem ./kernel # 性能基线
 go run ./cmd/ada-demo                        # 依赖门控、级联重载演示
 pwsh scripts/guard.ps1                       # 门禁:词汇/依赖/gofmt/build/vet/staticcheck/race/交叉编译/预算
