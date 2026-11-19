@@ -296,3 +296,72 @@ func TestRollbackNoPrevious(t *testing.T) {
 		t.Fatalf("单版本回滚应返回 1: code=%d err=%s", code, errOut)
 	}
 }
+
+// 19. caps:无能力清单可授权。
+func TestCapsNone(t *testing.T) {
+	code, out, errOut := run("caps", "../../examples/plugins")
+	if code != 0 {
+		t.Fatalf("caps 应成功: code=%d err=%s", code, errOut)
+	}
+	if !strings.Contains(out, "(无)") || !strings.Contains(out, "结果: 可授权") {
+		t.Fatalf("caps 输出不正确:\n%s", out)
+	}
+}
+
+// 20. caps:能力与 trust 合法。
+func TestCapsValid(t *testing.T) {
+	dir := t.TempDir()
+	manifest := `{"id":"cap-demo","version":"0.1.0","kind":"go","trust":"third-party","caps":["fs.read"]}`
+	if err := os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("写清单失败: %v", err)
+	}
+	code, out, errOut := run("caps", dir)
+	if code != 0 {
+		t.Fatalf("caps 应成功: code=%d err=%s", code, errOut)
+	}
+	if !strings.Contains(out, "caps=fs.read") || !strings.Contains(out, "trust=third-party") {
+		t.Fatalf("caps 输出不正确:\n%s", out)
+	}
+}
+
+// 21. caps:trust 不足 → 退出码 1。
+func TestCapsTrustDenied(t *testing.T) {
+	dir := t.TempDir()
+	manifest := `{"id":"cap-demo","version":"0.1.0","kind":"go","trust":"third-party","caps":["fs.write"]}`
+	if err := os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("写清单失败: %v", err)
+	}
+	code, out, errOut := run("caps", dir)
+	if code != 1 || !strings.Contains(errOut, "授权失败") {
+		t.Fatalf("trust 不足应返回 1: code=%d err=%s", code, errOut)
+	}
+	if !strings.Contains(out, "结果: 不可授权") {
+		t.Fatalf("应提示不可授权:\n%s", out)
+	}
+}
+
+// 22. caps -json:结构化输出。
+func TestCapsJSON(t *testing.T) {
+	dir := t.TempDir()
+	manifest := `{"id":"cap-demo","version":"0.1.0","kind":"go","trust":"third-party","caps":["fs.read"]}`
+	if err := os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("写清单失败: %v", err)
+	}
+	code, out, _ := run("caps", dir, "-json")
+	if code != 0 {
+		t.Fatalf("caps -json 应成功: code=%d", code)
+	}
+	var payload struct {
+		OK      bool `json:"ok"`
+		Plugins []struct {
+			ID   string   `json:"id"`
+			Caps []string `json:"caps"`
+		} `json:"plugins"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("输出不是合法 JSON: %v\n%s", err, out)
+	}
+	if !payload.OK || len(payload.Plugins) != 1 || payload.Plugins[0].ID != "cap-demo" {
+		t.Fatalf("JSON 内容不正确: %+v", payload)
+	}
+}

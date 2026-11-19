@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/adag/ada-go/v2/assemble"
+	"github.com/adag/ada-go/v2/caps"
 	"github.com/adag/ada-go/v2/install"
 	"github.com/adag/ada-go/v2/kernel"
 	"github.com/adag/ada-go/v2/loader"
@@ -48,6 +49,8 @@ func Run(args []string, out, errOut io.Writer) int {
 		return cmdUpgrade(args[1:], out, errOut)
 	case "rollback":
 		return cmdRollback(args[1:], out, errOut)
+	case "caps":
+		return cmdCaps(args[1:], out, errOut)
 	default:
 		usage(errOut)
 		return 2
@@ -65,6 +68,7 @@ func usage(w io.Writer) {
   ada uninstall <插件 id> -dest <安装根>
   ada upgrade <插件目录> -dest <安装根> [-keys 密钥文件] [-require-signature] [-yes] [-keep]
   ada rollback <插件 id> -dest <安装根>
+  ada caps    <插件目录|--preset 文件> [-json]
 
 退出码:0=成功,1=计划不可执行/装配或校验失败,2=用法错误。
 `)
@@ -514,6 +518,73 @@ func cmdUpgrade(args []string, out, errOut io.Writer) int {
 		return 1
 	}
 	fmt.Fprintf(out, "已升级: %s@%s → %s\n", info.ID, info.Version, info.Dir)
+	return 0
+}
+
+func cmdCaps(args []string, out, errOut io.Writer) int {
+	t := parseTarget(args)
+	if t.bad != "" {
+		fmt.Fprintln(errOut, t.bad)
+		usage(errOut)
+		return 2
+	}
+	manifests, err := loadTarget(t)
+	if err != nil {
+		fmt.Fprintln(errOut, "加载失败:", err)
+		return 1
+	}
+	broker := caps.NewBroker(nil)
+	grantErr := assemble.GrantManifests(broker, manifests)
+
+	type capRow struct {
+		ID      string   `json:"id"`
+		Version string   `json:"version"`
+		Trust   string   `json:"trust"`
+		Caps    []string `json:"caps"`
+	}
+	rows := make([]capRow, 0, len(manifests))
+	for _, m := range manifests {
+		trust := m.Trust
+		if trust == "" {
+			trust = string(caps.TrustThirdParty)
+		}
+		rows = append(rows, capRow{ID: m.ID, Version: m.Version, Trust: trust, Caps: m.Caps})
+	}
+
+	if t.json {
+		payload := struct {
+			OK      bool     `json:"ok"`
+			Error   string   `json:"error,omitempty"`
+			Plugins []capRow `json:"plugins"`
+		}{OK: grantErr == nil, Plugins: rows}
+		if grantErr != nil {
+			payload.Error = grantErr.Error()
+		}
+		b, err := json.MarshalIndent(payload, "", "  ")
+		if err != nil {
+			fmt.Fprintln(errOut, "序列化失败:", err)
+			return 1
+		}
+		fmt.Fprintln(out, string(b))
+		if grantErr != nil {
+			return 1
+		}
+		return 0
+	}
+
+	for _, row := range rows {
+		capsList := strings.Join(row.Caps, ", ")
+		if capsList == "" {
+			capsList = "(无)"
+		}
+		fmt.Fprintf(out, "  %s@%s trust=%s caps=%s\n", row.ID, row.Version, row.Trust, capsList)
+	}
+	if grantErr != nil {
+		fmt.Fprintln(out, "结果: 不可授权")
+		fmt.Fprintln(errOut, "授权失败:", grantErr)
+		return 1
+	}
+	fmt.Fprintln(out, "结果: 可授权")
 	return 0
 }
 

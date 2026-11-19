@@ -92,7 +92,7 @@ broker.Authorize(ctx, "plugin-a", "fs.write", "/workspace/a") // → *DeniedErro
 3. 安装同意 + 签名(§13.4)与 trust 来源判定。
 4. JSONL 审计出口与脱敏。
 
-## 8. 验证命令
+## 8. CLI 自检(`ada caps`)\n\n```powershell\ngo run ./cmd/ada caps examples/plugins            # 列出 caps/trust 并尝试授权\ngo run ./cmd/ada caps <目录> -json                # 结构化输出(ok/error/plugins)\n```\n\n- 只做**静态授权检查**(`assemble.GrantManifests`),不挂载插件;\n- trust 不足 → 退出码 1,输出「不可授权」;`-json` 里 `ok=false` 并带 `error`;\n- 这是「接线」的第一刀:把清单 caps 灌进 Broker,而不是让 grants 只来自插件 config。\n\n## 9. 验证命令
 
 ```powershell
 go test -race -count=1 ./caps ./plugin
