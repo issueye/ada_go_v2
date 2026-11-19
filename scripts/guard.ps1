@@ -58,11 +58,25 @@ if ($LASTEXITCODE -ne 0) { Fail "go vet" @("go vet 失败") } else { Pass "go ve
 
 # 5. staticcheck(AGENTS §5.2)。工具链版本不匹配时给安装命令,而不是静默跳过:
 #    「跳过」会让门禁看起来通过,实际什么都没检查。
-$sc = Get-Command staticcheck -ErrorAction SilentlyContinue
-if (-not $sc) {
+#    先查 PATH,再查 GOPATH/bin——`go install` 在 CI 与本地都只装到后者。
+$scPath = $null
+$scCmd = Get-Command staticcheck -ErrorAction SilentlyContinue
+if ($scCmd) {
+    $scPath = $scCmd.Source
+} else {
+    # 注意用平台路径分隔符拆分:GOPATH 在 Windows 上以盘符冒号开头,按 ':' 拆会拆坏。
+    $gopath = (go env GOPATH) -split [regex]::Escape([System.IO.Path]::PathSeparator) | Select-Object -First 1
+    if ($gopath) {
+        foreach ($name in @("staticcheck.exe", "staticcheck")) {
+            $candidate = Join-Path (Join-Path $gopath "bin") $name
+            if (Test-Path $candidate) { $scPath = $candidate; break }
+        }
+    }
+}
+if (-not $scPath) {
     Fail "staticcheck" @("未安装 staticcheck;go install honnef.co/go/tools/cmd/staticcheck@latest")
 } else {
-    staticcheck ./... 2>&1 | Write-Host
+    & $scPath ./... 2>&1 | Write-Host
     if ($LASTEXITCODE -ne 0) { Fail "staticcheck" @("staticcheck 报出问题") } else { Pass "staticcheck" }
 }
 

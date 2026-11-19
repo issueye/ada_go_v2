@@ -23,7 +23,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: 红词汇/依赖/gofmt/build/vet/race/交叉编译/预算
+      - name: 安装 staticcheck(guard 会校验它)
+        shell: pwsh
+        run: go install honnef.co/go/tools/cmd/staticcheck@latest
+      - name: 红词汇/依赖/gofmt/build/vet/staticcheck/race/交叉编译/预算
         shell: pwsh
         run: ./scripts/guard.ps1
 
