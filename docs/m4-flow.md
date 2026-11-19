@@ -1,7 +1,7 @@
 # M4 流水线(flow)
 
 > 配套 [plugin-kernel-design.md](plugin-kernel-design.md) §12.2(3)「流水线」与 §12.4「受限表达式求值」。
-> 本页记录**已实现**的声明式子集与已知边界;`parallel`、`forEach`、`Compensate`、`subflow` 已落地;`fanout` 尚未实现。
+> 本页记录**已实现**的声明式子集与已知边界;`parallel`、`fanout`(parallel 的别名)、`forEach`、`Compensate`、`subflow` 已落地。
 
 ## 1. 范围
 
@@ -159,6 +159,7 @@ type Runtime interface {
 | forEach 失败点名索引 | `flow.TestForEachError` |
 | 声明式 forEach 解析/校验 | `flow.TestParseForEach` |
 | 补偿逆序执行 | `flow.TestCompensateReverse` |
+| fanout 解析/校验/执行 | `flow.TestFanout` |
 | subflow 加载/输入/结果回填 | `flow.TestSubflowRunsChild` |
 | subflow 缺失文件 | `flow.TestSubflowMissingFile` |
 | subflow 环检测 | `flow.TestSubflowCycle` |
@@ -167,7 +168,7 @@ type Runtime interface {
 
 ## 7. 已知边界与下一步
 
-1. **fanout 未实现**:已实现 parallel、forEach、Compensate、subflow;分支/项内/子流线内 `checkpoint` 不支持;值表是浅拷贝,分支共享的 map 值不可并发改写;subflow 之间没有共享 trace ID。
+1. **fanout 是 `parallel` 的别名**:`{"fanout":{"branches":[...]}}` 与 `parallel` 等价(设计里的「并发分支 + join」);分支/项内/子流线内 `checkpoint` 不支持;值表是浅拷贝,分支共享的 map 值不可并发改写;subflow 之间没有共享 trace ID。
 2. **没有子流水线**:`subflow` 与 trace 共享未实现。
 3. **补偿已实现**:逆序、尽力而为;没有「补偿成功后回滚状态」的语义,也不保证重试全部补偿步骤。
 4. **参数模板只有 `$.path`**:不支持在 args 里写表达式;需要时先做求值器扩展。

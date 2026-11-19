@@ -767,3 +767,40 @@ func TestParseSubflow(t *testing.T) {
 		}
 	}
 }
+
+// 26. fanout 是 parallel 的别名:解析/校验/执行。
+func TestFanout(t *testing.T) {
+	valid := []byte(`{"flow":"f","steps":[
+	  {"id":"fan","fanout":{"branches":[
+	    {"id":"a","use":{"service":"svc","method":"a"}},
+	    {"id":"b","use":{"service":"svc","method":"b"}}
+	  ]}}
+	]}`)
+	f, err := flow.Parse(valid)
+	if err != nil {
+		t.Fatalf("合法 fanout 解析失败: %v", err)
+	}
+	rt := newFakeRT()
+	rt.callFn = func(_ context.Context, _ string, method string, _ map[string]any) (any, error) {
+		return method, nil
+	}
+	res, err := f.Run(context.Background(), rt, flow.Options{})
+	if err != nil {
+		t.Fatalf("fanout 运行失败: %v", err)
+	}
+	for _, id := range []string{"a", "b"} {
+		if _, ok := res.Values[id]; !ok {
+			t.Fatalf("分支 %q 未执行: %v", id, res.Values)
+		}
+	}
+
+	bad := map[string]string{
+		"空分支":  `{"flow":"f","steps":[{"id":"fan","fanout":{"branches":[]}}]}`,
+		"两个动作": `{"flow":"f","steps":[{"id":"fan","fanout":{"branches":[{"id":"a","abort":"x"}]},"use":{"service":"s","method":"m"}}]}`,
+	}
+	for name, raw := range bad {
+		if _, err := flow.Parse([]byte(raw)); err == nil {
+			t.Fatalf("%s 应拒绝", name)
+		}
+	}
+}

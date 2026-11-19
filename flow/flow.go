@@ -77,6 +77,7 @@ type Step struct {
 	Use        *UseStep      `json:"use,omitempty"`
 	Event      *EventStep    `json:"event,omitempty"`
 	Parallel   *ParallelStep `json:"parallel,omitempty"`
+	Fanout     *ParallelStep `json:"fanout,omitempty"`
 	ForEach    *ForEachStep  `json:"forEach,omitempty"`
 	Subflow    *SubflowStep  `json:"subflow,omitempty"`
 	Abort      string        `json:"abort,omitempty"`
@@ -221,6 +222,19 @@ func validateSteps(steps []Step, ids map[string]bool, flowName string) error {
 	return nil
 }
 
+func validateParallel(p *ParallelStep, id string) error {
+	if p == nil {
+		return kernel.Fail(kernel.CodeInvalid, "flow: 步骤 %q 的 parallel/fanout 不能为空", id)
+	}
+	if len(p.Branches) == 0 {
+		return kernel.Fail(kernel.CodeInvalid, "flow: 步骤 %q 的 parallel/fanout 至少需要一个分支", id)
+	}
+	if p.Mode != "" && p.Mode != "abort" && p.Mode != "collect" {
+		return kernel.Fail(kernel.CodeInvalid, "flow: 步骤 %q 的 parallel/fanout.mode 必须是 abort 或 collect", id)
+	}
+	return nil
+}
+
 func validateStep(s Step) error {
 	if s.ID == "" {
 		return kernel.Fail(kernel.CodeInvalid, "flow: 步骤缺少 id")
@@ -237,11 +251,14 @@ func validateStep(s Step) error {
 	}
 	if s.Parallel != nil {
 		n++
-		if len(s.Parallel.Branches) == 0 {
-			return kernel.Fail(kernel.CodeInvalid, "flow: 步骤 %q 的 parallel 至少需要一个分支", s.ID)
+		if err := validateParallel(s.Parallel, s.ID); err != nil {
+			return err
 		}
-		if s.Parallel.Mode != "" && s.Parallel.Mode != "abort" && s.Parallel.Mode != "collect" {
-			return kernel.Fail(kernel.CodeInvalid, "flow: 步骤 %q 的 parallel.mode 必须是 abort 或 collect", s.ID)
+	}
+	if s.Fanout != nil {
+		n++
+		if err := validateParallel(s.Fanout, s.ID); err != nil {
+			return err
 		}
 	}
 	if s.ForEach != nil {
@@ -279,7 +296,7 @@ func validateStep(s Step) error {
 		}
 	}
 	if n != 1 {
-		return kernel.Fail(kernel.CodeInvalid, "flow: 步骤 %q 必须且只能有 use/event/parallel/forEach/subflow/abort 之一", s.ID)
+		return kernel.Fail(kernel.CodeInvalid, "flow: 步骤 %q 必须且只能有 use/event/parallel/ fanout/forEach/subflow/abort 之一", s.ID)
 	}
 	if s.Use != nil {
 		if s.Use.Service == "" || s.Use.Method == "" {
@@ -544,6 +561,8 @@ func (st *runState) runStep(ctx context.Context, step Step, record bool) error {
 		})
 	case step.Parallel != nil:
 		err = st.runParallel(ctx, step)
+	case step.Fanout != nil:
+		err = st.runFanout(ctx, step)
 	case step.ForEach != nil:
 		err = st.runForEach(ctx, step)
 	case step.Subflow != nil:
@@ -584,6 +603,12 @@ func (st *runState) child() *runState {
 		values: values, completed: map[string]bool{}, saved: map[string]bool{},
 		stepIDs: st.stepIDs,
 	}
+}
+
+// runFanout 是 parallel 的别名:fanout 的语义就是「并发分支 + join」。
+func (st *runState) runFanout(ctx context.Context, step Step) error {
+	step.Parallel = step.Fanout
+	return st.runParallel(ctx, step)
 }
 
 // runParallel 并发执行分支;abort 模式首个失败即取消其余,collect 模式等待全部。
