@@ -209,3 +209,28 @@ func TestAuth(t *testing.T) {
 		t.Fatalf("正确 token 应 200,实际 %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+// 10. verify:合法插件返回清单信息;未知路径 400。
+func TestVerify(t *testing.T) {
+	h := newHandler(t, "../../examples")
+	rec := get(t, h, "/api/verify?path=plugins-ts/hello-ts")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("verify 应 200,实际 %d: %s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		ID     string   `json:"id"`
+		Kind   string   `json:"kind"`
+		Caps   []string `json:"caps"`
+		Signed bool     `json:"signed"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("响应不是合法 JSON: %v", err)
+	}
+	if payload.ID != "hello-ts" || payload.Kind != "ts" {
+		t.Fatalf("verify 内容不正确: %+v", payload)
+	}
+	rec = get(t, h, "/api/verify?path=nope")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("未知路径应 400,实际 %d", rec.Code)
+	}
+}

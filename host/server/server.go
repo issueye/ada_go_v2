@@ -57,6 +57,7 @@ func NewHandler(opts Options) (http.Handler, error) {
 	s := &Server{root: root, token: opts.Token, mux: http.NewServeMux()}
 	s.mux.HandleFunc("/api/plan", s.handlePlan)
 	s.mux.HandleFunc("/api/inspect", s.handleInspect)
+	s.mux.HandleFunc("/api/verify", s.handleVerify)
 	s.mux.HandleFunc("/api/caps", s.handleCaps)
 	s.mux.HandleFunc("/api/list", s.handleList)
 	s.mux.HandleFunc("/", s.handleIndex)
@@ -238,6 +239,29 @@ func (s *Server) handleInspect(w http.ResponseWriter, r *http.Request) {
 		payload.StopErr = stopErr.Error()
 	}
 	writeJSON(w, http.StatusOK, payload)
+}
+
+// handleVerify 对插件目录做 VerifyDir(清单/摘要/编译/信任/签名),不落盘。
+func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
+	if !s.onlyGet(w, r) {
+		return
+	}
+	path, err := s.resolve(r.URL.Query().Get("path"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	info, err := install.VerifyDir(path, install.Options{})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	capsList := info.Manifest.Caps
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id": info.ID, "version": info.Version, "kind": info.Kind,
+		"digest": info.Digest, "trust": string(info.Trust), "signed": info.Signed,
+		"caps": capsList,
+	})
 }
 
 func (s *Server) handleCaps(w http.ResponseWriter, r *http.Request) {

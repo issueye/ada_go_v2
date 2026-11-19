@@ -18,6 +18,7 @@ host/server/   只读 HTTP API:plan / caps / list
 | GET | `/api/caps?path=<相对路径>` | 清单 caps/trust → `GrantManifests` 静态检查(JSON) |
 | GET | `/api/list?dest=<相对路径>` | 读取安装索引(JSON) |
 | GET | `/api/inspect?path=<相对路径>` | 临时挂载内置 Go 插件并返回快照(会执行副作用,仅本地) |
+| GET | `/api/verify?path=<相对路径>` | 对插件目录做 VerifyDir(清单/摘要/编译/信任/签名) |
 | GET | `/` | 列出可用路由 |
 
 - 非 GET → **405**;
@@ -33,7 +34,7 @@ host/server/   只读 HTTP API:plan / caps / list
 
 `host/server.Test*` 用 `httptest` 直接打 handler:
 
-- plan 顺序、caps 授权、路径逃逸 400、POST 405、list 索引、根路由、inspect 内置栈快照、Token 认证;
+- plan 顺序、caps 授权、路径逃逸 400、POST 405、list 索引、根路由、inspect 内置栈快照、verify 插件、Token 认证;
 - 不启动真实端口,不依赖网络。
 
 ## 6. 偏差与边界
