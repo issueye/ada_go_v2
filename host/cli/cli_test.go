@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"archive/zip"
 	"bytes"
 	"encoding/json"
 	"net/http"
@@ -498,5 +499,56 @@ func TestRepo(t *testing.T) {
 	code, _, errOut = run("repo", srv.URL+"/repo.json", "-require-repo-signature")
 	if code != 1 || !strings.Contains(errOut, "缺少签名") {
 		t.Fatalf("缺签名应失败: code=%d err=%s", code, errOut)
+	}
+}
+
+// 27. update -repo-url:在线索引 + artifact 更新。
+func TestUpdateRemote(t *testing.T) {
+	dest := t.TempDir()
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "plugin.json"),
+		[]byte(`{"id":"remote-demo","version":"0.1.0","kind":"go"}`), 0o644); err != nil {
+		t.Fatalf("写清单失败: %v", err)
+	}
+	if code, _, errOut := run("install", src, "-dest", dest); code != 0 {
+		t.Fatalf("安装失败: %s", errOut)
+	}
+
+	pluginSrc := t.TempDir()
+	manifest := `{"id":"remote-demo","version":"0.2.0","kind":"go"}`
+	if err := os.WriteFile(filepath.Join(pluginSrc, "plugin.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("写清单失败: %v", err)
+	}
+	info, err := install.VerifyDir(pluginSrc, install.Options{})
+	if err != nil {
+		t.Fatalf("校验失败: %v", err)
+	}
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	f, _ := zw.Create("pkg/plugin.json")
+	_, _ = f.Write([]byte(manifest))
+	_ = zw.Close()
+	zipData := buf.Bytes()
+
+	var serverURL string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/p.zip", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(zipData) })
+	mux.HandleFunc("/repo.json", func(w http.ResponseWriter, _ *http.Request) {
+		index := map[string]any{"entries": []install.RepoEntry{
+			{ID: "remote-demo", Version: "0.2.0", Source: serverURL + "/p.zip", Digest: info.Digest},
+		}}
+		b, _ := json.Marshal(index)
+		_, _ = w.Write(b)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	serverURL = srv.URL
+
+	code, out, errOut := run("update", "remote-demo", "-repo-url", srv.URL+"/repo.json", "-dest", dest)
+	if code != 0 || !strings.Contains(out, "已更新: remote-demo@0.2.0") {
+		t.Fatalf("在线更新失败: code=%d err=%s out=%s", code, errOut, out)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "remote-demo@0.1.0")); err == nil {
+		t.Fatalf("旧版本应被清理")
 	}
 }

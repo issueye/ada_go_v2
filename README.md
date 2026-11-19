@@ -84,7 +84,7 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 ## 当前状态:M1 内核 + M2 执行层 + M3 装配 + M4 编排 + M4.5 seam + M5 安全(fs/shell/sandbox/approval,三闸串联)
 
 ```powershell
-go test -race -count=1 -timeout 300s ./...   # 350 个用例:kernel 29 + schema 7 + compile 6 + jsrt 15 + bridge 3 + plugin 7 + preset 5 + assemble 21 + loader 5 + session 3 + sched 27 + quota 11 + flow 26 + expr 2 + bundle 12 + version 3 + caps 6 + install 26 + fs 12 + shell 17 + sandbox 5 + approval 10 + approval-cli 5 + caps-gate 4 + fs-redact 5 + fs-observe 5 + shell-observe 5 + shell-redact 5 + net-http 6 + net-guard 7 + net-observe 3 + secrets-env 5 + secrets-guard 3 + caps-static 1 + host/builtins 3 + host/cli 26 + host/server 9
+go test -race -count=1 -timeout 300s ./...   # 354 个用例:kernel 29 + schema 7 + compile 6 + jsrt 15 + bridge 3 + plugin 7 + preset 5 + assemble 21 + loader 5 + session 3 + sched 27 + quota 11 + flow 26 + expr 2 + bundle 12 + version 3 + caps 6 + install 29 + fs 12 + shell 17 + sandbox 5 + approval 10 + approval-cli 5 + caps-gate 4 + fs-redact 5 + fs-observe 5 + shell-observe 5 + shell-redact 5 + net-http 6 + net-guard 7 + net-observe 3 + secrets-env 5 + secrets-guard 3 + caps-static 1 + host/builtins 3 + host/cli 27 + host/server 9
 go run ./cmd/ada-demo                        # 依赖门控 + 级联重载演示
 pwsh scripts/guard.ps1                       # 门禁:词汇/依赖/gofmt/build/vet/staticcheck/race/交叉编译/预算
 go run ./cmd/ada-ts-demo                     # M2:TS 插件编译→加载→提供服务/派发事件→内核消费

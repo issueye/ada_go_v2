@@ -2,7 +2,7 @@
 
 > 给在本仓库工作的 AI 代理与人类协作者。**动代码之前先读这一份**；它与设计文档冲突时，以本文件的红线为准，并立刻提 issue 修正文档。
 
-**当前阶段:M1 内核、M2 执行层、M3 装配、M4 编排(`sched`/`quota`/`flow`(含 fanout/subflow)/`bundle`,内核回收 + 装配层 on-demand 延迟激活(含 onService/onCron 触发 helper)+ jobs 跨进程锁)、M4.5 seam、M5 安全(`fs`/`fs-local`/`fs-sandbox`、`shell`/`shell-local`/`shell-guard`、`sandbox`/`sandbox-none`、`fs-redact` 脱敏、`fs-observe`/`shell-observe` 观察事件、`shell-redact` 输出脱敏,且 fs/shell 策略已调用 sandbox.Resolve、可升级拒绝走 approval(含 CLI 交互审批)、caps 静态授权 + `caps-gate` 调用点强制(fs/shell)、install 校验/原子落盘/本机索引/CLI 安装同意、`host/cli`/`host/server` 宿主适配器(共享 `host/builtins` 内置插件)、`net.fetch`(seam/net + provider/net-http + net-guard 授权)、`secrets`(seam/secrets + provider/secrets-env + secrets-guard 授权)已落地**,M5 剩余 在线 artifact 下载/desktop 宿主/OS 级沙箱(Linux 后端)。本文件始终生效:先用它约束设计,再用它约束实现。
+**当前阶段:M1 内核、M2 执行层、M3 装配、M4 编排(`sched`/`quota`/`flow`(含 fanout/subflow)/`bundle`,内核回收 + 装配层 on-demand 延迟激活(含 onService/onCron 触发 helper)+ jobs 跨进程锁)、M4.5 seam、M5 安全(`fs`/`fs-local`/`fs-sandbox`、`shell`/`shell-local`/`shell-guard`、`sandbox`/`sandbox-none`、`fs-redact` 脱敏、`fs-observe`/`shell-observe` 观察事件、`shell-redact` 输出脱敏,且 fs/shell 策略已调用 sandbox.Resolve、可升级拒绝走 approval(含 CLI 交互审批)、caps 静态授权 + `caps-gate` 调用点强制(fs/shell)、install 校验/原子落盘/本机索引/CLI 安装同意、`host/cli`/`host/server` 宿主适配器(共享 `host/builtins` 内置插件)、`net.fetch`(seam/net + provider/net-http + net-guard 授权)、`secrets`(seam/secrets + provider/secrets-env + secrets-guard 授权)已落地**,M5 剩余 在线 registry 服务/desktop 宿主/OS 级沙箱(Linux 后端)。本文件始终生效:先用它约束设计,再用它约束实现。
 
 ---
 

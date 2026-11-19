@@ -75,7 +75,7 @@ func usage(w io.Writer) {
   ada rollback <插件 id> -dest <安装根>
   ada caps    <插件目录|--preset 文件> [-json]
   ada repo    <仓库索引 URL> [-keys 密钥文件] [-require-repo-signature] [-json]
-  ada update  <插件 id> -repo <仓库目录> -dest <安装根> [-keys 密钥文件] [-require-signature] [-require-repo-signature] [-yes]
+  ada update  <插件 id> -repo <仓库目录> |-repo-url <索引 URL> -dest <安装根> [-keys 密钥文件] [-require-signature] [-require-repo-signature] [-yes]
 
 退出码:0=成功,1=计划不可执行/装配或校验失败,2=用法错误。
 `)
@@ -675,6 +675,7 @@ func cmdRepo(args []string, out, errOut io.Writer) int {
 func cmdUpdate(args []string, out, errOut io.Writer) int {
 	id := ""
 	repo := ""
+	repoURL := ""
 	dest := ""
 	keysPath := ""
 	require := false
@@ -689,6 +690,13 @@ func cmdUpdate(args []string, out, errOut io.Writer) int {
 				break
 			}
 			repo = args[i+1]
+			i++
+		case a == "-repo-url":
+			if i+1 >= len(args) {
+				bad = "-repo-url 缺少 URL 参数"
+				break
+			}
+			repoURL = args[i+1]
 			i++
 		case a == "-dest":
 			if i+1 >= len(args) {
@@ -728,10 +736,13 @@ func cmdUpdate(args []string, out, errOut io.Writer) int {
 		usage(errOut)
 		return 2
 	}
-	if id == "" || repo == "" || dest == "" {
-		fmt.Fprintln(errOut, "需要插件 id、-repo 仓库目录与 -dest 安装根")
+	if id == "" || (repo == "" && repoURL == "") || dest == "" || (repo != "" && repoURL != "") {
+		fmt.Fprintln(errOut, "需要插件 id、且 -repo 与 -repo-url 二选一、-dest 安装根")
 		usage(errOut)
 		return 2
+	}
+	if repoURL != "" {
+		return runRemoteUpdate(id, repoURL, dest, keysPath, require, requireRepo, yes, out, errOut)
 	}
 	keys, err := loadKeyRing(keysPath)
 	if err != nil {
@@ -748,6 +759,34 @@ func cmdUpdate(args []string, out, errOut io.Writer) int {
 		return 2
 	}
 	info, err := install.UpdateFromRepo(repo, id, dest, opts)
+	if err != nil {
+		fmt.Fprintln(errOut, "更新失败:", err)
+		return 1
+	}
+	fmt.Fprintf(out, "已更新: %s@%s → %s\n", info.ID, info.Version, info.Dir)
+	return 0
+}
+
+// runRemoteUpdate 从在线仓库更新:先预览/同意,再下载 artifact 安装。
+func runRemoteUpdate(id, repoURL, dest, keysPath string, require, requireRepo, yes bool, out, errOut io.Writer) int {
+	keys, err := loadKeyRing(keysPath)
+	if err != nil {
+		fmt.Fprintln(errOut, "加载密钥失败:", err)
+		return 1
+	}
+	opts := install.Options{
+		Keys: keys, RequireSignature: require,
+		RepoKeys: keys, RequireRepoSignature: requireRepo,
+	}
+	preview, err := install.PreviewRemoteUpdate(context.Background(), repoURL, id, opts)
+	if err != nil {
+		fmt.Fprintln(errOut, "校验在线版本失败:", err)
+		return 1
+	}
+	if !consent(preview, yes, out, errOut) {
+		return 2
+	}
+	info, err := install.UpdateFromRemote(context.Background(), repoURL, id, dest, opts)
 	if err != nil {
 		fmt.Fprintln(errOut, "更新失败:", err)
 		return 1

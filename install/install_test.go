@@ -1,6 +1,7 @@
 package install_test
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 
@@ -649,5 +650,104 @@ func TestFetchRepoIndexSigned(t *testing.T) {
 	defer tamperSrv.Close()
 	if _, err := install.FetchRepoIndex(context.Background(), tamperSrv.URL+"/repo.json", keys, true); err == nil {
 		t.Fatalf("篡改索引应验签失败")
+	}
+}
+
+func buildPluginZip(t *testing.T, id, ver string, prefix string) ([]byte, string) {
+	t.Helper()
+	src := t.TempDir()
+	manifest := `{"id":"` + id + `","version":"` + ver + `","kind":"go"}`
+	if err := os.WriteFile(filepath.Join(src, "plugin.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("写清单失败: %v", err)
+	}
+	info, err := install.VerifyDir(src, install.Options{})
+	if err != nil {
+		t.Fatalf("校验失败: %v", err)
+	}
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	entry := prefix + "plugin.json"
+	_ = zw.SetComment("")
+	f, err := zw.Create(entry)
+	if err != nil {
+		t.Fatalf("创建 zip 条目失败: %v", err)
+	}
+	if _, err := f.Write([]byte(manifest)); err != nil {
+		t.Fatalf("写 zip 失败: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("关闭 zip 失败: %v", err)
+	}
+	return buf.Bytes(), info.Digest
+}
+
+// 27. 下载+解包+校验。
+func TestFetchArtifactExtract(t *testing.T) {
+	data, _ := buildPluginZip(t, "art-demo", "0.1.0", "pkg/")
+	mux := http.NewServeMux()
+	mux.HandleFunc("/p.zip", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(data) })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	zipData, err := install.FetchArtifact(context.Background(), srv.URL+"/p.zip")
+	if err != nil {
+		t.Fatalf("下载失败: %v", err)
+	}
+	dir := t.TempDir()
+	if err := install.ExtractZip(zipData, dir); err != nil {
+		t.Fatalf("解包失败: %v", err)
+	}
+	info, err := install.VerifyDir(filepath.Join(dir, "pkg"), install.Options{})
+	if err != nil || info.ID != "art-demo" {
+		t.Fatalf("解包结果校验失败: %v %+v", err, info)
+	}
+}
+
+// 28. zip slip 与非法 scheme 拒绝。
+func TestArtifactRejects(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	f, _ := zw.Create("../evil.txt")
+	_, _ = f.Write([]byte("x"))
+	_ = zw.Close()
+	if err := install.ExtractZip(buf.Bytes(), t.TempDir()); err == nil {
+		t.Fatalf("路径逃逸应拒绝")
+	}
+	if _, err := install.FetchArtifact(context.Background(), "ftp://example.com/p.zip"); err == nil {
+		t.Fatalf("非法 scheme 应拒绝")
+	}
+}
+
+// 29. 在线更新:索引 → artifact → 安装。
+func TestUpdateFromRemote(t *testing.T) {
+	dest := t.TempDir()
+	installVersion(t, dest, "0.1.0")
+	data, digest := buildPluginZip(t, "up-demo", "0.2.0", "pkg/")
+	var serverURL string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/p.zip", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(data) })
+	mux.HandleFunc("/repo.json", func(w http.ResponseWriter, _ *http.Request) {
+		index := map[string]any{"entries": []install.RepoEntry{
+			{ID: "up-demo", Version: "0.2.0", Source: serverURL + "/p.zip", Digest: digest},
+		}}
+		b, _ := json.Marshal(index)
+		_, _ = w.Write(b)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	serverURL = srv.URL
+
+	info, err := install.UpdateFromRemote(context.Background(), srv.URL+"/repo.json", "up-demo", dest, install.Options{})
+	if err != nil {
+		t.Fatalf("在线更新失败: %v", err)
+	}
+	if info.Version != "0.2.0" {
+		t.Fatalf("版本不正确: %s", info.Version)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "up-demo@0.1.0")); err == nil {
+		t.Fatalf("旧版本应被清理")
+	}
+	if _, err := install.UpdateFromRemote(context.Background(), srv.URL+"/repo.json", "up-demo", dest, install.Options{}); err == nil {
+		t.Fatalf("已是最新应失败")
 	}
 }

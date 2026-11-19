@@ -38,6 +38,8 @@ type RepoEntry struct {
 	Version string `json:"version"`
 	Dir     string `json:"dir"` // 相对仓库根目录
 	Digest  string `json:"digest,omitempty"`
+	// Source 是可选 artifact zip 的 URL(在线更新用)。
+	Source string `json:"source,omitempty"`
 }
 
 type repoDoc struct {
