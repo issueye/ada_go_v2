@@ -219,3 +219,33 @@ func TestUninstallUnknown(t *testing.T) {
 		t.Fatalf("未知 id 应返回 1: code=%d err=%s", code, errOut)
 	}
 }
+
+// 16. upgrade:安装 0.1 后升级 0.2,旧目录被清理。
+func TestUpgrade(t *testing.T) {
+	dest := t.TempDir()
+	for _, ver := range []string{"0.1.0", "0.2.0"} {
+		src := t.TempDir()
+		if err := os.WriteFile(filepath.Join(src, "plugin.json"),
+			[]byte(`{"id":"up-demo","version":"`+ver+`","kind":"go"}`), 0o644); err != nil {
+			t.Fatalf("写清单失败: %v", err)
+		}
+		args := []string{"install", src, "-dest", dest}
+		if ver == "0.2.0" {
+			args = []string{"upgrade", src, "-dest", dest}
+		}
+		code, out, errOut := run(args...)
+		if code != 0 {
+			t.Fatalf("%s 失败: code=%d err=%s", ver, code, errOut)
+		}
+		if ver == "0.2.0" && !strings.Contains(out, "已升级") {
+			t.Fatalf("upgrade 输出不正确: %s", out)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dest, "up-demo@0.1.0")); err == nil {
+		t.Fatalf("旧版本目录应被清理")
+	}
+	code, out, _ := run("list", "-dest", dest)
+	if code != 0 || !strings.Contains(out, "up-demo@0.2.0") || strings.Contains(out, "0.1.0") {
+		t.Fatalf("list 应只显示最新版本:\n%s", out)
+	}
+}

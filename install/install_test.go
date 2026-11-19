@@ -311,3 +311,60 @@ func TestUninstallRejectsOutside(t *testing.T) {
 		t.Fatalf("外部文件不应被删除: %v", err)
 	}
 }
+
+func installVersion(t *testing.T, dest, version string) {
+	t.Helper()
+	src := t.TempDir()
+	manifest := `{"id":"up-demo","version":"` + version + `","kind":"go"}`
+	if err := os.WriteFile(filepath.Join(src, "plugin.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("写清单失败: %v", err)
+	}
+	if _, err := install.Install(src, dest, install.Options{}); err != nil {
+		t.Fatalf("安装 %s 失败: %v", version, err)
+	}
+}
+
+func upgradeVersion(t *testing.T, dest, version string) (*install.Info, error) {
+	t.Helper()
+	src := t.TempDir()
+	manifest := `{"id":"up-demo","version":"` + version + `","kind":"go"}`
+	if err := os.WriteFile(filepath.Join(src, "plugin.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("写清单失败: %v", err)
+	}
+	return install.Upgrade(src, dest, install.Options{})
+}
+
+// 15. 升级:安装新版本并清理旧版本,索引只保留最新一条。
+func TestUpgrade(t *testing.T) {
+	dest := t.TempDir()
+	installVersion(t, dest, "0.1.0")
+	info, err := upgradeVersion(t, dest, "0.2.0")
+	if err != nil {
+		t.Fatalf("升级失败: %v", err)
+	}
+	if info.Version != "0.2.0" {
+		t.Fatalf("升级版本不正确: %s", info.Version)
+	}
+	entries, err := install.List(dest)
+	if err != nil || len(entries) != 1 || entries[0].Version != "0.2.0" {
+		t.Fatalf("升级后索引应只剩最新: %v %+v", err, entries)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "up-demo@0.1.0")); err == nil {
+		t.Fatalf("旧版本目录应被删除")
+	}
+}
+
+// 16. 升级拒绝降级与同版本;未安装时报错。
+func TestUpgradeRejects(t *testing.T) {
+	dest := t.TempDir()
+	if _, err := upgradeVersion(t, dest, "0.1.0"); err == nil || !strings.Contains(err.Error(), "未安装") {
+		t.Fatalf("未安装应报错,实际 %v", err)
+	}
+	installVersion(t, dest, "0.2.0")
+	if _, err := upgradeVersion(t, dest, "0.2.0"); err == nil || !strings.Contains(err.Error(), "无需升级") {
+		t.Fatalf("同版本应拒绝,实际 %v", err)
+	}
+	if _, err := upgradeVersion(t, dest, "0.1.0"); err == nil || !strings.Contains(err.Error(), "拒绝降级") {
+		t.Fatalf("降级应拒绝,实际 %v", err)
+	}
+}

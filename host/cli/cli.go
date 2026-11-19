@@ -44,6 +44,8 @@ func Run(args []string, out, errOut io.Writer) int {
 		return cmdList(args[1:], out, errOut)
 	case "uninstall":
 		return cmdUninstall(args[1:], out, errOut)
+	case "upgrade":
+		return cmdUpgrade(args[1:], out, errOut)
 	default:
 		usage(errOut)
 		return 2
@@ -59,6 +61,7 @@ func usage(w io.Writer) {
   ada install <插件目录> -dest <安装根> [-keys 密钥文件] [-require-signature] [-yes]
   ada list    -dest <安装根>
   ada uninstall <插件 id> -dest <安装根>
+  ada upgrade <插件目录> -dest <安装根> [-keys 密钥文件] [-require-signature] [-yes]
 
 退出码:0=成功,1=计划不可执行/装配或校验失败,2=用法错误。
 `)
@@ -471,6 +474,46 @@ func cmdUninstall(args []string, out, errOut io.Writer) int {
 	return 0
 }
 
+// consent 是安装/升级共用的同意检查:声明能力的插件需要 -yes。
+func consent(info *install.Info, yes bool, out, errOut io.Writer) bool {
+	if len(info.Manifest.Caps) == 0 || yes {
+		return true
+	}
+	fmt.Fprintf(out, "插件: %s@%s(信任 %s,已签名 %v)\n能力: %s\n",
+		info.ID, info.Version, info.Trust, info.Signed, strings.Join(info.Manifest.Caps, ", "))
+	fmt.Fprintln(errOut, "该插件声明了能力,需要 -yes 确认")
+	return false
+}
+
+func cmdUpgrade(args []string, out, errOut io.Writer) int {
+	dir, dest, keysPath, require, yes, bad := parseInstallArgs(args)
+	if bad != "" {
+		fmt.Fprintln(errOut, bad)
+		usage(errOut)
+		return 2
+	}
+	keys, err := loadKeyRing(keysPath)
+	if err != nil {
+		fmt.Fprintln(errOut, "加载密钥失败:", err)
+		return 1
+	}
+	preview, err := install.VerifyDir(dir, install.Options{Keys: keys, RequireSignature: require})
+	if err != nil {
+		fmt.Fprintln(errOut, "校验失败:", err)
+		return 1
+	}
+	if !consent(preview, yes, out, errOut) {
+		return 2
+	}
+	info, err := install.Upgrade(dir, dest, install.Options{Keys: keys, RequireSignature: require})
+	if err != nil {
+		fmt.Fprintln(errOut, "升级失败:", err)
+		return 1
+	}
+	fmt.Fprintf(out, "已升级: %s@%s → %s\n", info.ID, info.Version, info.Dir)
+	return 0
+}
+
 // cmdList 列出安装根目录的索引。
 func cmdList(args []string, out, errOut io.Writer) int {
 	dest := ""
@@ -568,16 +611,12 @@ func cmdInstall(args []string, out, errOut io.Writer) int {
 		fmt.Fprintln(errOut, "加载密钥失败:", err)
 		return 1
 	}
-	// 安装同意:先只校验(不落盘),展示能力;没有 -yes 就拒绝。
 	preview, err := install.VerifyDir(dir, install.Options{Keys: keys, RequireSignature: require})
 	if err != nil {
 		fmt.Fprintln(errOut, "校验失败:", err)
 		return 1
 	}
-	if len(preview.Manifest.Caps) > 0 && !yes {
-		fmt.Fprintf(out, "插件: %s@%s(信任 %s,已签名 %v)\n能力: %s\n",
-			preview.ID, preview.Version, preview.Trust, preview.Signed, strings.Join(preview.Manifest.Caps, ", "))
-		fmt.Fprintln(errOut, "该插件声明了能力,需要 -yes 确认安装")
+	if !consent(preview, yes, out, errOut) {
 		return 2
 	}
 	info, err := install.Install(dir, dest, install.Options{Keys: keys, RequireSignature: require})

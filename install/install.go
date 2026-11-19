@@ -21,6 +21,7 @@ import (
 	"github.com/adag/ada-go/v2/compile"
 	"github.com/adag/ada-go/v2/loader"
 	"github.com/adag/ada-go/v2/plugin"
+	"github.com/adag/ada-go/v2/version"
 )
 
 // SignatureFile 是插件目录里的签名文件名。
@@ -295,6 +296,102 @@ func Uninstall(destRoot, id string) (int, error) {
 		return removed, err
 	}
 	return removed, nil
+}
+
+// Upgrade 安装更高版本并清理旧版本目录。
+//
+// 语义:先安装新版本(原子),再删除同 id 的旧版本目录并把索引收敛到最新一条。
+// 拒绝降级与同版本重复;分开两步意味着「清理失败时新版本仍已安装」,需要宿主提示。
+func Upgrade(src, destRoot string, opts Options) (*Info, error) {
+	preview, err := VerifyDir(src, opts)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := List(destRoot)
+	if err != nil {
+		return nil, err
+	}
+	var current []IndexEntry
+	for _, e := range entries {
+		if e.ID == preview.ID {
+			current = append(current, e)
+		}
+	}
+	if len(current) == 0 {
+		return nil, fmt.Errorf("install: 插件 %q 未安装,请使用 install", preview.ID)
+	}
+	newest := current[0]
+	for _, e := range current[1:] {
+		cmp, err := compareVersionStrings(e.Version, newest.Version)
+		if err != nil {
+			return nil, err
+		}
+		if cmp > 0 {
+			newest = e
+		}
+	}
+	cmp, err := compareVersionStrings(preview.Version, newest.Version)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case cmp == 0:
+		return nil, fmt.Errorf("install: 版本 %s 已安装,无需升级", preview.Version)
+	case cmp < 0:
+		return nil, fmt.Errorf("install: 拒绝降级(%s → %s)", newest.Version, preview.Version)
+	}
+
+	info, err := Install(src, destRoot, opts)
+	if err != nil {
+		return nil, err
+	}
+	if err := cleanupOlderVersions(destRoot, info); err != nil {
+		return info, fmt.Errorf("install: 新版本已安装,但清理旧版本失败: %w", err)
+	}
+	return info, nil
+}
+
+func compareVersionStrings(a, b string) (int, error) {
+	va, err := version.Parse(a)
+	if err != nil {
+		return 0, fmt.Errorf("install: 版本号非法 %q: %w", a, err)
+	}
+	vb, err := version.Parse(b)
+	if err != nil {
+		return 0, fmt.Errorf("install: 版本号非法 %q: %w", b, err)
+	}
+	return version.Compare(va, vb), nil
+}
+
+// cleanupOlderVersions 删除同 id 的旧版本目录,并把索引收敛到只保留新版本。
+func cleanupOlderVersions(destRoot string, cur *Info) error {
+	entries, err := List(destRoot)
+	if err != nil {
+		return err
+	}
+	rootAbs, err := filepath.Abs(destRoot)
+	if err != nil {
+		return fmt.Errorf("install: 解析安装根目录失败: %w", err)
+	}
+	kept := entries[:0]
+	for _, e := range entries {
+		if e.ID != cur.ID || e.Version == cur.Version {
+			kept = append(kept, e)
+			continue
+		}
+		dirAbs, err := filepath.Abs(e.Dir)
+		if err != nil {
+			return fmt.Errorf("install: 解析旧版本目录失败: %w", err)
+		}
+		rel, err := filepath.Rel(rootAbs, dirAbs)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("install: 索引里的目录不在安装根之下,拒绝删除: %s", e.Dir)
+		}
+		if err := os.RemoveAll(dirAbs); err != nil {
+			return fmt.Errorf("install: 删除旧版本 %s 失败: %w", e.Dir, err)
+		}
+	}
+	return writeIndex(destRoot, kept)
 }
 
 // Install 校验后原子安装到 <DestRoot>/<id>@<version>/。
