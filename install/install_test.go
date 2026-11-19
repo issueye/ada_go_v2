@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/adag/ada-go/v2/caps"
 	"github.com/adag/ada-go/v2/compile"
@@ -774,5 +775,26 @@ func TestInstallLock(t *testing.T) {
 	}
 	if _, err := os.Stat(lock); err == nil {
 		t.Fatalf("安装结束后锁文件应被删除")
+	}
+}
+
+// 31. 过期锁(崩溃残留)自动回收后重试。
+func TestInstallLockStale(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "plugin.json"),
+		[]byte(`{"id":"stale-demo","version":"0.1.0","kind":"go"}`), 0o644); err != nil {
+		t.Fatalf("写清单失败: %v", err)
+	}
+	dest := t.TempDir()
+	lock := filepath.Join(dest, install.LockFile)
+	if err := os.WriteFile(lock, []byte("stale"), 0o644); err != nil {
+		t.Fatalf("写锁失败: %v", err)
+	}
+	old := time.Now().Add(-2 * install.InstallLockTTL)
+	if err := os.Chtimes(lock, old, old); err != nil {
+		t.Fatalf("改锁时间失败: %v", err)
+	}
+	if _, err := install.Install(src, dest, install.Options{}); err != nil {
+		t.Fatalf("过期锁应被回收并安装成功: %v", err)
 	}
 }

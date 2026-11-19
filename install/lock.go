@@ -5,10 +5,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // LockFile 是安装根目录下的锁文件名。
 const LockFile = ".install.lock"
+
+// InstallLockTTL 是锁的过期时间:超过后视为崩溃残留并回收。
+const InstallLockTTL = 10 * time.Minute
 
 // withLock 在 destRoot 上获取进程锁;被占用时明确报错,不静默覆盖。
 func withLock[T any](destRoot string, fn func() (T, error)) (T, error) {
@@ -21,6 +25,13 @@ func withLock[T any](destRoot string, fn func() (T, error)) (T, error) {
 	}
 	lockPath := filepath.Join(destRoot, LockFile)
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil && os.IsExist(err) {
+		// 过期锁(崩溃残留)回收一次后重试;新鲜锁仍拒绝。
+		if info, statErr := os.Stat(lockPath); statErr == nil && time.Since(info.ModTime()) > InstallLockTTL {
+			_ = os.Remove(lockPath)
+			f, err = os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		}
+	}
 	if err != nil {
 		if os.IsExist(err) {
 			return zero, fmt.Errorf("install: 目标目录正在被另一个安装进程操作(%s)", lockPath)

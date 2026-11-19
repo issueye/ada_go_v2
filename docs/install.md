@@ -88,7 +88,7 @@ go run ./cmd/ada repo <仓库索引 URL> [-keys 密钥文件] [-require-repo-sig
 
 ## 6. 偏差与边界
 
-1. **本机索引/卸载/升级/回滚/离线/在线更新 + 安装锁已实现**:同一 `destRoot` 上的 install/uninstall/upgrade/rollback 由 `.install.lock` 串行化(锁被占用即失败);artifact 不单独签名,靠索引签名+digest。
+1. **本机索引/卸载/升级/回滚/离线/在线更新 + 安装锁已实现**:同一 `destRoot` 上的 install/uninstall/upgrade/rollback 由 `.install.lock` 串行化(锁被占用即失败);锁超过 `InstallLockTTL`(10 分钟)视为崩溃残留并回收。artifact 不单独签名,靠索引签名+digest。
 2. **安装同意只有 CLI 级**:`-yes` 让 `ada install` 在展示能力后继续;桌面确认框/逐项授权未实现,`-yes` 是一次性整体同意。
 3. **没有 `$ADA_HOME/keys` 与官方 keyring**:key ring 由调用方显式提供。
 4. **trust 未进入 caps 强制**:安装得到 trust 后,没有把 `caps` 授权与 trust 关联(调用点强制仍缺)。
@@ -132,6 +132,7 @@ go run ./cmd/ada repo <仓库索引 URL> [-keys 密钥文件] [-require-repo-sig
 | 在线更新(索引→artifact→Upgrade) | `install.TestUpdateFromRemote` |
 | CLI update -repo-url 在线更新 | `host/cli.TestUpdateRemote` |
 | 安装锁:占用拒绝/结束后清理 | `install.TestInstallLock` |
+| 过期锁回收 | `install.TestInstallLockStale` |
 
 ## 8. 下一步
 
