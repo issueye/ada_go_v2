@@ -192,3 +192,37 @@ func tlsCert(t *testing.T) (string, string) {
 	}
 	return certPath, keyPath
 }
+
+// 5. 固定窗口限流:超限 429,窗口后复位。
+func TestRateLimit(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "repo.json"), []byte(`{"entries":[]}`), 0o644); err != nil {
+		t.Fatalf("写索引失败: %v", err)
+	}
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	h, err := registry.NewHandler(registry.Options{
+		Root: root, RateLimit: 2,
+		Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("构造失败: %v", err)
+	}
+	get := func() *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/repo.json", nil))
+		return rec
+	}
+	if rec := get(); rec.Code != http.StatusOK {
+		t.Fatalf("第 1 次应 200,实际 %d", rec.Code)
+	}
+	if rec := get(); rec.Code != http.StatusOK {
+		t.Fatalf("第 2 次应 200,实际 %d", rec.Code)
+	}
+	if rec := get(); rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") != "1" {
+		t.Fatalf("第 3 次应 429+Retry-After,实际 %d", rec.Code)
+	}
+	now = now.Add(time.Second)
+	if rec := get(); rec.Code != http.StatusOK {
+		t.Fatalf("窗口复位后应 200,实际 %d", rec.Code)
+	}
+}

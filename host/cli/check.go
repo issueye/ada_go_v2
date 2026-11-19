@@ -147,6 +147,7 @@ func cmdServeRepo(args []string, out, errOut io.Writer) int {
 	token := ""
 	certFile := ""
 	keyFile := ""
+	rateLimit := 0
 	bad := ""
 	for i := 0; i < len(args); i++ {
 		switch a := args[i]; {
@@ -170,6 +171,18 @@ func cmdServeRepo(args []string, out, errOut io.Writer) int {
 				break
 			}
 			token = args[i+1]
+			i++
+		case a == "-rate-limit":
+			if i+1 >= len(args) {
+				bad = "-rate-limit 缺少数值"
+				break
+			}
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil {
+				bad = "-rate-limit 必须是整数"
+			} else {
+				rateLimit = n
+			}
 			i++
 		case a == "-cert":
 			if i+1 >= len(args) {
@@ -211,7 +224,8 @@ func cmdServeRepo(args []string, out, errOut io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	if err := registry.Serve(ctx, registry.Options{
-		Root: root, Token: token, CertFile: certFile, KeyFile: keyFile,
+		Root: root, Token: token, RateLimit: rateLimit,
+		CertFile: certFile, KeyFile: keyFile,
 	}, ln); err != nil {
 		fmt.Fprintln(errOut, "服务失败:", err)
 		return 1
@@ -250,6 +264,18 @@ func cmdServe(args []string, out, errOut io.Writer) int {
 				break
 			}
 			token = args[i+1]
+			i++
+		case a == "-rate-limit":
+			if i+1 >= len(args) {
+				bad = "-rate-limit 缺少数值"
+				break
+			}
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil {
+				bad = "-rate-limit 必须是整数"
+			} else {
+				rateLimit = n
+			}
 			i++
 		case a == "-cert":
 			if i+1 >= len(args) {

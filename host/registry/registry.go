@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -26,6 +27,10 @@ type Options struct {
 	// CertFile/KeyFile 成对出现时 Serve 使用 TLS;只出现一个报错。
 	CertFile string
 	KeyFile  string
+	// RateLimit 是每窗口(1 秒)允许的请求数;0 表示不限。
+	RateLimit int
+	// Now 可注入时钟(测试用);nil 表示 time.Now。
+	Now func() time.Time
 }
 
 // NewHandler 构造仓库 handler。
@@ -43,18 +48,32 @@ func NewHandler(opts Options) (http.Handler, error) {
 	if info, err := os.Stat(root); err != nil || !info.IsDir() {
 		return nil, fmt.Errorf("host/registry: 根目录不是目录: %s", root)
 	}
-	s := &server{root: root, token: opts.Token}
+	if opts.RateLimit < 0 {
+		return nil, fmt.Errorf("host/registry: RateLimit 不能为负")
+	}
+	now := opts.Now
+	if now == nil {
+		now = time.Now
+	}
+	s := &server{root: root, token: opts.Token, rateLimit: opts.RateLimit, now: now}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/repo.json", s.handleRepoFile("repo.json"))
 	mux.HandleFunc("/repo.sig.json", s.handleRepoFile("repo.sig.json"))
 	mux.HandleFunc("/artifacts/", s.handleArtifact)
 	mux.HandleFunc("/", s.handleIndex)
-	return s.auth(mux), nil
+	return s.rateLimitMiddleware(s.auth(mux)), nil
 }
 
 type server struct {
 	root  string
 	token string
+
+	rateLimit int
+	now       func() time.Time
+
+	rateMu      sync.Mutex
+	windowStart time.Time
+	windowCount int
 }
 
 // Serve 在 ln 上提供仓库服务,ctx 取消时优雅关闭(返回 nil)。
@@ -82,6 +101,30 @@ func Serve(ctx context.Context, opts Options, ln net.Listener) error {
 		return nil
 	}
 	return err
+}
+
+// rateLimitMiddleware 是固定窗口限流:每 1 秒最多 RateLimit 个请求。
+func (s *server) rateLimitMiddleware(next http.Handler) http.Handler {
+	if s.rateLimit <= 0 {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.rateMu.Lock()
+		now := s.now()
+		if s.windowStart.IsZero() || now.Sub(s.windowStart) >= time.Second {
+			s.windowStart = now
+			s.windowCount = 0
+		}
+		s.windowCount++
+		over := s.windowCount > s.rateLimit
+		s.rateMu.Unlock()
+		if over {
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "请求过于频繁", http.StatusTooManyRequests)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *server) auth(next http.Handler) http.Handler {

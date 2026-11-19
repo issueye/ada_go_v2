@@ -26,7 +26,7 @@ cmd/ada/     只做 os.Exit(cli.Run(os.Args[1:], os.Stdout, os.Stderr))
 | `caps <目录|--preset 文件> [-json]` | 静态能力自检:清单 caps/trust → Broker 授权 |
 | `repo <索引 URL> [-keys] [-require-repo-signature] [-json]` | 在线读取仓库索引(可选验签) |
 | `check <目录|--preset 文件> [-json]` | 清单 + 依赖图 + caps + 逐插件编译校验 |
-| `serve-repo -root <目录> -addr <地址> [-token] [-cert 证书 -key 私钥]` | 只读仓库服务(SIGINT 优雅停止;可 TLS) |
+| `serve-repo -root <目录> -addr <地址> [-token] [-rate-limit N] [-cert 证书 -key 私钥]` | 只读仓库服务(SIGINT 优雅停止;可 TLS/限流) |
 | `serve -root <目录> -addr <地址> [-token] [-rate-limit N] [-cert 证书 -key 私钥]` | 只读 HTTP API 服务(SIGINT 优雅停止;可 TLS) |
 | `install <目录> -dest <根> [-keys 文件] [-require-signature]` | 校验后原子安装 |
 
