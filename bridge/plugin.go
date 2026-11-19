@@ -55,17 +55,23 @@ type effectReq struct {
 	dispose func(ctx context.Context) error
 }
 
+type wfReq struct {
+	event  string
+	invoke func(ctx context.Context, input any, next func(any) (any, error)) (any, error)
+}
+
 // stager 收集 JS 侧 ctx.provide / ctx.emit 的请求,等回到内核协程再提交。
 //
 // 为什么必须暂存而不是「加锁直接写」:加锁只能消除数据竞争,消除不了语义竞争——
 // 内核的 recompute 依赖「单协程推进」,第二个协程插进来会造成半新半旧的依赖图。
 type stager struct {
-	mu       sync.Mutex
-	closed   bool
-	ons      []onReq
-	effects  []effectReq
-	provides []provideReq
-	emits    []emitReq
+	mu         sync.Mutex
+	closed     bool
+	ons        []onReq
+	waterfalls []wfReq
+	effects    []effectReq
+	provides   []provideReq
+	emits      []emitReq
 }
 
 func (s *stager) on(event string, invoke func(ctx context.Context, payload any) (any, error)) error {
@@ -75,6 +81,16 @@ func (s *stager) on(event string, invoke func(ctx context.Context, payload any) 
 		return fmt.Errorf("ctx.on 只能在 apply 期间调用")
 	}
 	s.ons = append(s.ons, onReq{event: event, invoke: invoke})
+	return nil
+}
+
+func (s *stager) waterfall(event string, invoke func(ctx context.Context, input any, next func(any) (any, error)) (any, error)) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return fmt.Errorf("ctx.waterfall 只能在 apply 期间调用")
+	}
+	s.waterfalls = append(s.waterfalls, wfReq{event: event, invoke: invoke})
 	return nil
 }
 
@@ -110,11 +126,11 @@ func (s *stager) emit(event string, payload any) error {
 
 // drain 关闭入口并取出暂存请求。之后 JS 再调用会被拒绝:
 // 没有提交点的调用必须报错,而不是静默丢失。
-func (s *stager) drain() ([]onReq, []effectReq, []provideReq, []emitReq) {
+func (s *stager) drain() ([]wfReq, []onReq, []effectReq, []provideReq, []emitReq) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closed = true
-	return s.ons, s.effects, s.provides, s.emits
+	return s.waterfalls, s.ons, s.effects, s.provides, s.emits
 }
 
 func (s *stager) close() {
@@ -189,10 +205,11 @@ func (p *Plugin) Apply(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, 
 		Artifact: p.opts.Artifact,
 		Logf:     p.record,
 		Host: jsrt.Host{
-			Provide: stage.provide,
-			Emit:    stage.emit,
-			On:      stage.on,
-			Effect:  stage.effect,
+			Provide:   stage.provide,
+			Emit:      stage.emit,
+			On:        stage.on,
+			Effect:    stage.effect,
+			Waterfall: stage.waterfall,
 		},
 	})
 	if err != nil {
@@ -209,7 +226,15 @@ func (p *Plugin) Apply(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, 
 		return nil, kernel.Wrap(kernel.CodeInvalid, err, "JS 插件 %s 的 apply 失败", p.opts.Name)
 	}
 
-	ons, effects, provides, emits := stage.drain()
+	waterfalls, ons, effects, provides, emits := stage.drain()
+
+	// waterfall 先于普通监听器注册:中间件通常要包住整条链的其余部分。
+	for _, req := range waterfalls {
+		req := req
+		ctx.OnWaterfall(req.event, func(lctx context.Context, _ *kernel.Context, input any, next kernel.Next) (any, error) {
+			return req.invoke(lctx, input, next)
+		})
+	}
 
 	// 提交顺序 = JS 调用顺序语义:先挂监听器,再注册服务,最后派发事件。
 	// 反过来会让 JS 在 apply 里 emit 的事件打不到自己刚注册的处理器。
@@ -246,7 +271,7 @@ func (p *Plugin) Apply(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, 
 	p.mu.Unlock()
 
 	ctx.Log().Info("JS 插件已装配",
-		"exports", rt.Exports(), "ons", len(ons), "effects", len(effects),
+		"exports", rt.Exports(), "ons", len(ons), "waterfalls", len(waterfalls), "effects", len(effects),
 		"provides", len(provides), "emits", len(emits), "result", res)
 	return func(dctx context.Context) error {
 		p.mu.Lock()

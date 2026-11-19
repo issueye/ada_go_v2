@@ -24,6 +24,7 @@ type Ctx = {
   emit: (event: string, payload: unknown) => void
   on: (event: string, handler: (payload: any) => void) => void
   effect: (label: string, cleanup: () => void) => void
+  waterfall: (event: string, handler: (x: any, next: (v: any) => any) => any) => void
 }
 export function apply(ctx: Ctx, cfg: { name: string }) {
   ctx.log(format(cfg.name))
@@ -35,9 +36,22 @@ export function apply(ctx: Ctx, cfg: { name: string }) {
   ctx.emit("ts/ready", { name: cfg.name })
   ctx.on("ts/ping", (p) => ctx.log("收到 ping:" + p.n))
   ctx.effect("ts-demo", () => ctx.log("清理: ts-demo"))
+  ctx.waterfall("ts/chain", (x: number, next: (v: number) => number) => next(x + 1))
 }`
 
 const utilTS = `export function format(name: string): string { return "你好," + name }`
+
+func asInt64(v any) int64 {
+	switch n := v.(type) {
+	case int64:
+		return n
+	case float64:
+		return int64(n)
+	case int:
+		return int64(n)
+	}
+	return 0
+}
 
 func main() {
 	artifact, err := compile.Build("ts-demo", "plugin.ts", map[string]string{
@@ -98,6 +112,17 @@ func main() {
 
 	// 反向回调:内核派发事件,JS 处理器在自己的 goroutine 上执行。
 	app.Root().Emit("ts/ping", map[string]any{"n": 1})
+
+	// waterfall:JS 中间件把输入 +1,Go 侧下游再 ×2。
+	app.Root().OnWaterfall("ts/chain", func(_ context.Context, _ *kernel.Context, in any, next kernel.Next) (any, error) {
+		return next(asInt64(in) * 2)
+	})
+	out, err := app.Root().Waterfall(context.Background(), "ts/chain", 1)
+	if err != nil {
+		fmt.Println("waterfall 失败:", err)
+	} else {
+		fmt.Println("waterfall 结果(JS +1 → Go ×2):", out)
+	}
 
 	fmt.Println("Go 消费者拿到的服务数据:", seenText)
 	fmt.Println("Go 调用 JS 方法 render():", rendered)

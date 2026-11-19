@@ -97,7 +97,14 @@ type Host struct {
 	On func(event string, invoke func(ctx context.Context, payload any) (any, error)) error
 	// Effect 登记一个 JS 清理函数;桥接层负责在卸载时按逆序调用 dispose。
 	Effect func(label string, dispose func(ctx context.Context) error) error
+	// Waterfall 注册一个可改写/否决的中间件。invoke 接收内核的 next,
+	// JS 侧通过同步调用 next 继续下游并拿到结果。
+	Waterfall func(event string, invoke func(ctx context.Context, input any, next func(any) (any, error)) (any, error)) error
 }
+
+// ErrReentrant 表示同一运行时在自己的回调链里被再次调用。
+// 此时 worker 正阻塞等待宿主响应 next,再投递任务必然死锁,所以直接失败。
+var ErrReentrant = errors.New("jsrt: 同一运行时的嵌套调用会死锁")
 
 // Options 描述一次运行时装配。
 type Options struct {
@@ -133,6 +140,9 @@ type Runtime struct {
 	// 注册与调用都发生在 worker 上。
 	handlers map[uint64]handlerEntry
 	nextID   uint64
+	// inWaterfall 记录「宿主正在等本运行时的 waterfall 处理器」。
+	// 大于 0 时禁止再次调用本运行时,否则 worker 会在等待宿主响应 next 时死锁。
+	inWaterfall int
 }
 
 // New 装配并加载 Artifact,返回可调用的运行时。
@@ -233,6 +243,9 @@ func (r *Runtime) load() error {
 	}
 	if err := setFn("effect", r.nativeEffect(raw)); err != nil {
 		return fmt.Errorf("jsrt: 注入 ctx.effect 失败: %w", err)
+	}
+	if err := setFn("waterfall", r.nativeWaterfall(raw)); err != nil {
+		return fmt.Errorf("jsrt: 注入 ctx.waterfall 失败: %w", err)
 	}
 	host := engine.ObjectValue(ctxObj)
 	// __adaCtx 只是调试入口;插件作者应该用 apply(ctx, config) 的第一个参数。
@@ -729,6 +742,156 @@ func (r *Runtime) invokeMethodOnWorker(id uint64, payload [][]byte) callResult {
 	v, err := raw.ToGo(out)
 	if err != nil {
 		return callResult{err: fmt.Errorf("jsrt: 方法返回值无法转换: %w", err)}
+	}
+	return callResult{value: v}
+}
+
+// nativeWaterfall 实现 ctx.waterfall(event, handler):登记为内核 waterfall 监听器。
+func (r *Runtime) nativeWaterfall(raw *moejs.Runtime) moejs.NativeFunc {
+	return func(_ *engine.Realm, _ engine.Value, args []engine.Value) (engine.Value, error) {
+		if r.opts.Host.Waterfall == nil {
+			return engine.Undefined(), fmt.Errorf("ctx.waterfall 未启用")
+		}
+		if len(args) < 2 {
+			return engine.Undefined(), fmt.Errorf("ctx.waterfall(event, handler) 需要两个参数")
+		}
+		rawEvent, err := raw.ToGo(args[0])
+		if err != nil {
+			return engine.Undefined(), fmt.Errorf("ctx.waterfall 的事件名无法转换: %w", err)
+		}
+		event, ok := rawEvent.(string)
+		if !ok || event == "" {
+			return engine.Undefined(), fmt.Errorf("ctx.waterfall 的事件名必须是非空字符串")
+		}
+		if !engine.IsCallable(args[1]) {
+			return engine.Undefined(), fmt.Errorf("ctx.waterfall 的第二个参数必须是函数")
+		}
+		r.nextID++
+		id := r.nextID
+		r.handlers[id] = handlerEntry{fn: args[1], this: engine.Undefined()}
+		if err := r.opts.Host.Waterfall(event, func(ctx context.Context, input any, next func(any) (any, error)) (any, error) {
+			return r.invokeWaterfall(ctx, id, input, next)
+		}); err != nil {
+			delete(r.handlers, id)
+			return engine.Undefined(), err
+		}
+		return engine.Undefined(), nil
+	}
+}
+
+// wfValue 是 waterfall 处理器与宿主之间的一次往返结果。
+type wfValue struct {
+	value any
+	err   error
+}
+
+// invokeWaterfall 在 worker 上执行 JS 中间件;JS 调 next 时在这里回落到宿主。
+//
+// 环的规避:同一运行时不允许嵌套(ErrReentrant)。跨运行时的链是安全的——
+// 每个运行时有自己的 worker,宿主负责把 next 调用串起来。
+func (r *Runtime) invokeWaterfall(ctx context.Context, id uint64, input any, next func(any) (any, error)) (any, error) {
+	r.mu.Lock()
+	if r.inWaterfall > 0 {
+		r.mu.Unlock()
+		return nil, ErrReentrant
+	}
+	r.inWaterfall++
+	r.mu.Unlock()
+	defer func() {
+		r.mu.Lock()
+		r.inWaterfall--
+		r.mu.Unlock()
+	}()
+
+	b, err := json.Marshal(input)
+	if err != nil {
+		return nil, fmt.Errorf("jsrt: waterfall 输入无法序列化: %w", err)
+	}
+	res := make(chan callResult, 1)
+	nextReq := make(chan wfValue, 1)
+	nextResp := make(chan wfValue, 1)
+	if err := r.enqueue(ctx, func() { res <- r.invokeWaterfallOnWorker(id, b, nextReq, nextResp) }); err != nil {
+		return nil, err
+	}
+	for {
+		select {
+		case got := <-res:
+			return got.value, got.err
+		case req := <-nextReq:
+			// 在监听器所在的 goroutine 上继续下游,与内核 waterfall 语义一致。
+			v, nextErr := next(req.value)
+			nextResp <- wfValue{value: v, err: nextErr}
+		case <-ctx.Done():
+			r.interrupt(ctx.Err())
+			// 若 worker 正阻塞在 next 上,用一条错误结果把它放出来,避免 goroutine 泄漏。
+			select {
+			case nextResp <- wfValue{err: ctx.Err()}:
+			default:
+			}
+			select {
+			case <-res:
+				r.clearInterrupt()
+				return nil, ctx.Err()
+			case <-time.After(interruptGrace):
+				r.mu.Lock()
+				r.broken = true
+				r.mu.Unlock()
+				return nil, fmt.Errorf("%w: waterfall 处理器 %d 在 %s 内未响应取消", ErrBroken, id, interruptGrace)
+			}
+		}
+	}
+}
+
+func (r *Runtime) invokeWaterfallOnWorker(id uint64, payload []byte, nextReq, nextResp chan wfValue) callResult {
+	r.mu.Lock()
+	raw, broken := r.raw, r.broken
+	r.mu.Unlock()
+	switch {
+	case broken:
+		return callResult{err: ErrBroken}
+	case raw == nil:
+		return callResult{err: ErrClosed}
+	}
+	entry, ok := r.handlers[id]
+	if !ok {
+		return callResult{err: fmt.Errorf("jsrt: waterfall 处理器 %d 不存在", id)}
+	}
+	input, err := raw.ParseJSON(payload)
+	if err != nil {
+		return callResult{err: fmt.Errorf("jsrt: waterfall 输入不是合法 JSON: %w", err)}
+	}
+	var called bool
+	nextFn := raw.Function("next", 1, func(_ *engine.Realm, _ engine.Value, args []engine.Value) (engine.Value, error) {
+		if called {
+			return engine.Undefined(), fmt.Errorf("waterfall 处理器重复调用 next")
+		}
+		called = true
+		var v any
+		if len(args) > 0 {
+			converted, convErr := raw.ToGo(args[0])
+			if convErr != nil {
+				return engine.Undefined(), fmt.Errorf("next 的参数无法转换: %w", convErr)
+			}
+			v = converted
+		}
+		nextReq <- wfValue{value: v}
+		got := <-nextResp
+		if got.err != nil {
+			return engine.Undefined(), got.err
+		}
+		out, fromErr := raw.FromGo(got.value)
+		if fromErr != nil {
+			return engine.Undefined(), fmt.Errorf("next 的结果无法转换: %w", fromErr)
+		}
+		return out, nil
+	})
+	out, err := raw.CallFunction(entry.fn, entry.this, input, nextFn)
+	if err != nil {
+		return callResult{err: r.wrap(raw, err)}
+	}
+	v, convErr := raw.ToGo(out)
+	if convErr != nil {
+		return callResult{value: nil}
 	}
 	return callResult{value: v}
 }

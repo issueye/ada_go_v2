@@ -5,7 +5,7 @@
 
 ## 1. 范围
 
-M2 的目标是「TS 插件在进程内跑起来,且不需要 Node」。当前已打通**双向**:
+M2 的目标是「TS 插件在进程内跑起来,且不需要 Node」。当前已打通**双向、含中间件**:
 
 ```
 TS 源文件 ──compile.Build──▶ Artifact(每个文件的 JS,纯数据)
@@ -19,9 +19,10 @@ TS 源文件 ──compile.Build──▶ Artifact(每个文件的 JS,纯数据)
  apply(ctx, cfg)                                      ctx.on(event, handler)
    ctx.provide / ctx.emit ──▶ stager ──▶ 服务表/事件总线   内核事件 ──▶ CallFunction
    ctx.effect ──▶ 卸载时反向执行清理                      服务方法 ──▶ CallFunction
+   ctx.waterfall ──▶ 可改写/否决的中间件                   waterfall ──▶ 同步 next 往返
 ```
 
-**不在这一刀里**:装配(assemble)、插件清单与安装、权限/能力、waterfall 型回调、`async apply`、池化、sourcemap 反查、预算/熔断。
+**不在这一刀里**:装配(assemble)、插件清单与安装、权限/能力、运行期提交队列、`async apply`、池化、sourcemap 反查、预算/熔断。
 
 ## 2. 三个包
 
@@ -45,18 +46,18 @@ TS 源文件 ──compile.Build──▶ Artifact(每个文件的 JS,纯数据)
 | `New(ctx, Options)` | 编译 Artifact → `moejs.Link` → `Load`;每实例一个 worker goroutine |
 | `Call(ctx, export, args...)` | 参数/返回值只走 JSON |
 | `CallWithHost(ctx, export, args...)` | 在参数最前插入 `ctx` 对象,供 `apply(ctx, cfg)` 使用 |
-| `Options.Host` | `provide` / `emit` / `on` / `effect` 的落地回调 |
+| `Options.Host` | `provide` / `emit` / `on` / `effect` / `waterfall` 的落地回调 |
 | `Service` | JS 侧 `ctx.provide` 的产物;`Call(ctx, method, args...)` 转发到 worker |
 | `Close(ctx)` | 停止 worker;可重复调用 |
-| `ErrClosed` / `ErrBroken` | 关闭后调用 / 中断后未在宽限期内收尾 |
+| `ErrClosed` / `ErrBroken` / `ErrReentrant` | 关闭后调用 / 中断后无法收尾 / 同运行时嵌套调用 |
 
-并发模型:Runtime 只在 worker goroutine 上使用,只有 `Interrupt`/`ClearInterrupt` 跨协程——这是 moejs 的硬约束(C1),包内用 `mu` 保护 `raw` 指针。`ctx.on` 注册的函数、`ctx.effect` 的清理函数与 JS 服务方法共用 worker 独占的 `handlers` 表(函数 + `this`),调用一律经 `CallFunction` 在 worker 上执行。
+并发模型:Runtime 只在 worker goroutine 上使用,只有 `Interrupt`/`ClearInterrupt` 跨协程——这是 moejs 的硬约束(C1),包内用 `mu` 保护 `raw` 指针。`ctx.on`、`ctx.effect`、`ctx.waterfall` 注册的函数与 JS 服务方法共用 worker 独占的 `handlers` 表(函数 + `this`),调用一律经 `CallFunction` 在 worker 上执行。
 
 ### 2.3 `bridge`
 
 `bridge.Plugin` 实现 `kernel.Plugin`,入口约定与 AGENTS §6.2 一致:**`apply(ctx, config)`**。
 
-JS 侧 `ctx` 目前有五个能力:
+JS 侧 `ctx` 目前有六个能力:
 
 | 能力 | 方向 | 行为 |
 |---|---|---|
@@ -65,19 +66,27 @@ JS 侧 `ctx` 目前有五个能力:
 | `ctx.emit(event, payload)` | JS → 内核 | 暂存;`apply` 返回后提交为 `EmitContext` |
 | `ctx.on(event, handler)` | 内核 → JS | 暂存注册;提交为内核监听器,事件触发时把载荷投递到 worker 执行 JS 函数 |
 | `ctx.effect(label, cleanup)` | JS → 宿主 | 暂存;fiber 卸载时按逆序执行 JS 清理函数 |
+| `ctx.waterfall(event, handler)` | 双向 | 暂存注册;提交为内核 waterfall 中间件,JS 可用 `next` 同步继续下游 |
 
 **写方向为什么暂存**:内核的生命周期操作是单写者(M1 §1),而 JS 跑在自己的 goroutine 上。直接在 JS 线程里 `Provide`/`Emit` 会同时触碰服务表、事件总线与 fiber 表;加锁只能消除数据竞争,消除不了「半新半旧的依赖图」这类语义竞争。
 
 **提交语义**:
-- 顺序 = JS 调用顺序:先挂 `on`,再 `provide`,最后 `emit`——否则 apply 里 emit 的事件打不到自己刚注册的处理器;
+- 顺序 = JS 调用顺序:先挂 `waterfall`/`on`,再 `provide`,最后 `emit`——否则 apply 里 emit 的事件打不到自己刚注册的处理器;
 - 提交发生在 `apply` 返回之后、仍在调用 `Apply` 的内核协程上;
-- `apply` 结束后再调用 `provide`/`emit`/`on`/`effect` 会抛 JS 异常(没有提交点的调用必须报错,不能静默丢失)。
+- `apply` 结束后再调用 `provide`/`emit`/`on`/`effect`/`waterfall` 会抛 JS 异常(没有提交点的调用必须报错,不能静默丢失)。
 
 **清理语义**:
 - `ctx.effect` 的清理函数**由 bridge 的 Apply disposer 执行**,在关闭运行时之前、按登记逆序执行——与内核 effect 栈同语义;
 - 为什么不直接挂到内核 effect 栈:内核在 Apply 返回后才把 `apply` disposer 入栈,而它是最先被执行的(LIFO);若清理函数在内核栈里,运行时已经先被关掉了;
 - 清理失败会聚合进 `Fiber.Dispose` 的返回值,不会被吞掉;
 - 装配失败时,已登记的清理函数也会被兜底执行一遍。
+
+**waterfall 语义**:
+- JS 处理器签名 `(input, next) => any`;调用 `next(v)` 会**同步**回到监听器所在的 goroutine 继续下游,拿到下游结果后返回给 JS;
+- 不调用 `next` 即短路(否决),其返回值成为整条链的结果——与内核 waterfall 一致;
+- 重复调用 `next` 抛错,避免重复执行下游副作用;
+- **同一运行时不允许嵌套调用**(`ErrReentrant`):worker 正阻塞等待宿主响应 `next` 时再次投递任务必然死锁;跨运行时的链是安全的;
+- 取消/超时沿用 `Interrupt`;若 worker 正阻塞在 `next` 上,宿主会送一条错误结果把它放出来,避免 goroutine 泄漏。
 
 **读方向**:
 - 事件监听器在内核协程上被调用,把载荷 JSON 投递到 worker 并同步等待;返回值按 `emit` 语义忽略,抛错记为监听器失败;
@@ -100,9 +109,10 @@ out, err := svc.Call(ctx, "render")        // 方法调用转发到 JS worker
 |---|---|
 | C1 单 goroutine | `jsrt.worker` 是唯一接触 `moejs.Runtime` 的 goroutine |
 | C2 字节码不可序列化 | Artifact 只存 JS 源文本;不缓存字节码 |
-| C3 跨边界只传 JSON | 调用参数、事件载荷、方法参数与返回值都经 JSON 编解码 |
-| C4 裸 Runtime 无环境能力 | 只有 `ctx.log/provide/emit/on/effect`;默认零权限 |
-| P5 注册有主 | JS 的 provide/on/effect 都经暂存提交,卸载时按序回收 |
+| C3 跨边界只传 JSON | 调用参数、事件载荷、方法参数、waterfall 的输入与 `next` 返回值都经 JSON 编解码 |
+| C4 裸 Runtime 无环境能力 | 只有 `ctx.log/provide/emit/on/effect/waterfall`;默认零权限 |
+| P5 注册有主 | JS 的 provide/on/effect/waterfall 都经暂存提交,卸载时按序回收 |
+| P7 门禁确定 | waterfall 的 `next` 往返是同步的,超时/中断会确定性阻断;不允许重复 `next` |
 | P8 数据面留在 Go | JS 只处理控制面/小对象;大对象留后续句柄化 |
 | 单写者(写方向) | JS 侧写请求一律经 stager,回到内核协程提交 |
 | 反向调用(读方向) | 内核 → worker → `CallFunction`;只读不写内核 |
@@ -127,6 +137,7 @@ out, err := svc.Call(ctx, "render")        // 方法调用转发到 JS worker
 | 内核事件 → JS 回调 | ✅ | `jsrt.TestHostOnInvokesJSHandler`、`bridge.TestJSPluginRunsInKernel` |
 | Go 调用 JS 服务方法 | ✅ | `jsrt.TestServiceMethods`、`bridge.TestJSPluginRunsInKernel` |
 | JS effect 逆序清理 + 失败上报 | ✅ | `jsrt.TestHostEffect`、`bridge.TestJSEffectErrorSurfacesOnDispose` |
+| JS waterfall 改写/否决 + 重复 next + 嵌套防护 | ✅ | `jsrt.TestInvokeWaterfall`、`jsrt.TestWaterfallDoubleNextFails`、`jsrt.TestWaterfallReentrantFails`、`bridge.TestJSPluginRunsInKernel` |
 | ctx 能力未启用/参数非法时报错 | ✅ | `jsrt.TestHostCallbackErrorsSurfaceInJS`、`jsrt.TestHostOnRejectsNonFunction` |
 | CJS(`require`/`module.exports`) | ❌ | design §10 规定走离线 Bundle,M2 未做 |
 | OOM / 内存上限 | ❌ | `jsrt.Options.MemoryLimit` 已透传,未写拒绝用例 |
@@ -134,10 +145,10 @@ out, err := svc.Call(ctx, "render")        // 方法调用转发到 JS worker
 
 ## 5. 已知边界与下一步
 
-1. **没有 waterfall 型回调**:`ctx.on` 是通知语义,处理器返回值被忽略。要参与「改写/否决」,需要 `ctx.waterfall` 与返回值穿透(与内核的 waterfall 闸门语义对齐)。
-2. **回调里不能写内核**:处理器、服务方法与 effect 清理里只能 `log`。要允许回调里 `emit`/`provide`,需要运行期提交队列,并避免「内核等 JS、JS 又等内核」的环。
-3. **`apply` 必须同步返回**:`async apply` 的 Promise 尚未 await;落地时用 `moejs.PromiseResult`。
-4. **清理只到 bridge 一层**:JS effect 由 bridge 的 Apply disposer 执行,不进入内核 effect 栈,因此 `ada inspect` 看不到它们;等 JS 侧 API 稳定后再决定是否暴露。
+1. **运行期提交队列缺失**:waterfall/回调里仍不能 `emit`/`provide`(会抛「只能在 apply 期间调用」)。要支持,需要在一次 JS 调用栈内收集写请求、回到内核协程按序提交,并避免「内核等 JS、JS 又等内核」的环。
+2. **`apply` 必须同步返回**:`async apply` 的 Promise 尚未 await;落地时用 `moejs.PromiseResult`。
+3. **同运行时不能嵌套 waterfall**:同一插件在同一事件上注册多个 waterfall 中间件会触发 `ErrReentrant`;需要「同一运行时串行排队」或把多个处理器合并成一次 JS 调用才能支持。
+4. **清理只到 bridge 一层**:JS effect 由 bridge 的 Apply disposer 执行,不进入内核 effect 栈,因此 `ada inspect` 看不到它们。
 5. **无装配层**:Artifact 目前由代码直接构造;插件清单、安装、签名、capability 属于 M3/M5。
 6. **sourcemap 未接**:`Transform` 支持产出 map,但错误堆栈还没有反查(design §10.6 / R3)。
 7. **池化与预算**:`pool: N`、内存/时间预算、熔断未做。
@@ -148,6 +159,6 @@ out, err := svc.Call(ctx, "render")        // 方法调用转发到 JS worker
 ```powershell
 go test -race -count=1 ./...          # 内核 + schema + compile + jsrt + bridge
 go run ./cmd/ada-demo                 # M1:纯 Go 插件装配
-go run ./cmd/ada-ts-demo              # M2:TS 插件编译→加载→双向 ctx(服务/事件/回调/方法/清理)
+go run ./cmd/ada-ts-demo              # M2:TS 插件编译→加载→双向 ctx(服务/事件/回调/方法/清理/waterfall)
 pwsh scripts/guard.ps1                # 红线门禁(含 kernel 不依赖执行层的检查)
 ```

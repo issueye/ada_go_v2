@@ -11,6 +11,18 @@ import (
 	"github.com/adag/ada-go/v2/kernel"
 )
 
+func toInt(v any) int64 {
+	switch n := v.(type) {
+	case int64:
+		return n
+	case float64:
+		return int64(n)
+	case int:
+		return int64(n)
+	}
+	return 0
+}
+
 func buildArtifact(t *testing.T, files map[string]string) *compile.Artifact {
 	t.Helper()
 	art, err := compile.Build("demo", "plugin.ts", files, compile.Options{})
@@ -31,6 +43,7 @@ type Ctx = {
   emit: (e: string, p: unknown) => void
   on: (e: string, h: (p: any) => void) => void
   effect: (l: string, f: () => void) => void
+  waterfall: (e: string, h: (x: any, next: (v: any) => any) => any) => void
 }
 export function apply(ctx: Ctx, cfg: { name: string }) {
   ctx.log(greet(cfg.name))
@@ -43,6 +56,8 @@ export function apply(ctx: Ctx, cfg: { name: string }) {
   ctx.on("ts/ping", (p) => ctx.log("ping:" + p.n))
   ctx.effect("first", () => ctx.log("cleanup:first"))
   ctx.effect("second", () => ctx.log("cleanup:second"))
+  ctx.waterfall("ts/pipeline", (x, next) => next(x + 1))
+  ctx.waterfall("ts/veto", (x, next) => "blocked")
 }`,
 		"util.ts": `export function greet(name: string): string { return "hello, " + name }`,
 	})
@@ -111,6 +126,34 @@ export function apply(ctx: Ctx, cfg: { name: string }) {
 	logs := p.Logs()
 	if len(logs) != 2 || logs[0] != "hello, ada" || logs[1] != "ping:1" {
 		t.Fatalf("JS 日志不正确: %v", logs)
+	}
+
+	// waterfall:JS 中间件把输入 +1,Go 侧下游再翻倍 → 4。
+	pipelineRan := false
+	a.Root().OnWaterfall("ts/pipeline", func(_ context.Context, _ *kernel.Context, in any, next kernel.Next) (any, error) {
+		pipelineRan = true
+		return next(toInt(in) * 2)
+	})
+	got, err := a.Root().Waterfall(context.Background(), "ts/pipeline", 1)
+	if err != nil {
+		t.Fatalf("waterfall 失败: %v", err)
+	}
+	if !pipelineRan || toInt(got) != 4 {
+		t.Fatalf("waterfall 结果应为 4 且下游应执行,实际 %v(ran=%v)", got, pipelineRan)
+	}
+
+	// 否决:JS 不调 next,Go 侧下游不得执行。
+	vetoRan := false
+	a.Root().OnWaterfall("ts/veto", func(_ context.Context, _ *kernel.Context, in any, next kernel.Next) (any, error) {
+		vetoRan = true
+		return next(in)
+	})
+	out, err := a.Root().Waterfall(context.Background(), "ts/veto", 1)
+	if err != nil {
+		t.Fatalf("waterfall 失败: %v", err)
+	}
+	if out != "blocked" || vetoRan {
+		t.Fatalf("veto 应短路且下游不执行,实际 %v(ran=%v)", out, vetoRan)
 	}
 
 	if err := f.Dispose(context.Background()); err != nil {
