@@ -49,7 +49,7 @@ plugins/policy/shell-guard/     策略:只读白名单、shell 模式默认拒�
 8. **后台任务**:超过 30s 的命令被拒绝(未接 jobs seam)。
 9. **Windows 路径特性**(盘符/UNC/保留名)未覆盖。
 
-### 4.1 `shell/observe` 事件
+### 4.1 脱敏限制\n\n`shell-redact` 按**块**脱敏:若密钥被拆到两个流式块里仍可能漏;完整结果(stdout/stderr)在结束时统一脱敏。\n\n### 4.2 `shell/observe` 事件
 
 `policy/shell-observe` 在每次 Run/Stream 后 `Emit("shell/observe", payload)`:
 
