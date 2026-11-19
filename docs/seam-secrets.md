@@ -8,9 +8,10 @@
 ```
 plugins/seam/secrets/         契约:Getter/Chain/错误(只类型与链)
 plugins/provider/secrets-env/ 实现:从进程环境按白名单读取
+plugins/policy/secrets-guard/ 策略:principal + secrets.<name> 授权
 ```
 
-授权(`secrets.<name>` 的 caps 强制)与审计尚未实现;当前只靠 provider 白名单。
+授权由 `secrets-guard` 强制(`secrets.<name>`,可用 `secrets.*` 通配);审计尚未实现。
 
 ## 2. 契约要点
 
@@ -31,7 +32,7 @@ plugins/provider/secrets-env/ 实现:从进程环境按白名单读取
 
 ## 4. 偏差与边界
 
-1. **没有 caps 强制**:`secrets.<name>` 能力还没有调用点(secret-guard 未实现);provider 白名单是唯一限制。
+1. **caps 强制已落地**:`secrets-guard` 从 `kernel.Principal(ctx)` 取调用者并向 Broker 查 `secrets.<name>`;provider 白名单仍需同时满足。
 2. **没有审计/redact**:读取本身不产生事件;调用方必须避免把值写进日志/事件。
 3. **只有环境来源**:文件、keyring、vault 未实现;没有轮换/热更新。
 4. **明文在进程内存**:没有零化;环境变量本身可被子进程继承(与 shell 的受管环境需配合)。
@@ -47,6 +48,8 @@ plugins/provider/secrets-env/ 实现:从进程环境按白名单读取
 | 环境缺失 | `secretsenv.TestMissingEnv` |
 | 非法名 | `secretsenv.TestInvalidName` |
 | 内核集成 | `secretsenv.TestKernelIntegration` |
+| guard:具体/通配授权、未授权/无身份 | `secretsguard.TestAllowed`、`TestDenied` |
+| guard 使用注入的 caps 服务 | `secretsguard.TestServiceBroker` |
 
 ## 6. 下一步
 

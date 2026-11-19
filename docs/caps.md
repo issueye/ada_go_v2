@@ -57,7 +57,7 @@ broker.Authorize(ctx, "plugin-a", "fs.write", "/workspace/a") // → *DeniedErro
 
 ## 5. 偏差与边界
 
-1. **调用点强制已落地(fs/shell/net)**:`policy/caps-gate`(fs/shell)与 `policy/net-guard`(net)从 `kernel.Principal(ctx)` 取调用者,向 Broker 查能力;
+1. **调用点强制已落地(fs/shell/net/secrets)**:`policy/caps-gate`(fs/shell)与 `policy/net-guard`(net)从 `kernel.Principal(ctx)` 取调用者,向 Broker 查能力;
    缺少身份/未授权一律拒绝。`caps-gate` 优先使用注入的 `caps` 服务;`assemble.GrantManifests` 把清单 `caps`/`trust` 灌入 Broker;CLI 的 `up`/`inspect` 已通过 `applyAutoGrants` 自动接线。
 2. **清单未装载进 Broker**:`plugin.Manifest.Caps/Trust` 已能解析与校验,
    但 loader/assemble 还没把它们灌进 Broker;也没有 preset 层的信任覆盖。
