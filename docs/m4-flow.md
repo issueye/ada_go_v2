@@ -1,7 +1,7 @@
 # M4 流水线(flow)
 
 > 配套 [plugin-kernel-design.md](plugin-kernel-design.md) §12.2(3)「流水线」与 §12.4「受限表达式求值」。
-> 本页记录**已实现**的声明式子集与已知边界;`parallel`(abort/collect)、`forEach`(并发上限)与 `Compensate`(逆序)已落地;`fanout` / `subflow` 尚未实现。
+> 本页记录**已实现**的声明式子集与已知边界;`parallel`、`forEach`、`Compensate`、`subflow` 已落地;`fanout` 尚未实现。
 
 ## 1. 范围
 
@@ -55,6 +55,11 @@ type ForEachStep struct {
     Step        Step   `json:"step"`         // 模板步骤(不能再是 forEach)
     Concurrency int    `json:"concurrency,omitempty"` // 0 = 4,上限 32
 }
+
+type SubflowStep struct {
+    Path  string         `json:"path"`            // 相对当前 flow 文件目录
+    Input map[string]any `json:"input,omitempty"` // "$.path" 按父值表解析
+}
 ```
 
 - `use` / `event` / `parallel` / `abort` **四者互斥**;`when` 是真值门。
@@ -88,6 +93,13 @@ type ForEachStep struct {
 - `over` 必须是 `$.path` 且解析为数组;`as` 把当前项注入值表(默认 `item`);
 - 模板步骤逐项执行,按 `concurrency` 节流(默认 4,上限 32);任一项失败 → 取消其余并让流线失败;
 - 结果按索引收集到父步骤 `{ok:true, results:[...]}`。
+
+`subflow`:
+- `path` 只允许相对路径(拒绝绝对路径、反斜杠、`..` 逃逸);解析相对**当前 flow 文件**所在目录;
+- `input` 里的 `$.path` 先按父值表解析,作为子流线的初始值;
+- 子流线结果(值表)回填到父步骤 `values[step.ID]`,后续可 `$.sub.子步骤`;
+- **环检测** + **嵌套上限 10**;子流线不继承 checkpoint(避免 RunID 冲突),继承 Clock;
+- 子流线失败 → 父步骤失败(可被 `retry`/`timeout` 包裹)。
 
 `Compensate`:
 - 主链任一步失败后,**逆序**执行补偿步骤(尽力而为);补偿失败记入 `__compensateErrors`;
@@ -147,11 +159,15 @@ type Runtime interface {
 | forEach 失败点名索引 | `flow.TestForEachError` |
 | 声明式 forEach 解析/校验 | `flow.TestParseForEach` |
 | 补偿逆序执行 | `flow.TestCompensateReverse` |
+| subflow 加载/输入/结果回填 | `flow.TestSubflowRunsChild` |
+| subflow 缺失文件 | `flow.TestSubflowMissingFile` |
+| subflow 环检测 | `flow.TestSubflowCycle` |
+| 声明式 subflow 解析/校验 | `flow.TestParseSubflow` |
 | 与内核集成(服务 + waterfall) | `flow.TestKernelRuntimeIntegration` |
 
 ## 7. 已知边界与下一步
 
-1. **fanout / subflow 未实现**:已实现 parallel(abort/collect)、forEach(并发上限)、Compensate;分支/项内 `checkpoint` 不支持;值表是浅拷贝,分支共享的 map 值不可并发改写。
+1. **fanout 未实现**:已实现 parallel、forEach、Compensate、subflow;分支/项内/子流线内 `checkpoint` 不支持;值表是浅拷贝,分支共享的 map 值不可并发改写;subflow 之间没有共享 trace ID。
 2. **没有子流水线**:`subflow` 与 trace 共享未实现。
 3. **补偿已实现**:逆序、尽力而为;没有「补偿成功后回滚状态」的语义,也不保证重试全部补偿步骤。
 4. **参数模板只有 `$.path`**:不支持在 args 里写表达式;需要时先做求值器扩展。

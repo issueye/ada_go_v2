@@ -3,9 +3,8 @@
 // 它把「先调谁、再调谁、失败怎么办」变成**数据**,从而可被配置、可被审计、
 // 可被替换;真正的调用仍走内核的服务与事件(同一预算/授权/审计)。
 //
-// 本文件只实现 §12.2(3) 的最小可用子集:顺序执行、when 受限表达式、retry、
-// timeout、checkpoint/resume、OnFailure。parallel/fanout/forEach/subflow/
-// Compensate 未实现,见 docs/m4-flow.md §5。
+// 已实现:顺序执行、when 受限表达式、retry、timeout、checkpoint/resume、
+// OnFailure、parallel、forEach、Compensate、subflow;fanout 见 docs/m4-flow.md。
 package flow
 
 import (
@@ -13,6 +12,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -77,6 +78,7 @@ type Step struct {
 	Event      *EventStep    `json:"event,omitempty"`
 	Parallel   *ParallelStep `json:"parallel,omitempty"`
 	ForEach    *ForEachStep  `json:"forEach,omitempty"`
+	Subflow    *SubflowStep  `json:"subflow,omitempty"`
 	Abort      string        `json:"abort,omitempty"`
 	When       string        `json:"when,omitempty"`
 	Retry      *Retry        `json:"retry,omitempty"`
@@ -124,12 +126,26 @@ type ForEachStep struct {
 	Concurrency int    `json:"concurrency,omitempty"`
 }
 
+// SubflowStep 引用另一个 flow 文件(相对当前 flow 文件所在目录)。
+//
+// Input 里的 "$.path" 会先按父值表解析,作为子 flow 的初始值表。
+type SubflowStep struct {
+	Path  string         `json:"path"`
+	Input map[string]any `json:"input,omitempty"`
+}
+
+// MaxSubflowDepth 是子流线嵌套上限,防止数据里写出无限递归。
+const MaxSubflowDepth = 10
+
 // Flow 是一条流水线。
 type Flow struct {
 	Name       string `json:"flow"`
 	Steps      []Step `json:"steps"`
 	OnFailure  []Step `json:"onFailure,omitempty"`
 	Compensate []Step `json:"compensate,omitempty"`
+
+	// Dir 是 flow 文件所在目录(Load 填写),subflow 的相对路径据此解析。
+	Dir string `json:"-"`
 }
 
 // New 创建一条空流水线。
@@ -153,6 +169,20 @@ func Parse(data []byte) (*Flow, error) {
 		return nil, err
 	}
 	return &f, nil
+}
+
+// Load 从文件读取 flow,并记录目录用于 subflow 的相对路径解析。
+func Load(path string) (*Flow, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, kernel.Wrap(kernel.CodeInvalid, err, "flow: 读取 %s 失败", path)
+	}
+	f, err := Parse(data)
+	if err != nil {
+		return nil, err
+	}
+	f.Dir = filepath.Dir(path)
+	return f, nil
 }
 
 // Validate 校验流线定义。
@@ -234,8 +264,22 @@ func validateStep(s Step) error {
 			}
 		}
 	}
+	if s.Subflow != nil {
+		n++
+		if s.Subflow.Path == "" {
+			return kernel.Fail(kernel.CodeInvalid, "flow: 步骤 %q 的 subflow 缺少 path", s.ID)
+		}
+		// 跨平台拒绝绝对路径:POSIX 的 "/x"、Windows 盘符/UNC 与反斜杠混用都不接受。
+		if strings.HasPrefix(s.Subflow.Path, "/") || strings.Contains(s.Subflow.Path, `\`) || filepath.IsAbs(s.Subflow.Path) {
+			return kernel.Fail(kernel.CodeInvalid, "flow: 步骤 %q 的 subflow 只允许相对路径: %s", s.ID, s.Subflow.Path)
+		}
+		clean := filepath.Clean(s.Subflow.Path)
+		if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+			return kernel.Fail(kernel.CodeInvalid, "flow: 步骤 %q 的 subflow 路径不能逃逸 flow 目录: %s", s.ID, s.Subflow.Path)
+		}
+	}
 	if n != 1 {
-		return kernel.Fail(kernel.CodeInvalid, "flow: 步骤 %q 必须且只能有 use/event/parallel/forEach/abort 之一", s.ID)
+		return kernel.Fail(kernel.CodeInvalid, "flow: 步骤 %q 必须且只能有 use/event/parallel/forEach/subflow/abort 之一", s.ID)
 	}
 	if s.Use != nil {
 		if s.Use.Service == "" || s.Use.Method == "" {
@@ -334,10 +378,17 @@ type runState struct {
 	saved     map[string]bool
 	skipped   []string
 	stepIDs   map[string]bool
+	stack     []string
 }
 
 // Run 顺序执行流水线。
 func (f *Flow) Run(ctx context.Context, rt Runtime, opts Options) (*Result, error) {
+	return f.runWithStack(ctx, rt, opts, nil, nil)
+}
+
+// runWithStack 是 Run 的内部实现:stack 记录 subflow 的绝对路径(环检测),
+// seed 是子流线的初始值表。
+func (f *Flow) runWithStack(ctx context.Context, rt Runtime, opts Options, stack []string, seed map[string]any) (*Result, error) {
 	if rt == nil {
 		return nil, kernel.Fail(kernel.CodeInvalid, "flow %q: Runtime 不能为 nil", f.Name)
 	}
@@ -354,6 +405,10 @@ func (f *Flow) Run(ctx context.Context, rt Runtime, opts Options) (*Result, erro
 		completed: make(map[string]bool),
 		saved:     make(map[string]bool),
 		stepIDs:   make(map[string]bool),
+		stack:     stack,
+	}
+	for k, v := range seed {
+		st.values[k] = v
 	}
 	for _, s := range f.Steps {
 		st.stepIDs[s.ID] = true
@@ -491,6 +546,15 @@ func (st *runState) runStep(ctx context.Context, step Step, record bool) error {
 		err = st.runParallel(ctx, step)
 	case step.ForEach != nil:
 		err = st.runForEach(ctx, step)
+	case step.Subflow != nil:
+		err = st.execWithRetry(ctx, step, func(ctx context.Context) error {
+			value, serr := st.runSubflow(ctx, step)
+			if serr != nil {
+				return serr
+			}
+			st.values[step.ID] = value
+			return nil
+		})
 	}
 	if err != nil {
 		return err
@@ -619,6 +683,42 @@ func (st *runState) runCompensateSteps(ctx context.Context) {
 	if len(errs) > 0 {
 		st.values["__compensateErrors"] = strings.Join(errs, "; ")
 	}
+}
+
+// runSubflow 加载并执行子流线:环检测 + 深度上限 + 输入模板解析。
+func (st *runState) runSubflow(ctx context.Context, step Step) (any, error) {
+	p := step.Subflow
+	path := p.Path
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(st.flow.Dir, path)
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, kernel.Wrap(CodeFlow, err, "flow: subflow 路径非法: %s", p.Path)
+	}
+	for _, seen := range st.stack {
+		if seen == abs {
+			return nil, kernel.Fail(CodeFlow, "flow: subflow 出现环: %s", abs)
+		}
+	}
+	if len(st.stack) >= MaxSubflowDepth {
+		return nil, kernel.Fail(CodeFlow, "flow: subflow 嵌套超过上限 %d", MaxSubflowDepth)
+	}
+	child, err := Load(abs)
+	if err != nil {
+		return nil, err
+	}
+	input, err := resolveArgs(p.Input, st.values)
+	if err != nil {
+		return nil, err
+	}
+	childStack := append(append([]string(nil), st.stack...), abs)
+	// 子流线不继承 checkpoint(避免 RunID 冲突);Clock 继承以保证重试语义一致。
+	res, err := child.runWithStack(ctx, st.rt, Options{Clock: st.clock}, childStack, input)
+	if err != nil {
+		return nil, err
+	}
+	return res.Values, nil
 }
 
 // runForEach 逐项执行模板步骤,按并发上限节流;任一失败即取消全部。

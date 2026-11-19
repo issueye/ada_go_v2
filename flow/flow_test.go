@@ -3,6 +3,8 @@ package flow_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -671,5 +673,97 @@ func TestCompensateReverse(t *testing.T) {
 	want := "bad,comp2,comp1"
 	if got := strings.Join(calls, ","); got != want {
 		t.Fatalf("补偿顺序不正确: 期望 %s,实际 %s", want, got)
+	}
+}
+
+// 20. subflow:加载子文件、输入模板解析、结果回填父值表。
+func TestSubflowRunsChild(t *testing.T) {
+	dir := t.TempDir()
+	child := `{"flow":"child","steps":[
+	  {"id":"double","use":{"service":"svc","method":"double","args":{"n":"$.n"}}}
+	]}`
+	if err := os.WriteFile(filepath.Join(dir, "child.flow.json"), []byte(child), 0o644); err != nil {
+		t.Fatalf("写子流线失败: %v", err)
+	}
+
+	rt := newFakeRT()
+	rt.callFn = func(_ context.Context, _ string, method string, args map[string]any) (any, error) {
+		switch method {
+		case "seed":
+			return float64(2), nil
+		case "double":
+			n, _ := args["n"].(float64)
+			return n * 2, nil
+		case "echo":
+			return args["v"], nil
+		}
+		return nil, nil
+	}
+	f := &flow.Flow{Name: "parent", Dir: dir}
+	f.Add(
+		flow.Step{ID: "seed", Use: &flow.UseStep{Service: "svc", Method: "seed"}},
+		flow.Step{ID: "sub", Subflow: &flow.SubflowStep{Path: "child.flow.json", Input: map[string]any{"n": "$.seed"}}},
+		flow.Step{ID: "after", Use: &flow.UseStep{Service: "svc", Method: "echo", Args: map[string]any{"v": "$.sub.double"}}},
+	)
+	res, err := f.Run(context.Background(), rt, flow.Options{})
+	if err != nil {
+		t.Fatalf("subflow 运行失败: %v", err)
+	}
+	sub, ok := res.Values["sub"].(map[string]any)
+	if !ok || sub["double"] != float64(4) {
+		t.Fatalf("子流线结果未回填: %v", res.Values["sub"])
+	}
+	if res.Values["after"] != float64(4) {
+		t.Fatalf("父流线引用子结果失败: %v", res.Values["after"])
+	}
+}
+
+// 21. subflow 缺失文件报错。
+func TestSubflowMissingFile(t *testing.T) {
+	f := &flow.Flow{Name: "parent", Dir: t.TempDir()}
+	f.Add(flow.Step{ID: "sub", Subflow: &flow.SubflowStep{Path: "nope.flow.json"}})
+	if _, err := f.Run(context.Background(), newFakeRT(), flow.Options{}); err == nil {
+		t.Fatalf("缺失子流线应报错")
+	}
+}
+
+// 22. subflow 环检测:a → b → a。
+func TestSubflowCycle(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatalf("写文件失败: %v", err)
+		}
+	}
+	write("a.flow.json", `{"flow":"a","steps":[{"id":"toB","subflow":{"path":"b.flow.json"}}]}`)
+	write("b.flow.json", `{"flow":"b","steps":[{"id":"toA","subflow":{"path":"a.flow.json"}}]}`)
+
+	parent, err := flow.Load(filepath.Join(dir, "a.flow.json"))
+	if err != nil {
+		t.Fatalf("加载失败: %v", err)
+	}
+	if _, err := parent.Run(context.Background(), newFakeRT(), flow.Options{}); err == nil || !strings.Contains(err.Error(), "环") {
+		t.Fatalf("环检测失败: %v", err)
+	}
+}
+
+// 23. 声明式 subflow 解析与校验。
+func TestParseSubflow(t *testing.T) {
+	valid := []byte(`{"flow":"p","steps":[
+	  {"id":"sub","subflow":{"path":"child.flow.json","input":{"n":"$.seed"}}}
+	]}`)
+	if _, err := flow.Parse(valid); err != nil {
+		t.Fatalf("合法 subflow 解析失败: %v", err)
+	}
+	bad := map[string]string{
+		"缺 path": `{"flow":"p","steps":[{"id":"sub","subflow":{}}]}`,
+		"绝对路径":   `{"flow":"p","steps":[{"id":"sub","subflow":{"path":"/tmp/x.json"}}]}`,
+		"逃逸":     `{"flow":"p","steps":[{"id":"sub","subflow":{"path":"../x.json"}}]}`,
+		"两个动作":   `{"flow":"p","steps":[{"id":"sub","subflow":{"path":"a.json"},"use":{"service":"s","method":"m"}}]}`,
+	}
+	for name, raw := range bad {
+		if _, err := flow.Parse([]byte(raw)); err == nil {
+			t.Fatalf("%s: 应拒绝", name)
+		}
 	}
 }
