@@ -80,8 +80,8 @@ go run ./cmd/ada inspect --preset examples/presets/ts-only.preset.json  # M3:诊
 pwsh scripts/bench.ps1                       # 性能预算:≤20 μs/次、50 插件冷启动 ≤150 ms
 ```
 
-已完成:`kernel/`(Context / Fiber / Service / Effect / Event / Config / Schema)、`kernel/schema`、`cmd/ada`、`cmd/ada-demo`、`cmd/ada-ts-demo`、`compile/`(esbuild)、`jsrt/`(moejs)、`bridge/`、`plugin/`(清单)、`preset/`(组合数据)、`assemble/`(计划/事务)、`loader/`(按 kind 装载)、`plugins/seam/session`(seam + 契约测试)、`plugins/provider/session-memory`、`sched/`(调度底座)、`scripts/guard.ps1`、`scripts/bench.ps1`、`docs/kernel-api.md`、`docs/m2-execution.md`、`docs/m3-assembly.md`、`docs/seam-session.md`、`docs/adr/0001`、`docs/adr/0002`。
-未开始:M5(`sandbox`/`fs`/`shell`/签名/`host/*`)、剩余 seam(`prompts`/`llm`/`tools`);M4 剩余:`flow` 流水线、激活/闲置回收、配额与 jobs;M4.5 剩余:投影、session-jsonl、core/session。
+已完成:`kernel/`(Context / Fiber / Service / Effect / Event / Config / Schema)、`kernel/schema`、`cmd/ada`、`cmd/ada-demo`、`cmd/ada-ts-demo`、`compile/`(esbuild)、`jsrt/`(moejs)、`bridge/`、`plugin/`(清单)、`preset/`(组合数据)、`assemble/`(计划/事务)、`loader/`(按 kind 装载)、`plugins/seam/session`(seam + 契约测试)、`plugins/provider/session-memory`、`sched/`(调度底座)、`quota/`(配额与回压)、`scripts/guard.ps1`、`scripts/bench.ps1`、`docs/kernel-api.md`、`docs/m2-execution.md`、`docs/m3-assembly.md`、`docs/seam-session.md`、`docs/adr/0001`、`docs/adr/0002`。
+未开始:M5(`sandbox`/`fs`/`shell`/签名/`host/*`)、剩余 seam(`prompts`/`llm`/`tools`);M4 剩余:`flow` 流水线、激活/闲置回收、jobs(补跑/租约)、全局 governor;M4.5 剩余:投影、session-jsonl、core/session。
 
 本轮修复了 M1 评审中复现的缺陷(waterfall 超时幽灵执行、兄弟插件被误拆、failed 不可复活、卸载错误被吞、fiber 注册表泄漏、Intercept 合并反向、Stop 后仍派发、schema 静默放行),每条都有回归用例;清单见 [kernel-api.md §6](docs/kernel-api.md)。
 

@@ -15,7 +15,7 @@ RealClock / FakeClock ──▶ Scheduler
 ```
 
 它是 **L2 基础设施(不是插件)**:只懂「时间」与「回调」,不懂业务;内核不依赖它
-(guard 的 `go list -deps ./kernel` 强制)。插件通过宿主注入的服务使用它。
+(guard 的 `go list -deps ./kernel` 强制)。插件通过宿主注入的服务使用它;配额与回压由同层的 `quota.Governor` 提供(见 §4)。
 
 ## 2. API
 
@@ -44,7 +44,25 @@ RealClock / FakeClock ──▶ Scheduler
 - **FakeClock 不撤销等待者**:`Advance` 会把旧等待者计数并触发通道,但对应任务可能已经取消——
   测试断言应看「回调是否发生」,而不是「触发了几个等待者」。
 
-## 4. 测试矩阵
+## 4. 配额与回压(quota)
+
+`quota.Governor` 按 key(插件 id)记账,供宿主/调用方在调用前申请许可:
+
+| API | 语义 |
+|---|---|
+| `Quota{MaxCallsPerMinute, MaxConcurrent}` | 0 表示不限;`MaxCPUTime`/`MaxMemory` 是预留字段(需计时/计量,暂不生效) |
+| `Set(key, Quota)` | 设置并重置该 key 的窗口与计数;非法值在 Set 时拒绝 |
+| `Acquire(ctx, key)` | 返回 `release`;超出速率 → `EQUOTA`(可重试 + `RetryAfter`),并发满 → `EBUSY`(可重试) |
+| `Snapshot()` | 诊断:窗口内调用数 / 在途并发 / 窗口结束时间 |
+
+语义:
+
+- **未配置的 key 一律放行**:配额是「按需收紧」,不是默认拒绝;
+- 窗口按 `sched.Clock` 计算(测试用 FakeClock 推进,不依赖真实时间);
+- `release` 幂等:重复调用不会把并发计数减成负数;
+- 配额是**服务侧约束**,因此放在 L2 基础设施;调用方按错误码选择退避或降级。
+
+## 5. 测试矩阵
 
 | 场景 | 用例 |
 |---|---|
@@ -59,18 +77,19 @@ RealClock / FakeClock ──▶ Scheduler
 | Cron 按表达式触发 | `sched.TestCronFires` |
 | panic 后继续 | `sched.TestPanicDoesNotKillScheduler` |
 | Stop 后不再触发且拒绝新注册 | `sched.TestStopStopsEverything` |
+| 并发上限 / 速率上限 / 窗口重置 / release 幂等 / 并发申请(-race) | `sched` 之外的 `quota` 6 个用例 |
 | 非法参数/非法 cron 报错 | `sched.TestInvalidRegistrations` |
 
-## 5. 已知边界与下一步
+## 6. 已知边界与下一步
 
 1. **`flow` 流水线未做**:§12.2(3) 的声明式跨插件流程(use/event/when/retry/checkpoint/resume)是 M4 的主干。
 2. **激活与闲置回收未做**:§12.3 的 `onService/onCron/...` 延迟激活、`idleTTL` 回收需要 kernel 侧调度挂钩。
-3. **配额与回压未做**:`EQUOTA`/`EBUSY`、全局 governor、并发上限。
+3. **配额只做了速率与并发**:`MaxCPUTime`/`MaxMemory` 需要计量,全局 governor 与跨插件总并发上限未做。
 4. **jobs 的补跑策略未做**:`skip/once/all` 与 `store` 租约(防多窗口重复执行)。
 5. **时区**:cron 用传入 `time.Location` 计算;`Asia/Shanghai` 这类 IANA 时区由宿主的 `Clock.Now()` 负责。
 6. 与内核的接线未做:目前 `sched` 只能由宿主/插件在代码里使用,还没有作为服务暴露。
 
-## 6. 验证命令
+## 7. 验证命令
 
 ```powershell
 go test -race -count=1 ./sched
