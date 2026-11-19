@@ -122,3 +122,64 @@ func TestIndex(t *testing.T) {
 		t.Fatalf("index 输出不正确: %s", rec.Body.String())
 	}
 }
+
+// 7. inspect:临时挂载内置安全栈并返回快照。
+func TestInspect(t *testing.T) {
+	root := t.TempDir()
+	stack := filepath.Join(root, "stack")
+	workspace := filepath.Join(root, "workspace")
+	write := func(id, body string) {
+		t.Helper()
+		dir := filepath.Join(stack, id)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("建目录失败: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(body), 0o644); err != nil {
+			t.Fatalf("写清单失败: %v", err)
+		}
+	}
+	write("seam-fs", `{"id":"seam-fs","version":"0.1.0","kind":"go","provide":["fs"]}`)
+	write("fs-local", `{"id":"fs-local","version":"0.1.0","kind":"go","inject":{"required":["fs"]},"config":{"workspace":"`+strings.ReplaceAll(workspace, `\`, `\\`)+`"}}`)
+	write("caps-static", `{"id":"caps-static","version":"0.1.0","kind":"go","provide":["caps"]}`)
+	write("caps-gate", `{"id":"caps-gate","version":"0.1.0","kind":"go","inject":{"required":["fs"],"optional":["caps"]}}`)
+
+	h := newHandler(t, root)
+	rec := get(t, h, "/api/inspect?path=stack")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("inspect 应 200,实际 %d: %s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Order  []string `json:"order"`
+		Fibers []struct {
+			Plugin string `json:"plugin"`
+			State  string `json:"state"`
+		} `json:"fibers"`
+		Services []struct {
+			Name string `json:"name"`
+		} `json:"services"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("响应不是合法 JSON: %v", err)
+	}
+	if len(payload.Fibers) != 4 {
+		t.Fatalf("应挂载 4 个插件,实际 %d: %+v", len(payload.Fibers), payload.Fibers)
+	}
+	found := false
+	for _, sv := range payload.Services {
+		if sv.Name == "fs" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("快照里缺少 fs 服务: %+v", payload.Services)
+	}
+}
+
+// 8. inspect:未知路径 → 400。
+func TestInspectBadPath(t *testing.T) {
+	h := newHandler(t, "../../examples")
+	rec := get(t, h, "/api/inspect?path=nope")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("未知路径应 400,实际 %d", rec.Code)
+	}
+}

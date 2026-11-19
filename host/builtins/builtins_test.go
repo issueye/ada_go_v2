@@ -1,14 +1,15 @@
-package cli
+package builtins_test
 
 import (
 	"testing"
 
+	"github.com/adag/ada-go/v2/host/builtins"
 	"github.com/adag/ada-go/v2/plugin"
 )
 
 // 内置 Go 插件注册表包含安全栈关键 id。
 func TestBuiltinGoPlugins(t *testing.T) {
-	got := builtinGoPlugins()
+	got := builtins.Plugins()
 	for _, id := range []string{"seam-fs", "fs-local", "caps-static", "caps-gate", "shell-local", "seam-approval"} {
 		if _, ok := got[id]; !ok {
 			t.Fatalf("内置注册表缺少 %q", id)
@@ -21,7 +22,7 @@ func TestApplyAutoGrants(t *testing.T) {
 	capsPlugin := &plugin.Manifest{ID: "caps-static", Kind: "go", Provide: []string{"caps"}}
 	consumer := &plugin.Manifest{ID: "consumer", Kind: "go", Trust: "third-party", Caps: []string{"fs.read"}}
 	manifests := []*plugin.Manifest{capsPlugin, consumer}
-	if err := applyAutoGrants(manifests); err != nil {
+	if err := builtins.ApplyAutoGrants(manifests); err != nil {
 		t.Fatalf("灌入失败: %v", err)
 	}
 	grants, ok := capsPlugin.Config["grants"].(map[string][]string)
@@ -34,7 +35,7 @@ func TestApplyAutoGrants(t *testing.T) {
 
 	// 既有 config grants 应保留(并集)。
 	capsPlugin.Config = map[string]any{"grants": map[string][]string{"other": {"exec"}}}
-	if err := applyAutoGrants(manifests); err != nil {
+	if err := builtins.ApplyAutoGrants(manifests); err != nil {
 		t.Fatalf("合并失败: %v", err)
 	}
 	merged := capsPlugin.Config["grants"].(map[string][]string)
@@ -46,7 +47,7 @@ func TestApplyAutoGrants(t *testing.T) {
 // 非法 caps 应使灌入失败(不静默)。
 func TestApplyAutoGrantsInvalid(t *testing.T) {
 	bad := &plugin.Manifest{ID: "bad", Kind: "go", Trust: "third-party", Caps: []string{"fs.write"}}
-	if err := applyAutoGrants([]*plugin.Manifest{bad}); err == nil {
+	if err := builtins.ApplyAutoGrants([]*plugin.Manifest{bad}); err == nil {
 		t.Fatalf("trust 不足应报错")
 	}
 }

@@ -5,6 +5,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -14,7 +15,10 @@ import (
 
 	"github.com/adag/ada-go/v2/assemble"
 	"github.com/adag/ada-go/v2/caps"
+	"github.com/adag/ada-go/v2/host/builtins"
 	"github.com/adag/ada-go/v2/install"
+	"github.com/adag/ada-go/v2/kernel"
+	"github.com/adag/ada-go/v2/loader"
 	"github.com/adag/ada-go/v2/plugin"
 	"github.com/adag/ada-go/v2/preset"
 )
@@ -48,6 +52,7 @@ func NewHandler(opts Options) (http.Handler, error) {
 	}
 	s := &Server{root: root, mux: http.NewServeMux()}
 	s.mux.HandleFunc("/api/plan", s.handlePlan)
+	s.mux.HandleFunc("/api/inspect", s.handleInspect)
 	s.mux.HandleFunc("/api/caps", s.handleCaps)
 	s.mux.HandleFunc("/api/list", s.handleList)
 	s.mux.HandleFunc("/", s.handleIndex)
@@ -142,6 +147,74 @@ func (s *Server) handlePlan(w http.ResponseWriter, r *http.Request) {
 		"warnings": report.Warnings,
 		"problems": report.Problems,
 	})
+}
+
+// handleInspect 临时挂载插件并返回快照;注意它会执行插件副作用,仅限本地开发使用。
+func (s *Server) handleInspect(w http.ResponseWriter, r *http.Request) {
+	if !s.onlyGet(w, r) {
+		return
+	}
+	manifests, err := s.loadTarget(r.URL.Query().Get("path"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := builtins.ApplyAutoGrants(manifests); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	plan := assemble.Plan(manifests)
+	if !plan.OK() {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "计划不可执行", "problems": plan.Problems})
+		return
+	}
+	app := kernel.New(kernel.Options{})
+	lookup := loader.Lookup(loader.Options{Go: builtins.Plugins()})
+	up, err := assemble.Up(app, manifests, plan, lookup)
+	if err != nil {
+		_ = app.Stop(context.Background())
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	snap := app.Inspect()
+	stopErr := app.Stop(context.Background())
+
+	type fiberRow struct {
+		ID     string `json:"id"`
+		Plugin string `json:"plugin"`
+		State  string `json:"state"`
+		Parent string `json:"parent,omitempty"`
+	}
+	type serviceRow struct {
+		Name       string   `json:"name"`
+		Provider   string   `json:"provider"`
+		Dependents []string `json:"dependents,omitempty"`
+	}
+	type effectRow struct {
+		Plugin string `json:"plugin"`
+		Label  string `json:"label"`
+	}
+	payload := struct {
+		Order    []string     `json:"order"`
+		Fibers   []fiberRow   `json:"fibers"`
+		Services []serviceRow `json:"services"`
+		Effects  []effectRow  `json:"effects"`
+		Events   []string     `json:"events"`
+		StopErr  string       `json:"stopError,omitempty"`
+	}{Order: up.Order, Events: snap.Events}
+	for _, f := range snap.Fibers {
+		payload.Fibers = append(payload.Fibers, fiberRow{ID: f.ID, Plugin: f.Plugin, State: f.State, Parent: f.Parent})
+	}
+	for _, sv := range snap.Services {
+		payload.Services = append(payload.Services, serviceRow{Name: sv.Name, Provider: sv.Provider, Dependents: sv.Dependents})
+	}
+	for _, e := range snap.Effects {
+		payload.Effects = append(payload.Effects, effectRow{Plugin: e.Plugin, Label: e.Label})
+	}
+	if stopErr != nil {
+		payload.StopErr = stopErr.Error()
+	}
+	writeJSON(w, http.StatusOK, payload)
 }
 
 func (s *Server) handleCaps(w http.ResponseWriter, r *http.Request) {

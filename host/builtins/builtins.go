@@ -1,4 +1,7 @@
-package cli
+// Package builtins 是宿主共用的内置 Go 插件注册表与 caps 接线。
+//
+// host/cli 与 host/server 共享它,避免两处各维护一份「内置安全栈」清单。
+package builtins
 
 import (
 	"github.com/adag/ada-go/v2/assemble"
@@ -12,6 +15,7 @@ import (
 	shellguard "github.com/adag/ada-go/v2/plugins/policy/shell-guard"
 	shellobserve "github.com/adag/ada-go/v2/plugins/policy/shell-observe"
 	shellredact "github.com/adag/ada-go/v2/plugins/policy/shell-redact"
+	approvalcli "github.com/adag/ada-go/v2/plugins/provider/approval-cli"
 	approvaldeny "github.com/adag/ada-go/v2/plugins/provider/approval-deny"
 	capsstatic "github.com/adag/ada-go/v2/plugins/provider/caps-static"
 	fslocal "github.com/adag/ada-go/v2/plugins/provider/fs-local"
@@ -25,11 +29,10 @@ import (
 	seamshell "github.com/adag/ada-go/v2/plugins/seam/shell"
 )
 
-// builtinGoPlugins 是编译进 CLI 的 Go 插件注册表。
+// Plugins 返回编译进宿主的内置 Go 插件注册表。
 //
-// 这是「CLI 也能挂安全栈」的最小集合:seam 契约 + 本地实现 + 策略 + 授权。
 // 第三方 Go 插件仍需宿主编译时注册;这里只放仓库内置的参考实现。
-func builtinGoPlugins() map[string]func() kernel.Plugin {
+func Plugins() map[string]func() kernel.Plugin {
 	return map[string]func() kernel.Plugin{
 		"seam-fs":        seamfs.Plugin,
 		"fs-local":       fslocal.Plugin,
@@ -41,6 +44,7 @@ func builtinGoPlugins() map[string]func() kernel.Plugin {
 		"sandbox-none":   sandboxnone.Plugin,
 		"seam-approval":  seamapproval.Plugin,
 		"approval-deny":  approvaldeny.Plugin,
+		"approval-cli":   approvalcli.Plugin,
 		"seam-session":   seamsession.Plugin,
 		"session-memory": memory.Plugin,
 		"caps-static":    capsstatic.Plugin,
@@ -52,20 +56,11 @@ func builtinGoPlugins() map[string]func() kernel.Plugin {
 	}
 }
 
-// autoGrants 从清单 caps/trust 生成授权表(失败即返回错误)。
-func autoGrants(manifests []*plugin.Manifest) (map[string][]string, error) {
-	broker := caps.NewBroker(nil)
-	if err := assemble.GrantManifests(broker, manifests); err != nil {
-		return nil, err
-	}
-	return broker.Snapshot(), nil
-}
-
-// applyAutoGrants 把清单能力灌进提供 "caps" 服务的插件配置。
+// ApplyAutoGrants 把清单 caps/trust 灌进提供 "caps" 服务的插件配置。
 //
-// 这样 caps-gate 会优先用这个注入的 Broker;prset 里手写的 grants 仍会保留(并集)。
-func applyAutoGrants(manifests []*plugin.Manifest) error {
-	grants, err := autoGrants(manifests)
+// 这样 caps-gate 会优先用注入的 Broker;preset 里手写的 grants 仍会保留(并集)。
+func ApplyAutoGrants(manifests []*plugin.Manifest) error {
+	grants, err := AutoGrants(manifests)
 	if err != nil {
 		return err
 	}
@@ -95,4 +90,13 @@ func applyAutoGrants(manifests []*plugin.Manifest) error {
 		m.Config["grants"] = merged
 	}
 	return nil
+}
+
+// AutoGrants 从清单 caps/trust 生成授权表(失败即返回错误)。
+func AutoGrants(manifests []*plugin.Manifest) (map[string][]string, error) {
+	broker := caps.NewBroker(nil)
+	if err := assemble.GrantManifests(broker, manifests); err != nil {
+		return nil, err
+	}
+	return broker.Snapshot(), nil
 }
