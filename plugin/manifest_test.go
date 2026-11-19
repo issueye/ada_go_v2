@@ -94,3 +94,22 @@ func TestLoadDir(t *testing.T) {
 		t.Fatalf("没有 plugin.json 的目录应报错")
 	}
 }
+
+// 能力与信任等级:非法能力名/信任等级在清单校验期拒绝。
+func TestCapsAndTrust(t *testing.T) {
+	valid := &plugin.Manifest{ID: "p", Version: "0.1.0", Kind: "go",
+		Caps: []string{"fs.read", "exec"}, Trust: "official"}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("合法能力/信任等级应通过: %v", err)
+	}
+
+	badCaps := &plugin.Manifest{ID: "p", Version: "0.1.0", Kind: "go", Caps: []string{"fs.exec"}}
+	if err := badCaps.Validate(); err == nil {
+		t.Fatalf("非法能力名应被拒绝")
+	}
+
+	badTrust := &plugin.Manifest{ID: "p", Version: "0.1.0", Kind: "go", Trust: "root"}
+	if err := badTrust.Validate(); err == nil {
+		t.Fatalf("非法信任等级应被拒绝")
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/adag/ada-go/v2/caps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -55,6 +56,11 @@ type Manifest struct {
 	Provide  []string       `json:"provide,omitempty"`
 	Config   map[string]any `json:"config,omitempty"`
 	Disabled bool           `json:"disabled,omitempty"`
+
+	// Caps 是插件声明的静态能力(design §13.2);Trust 是安装来源决定的信任等级。
+	// 能力只在调用点由 caps.Broker 强制;清单声明本身不放行任何操作。
+	Caps  []string `json:"caps,omitempty"`
+	Trust string   `json:"trust,omitempty"`
 
 	// Dir 是清单所在的目录,由加载器填写,不来自 JSON。
 	Dir string `json:"-"`
@@ -170,6 +176,14 @@ func (m *Manifest) Validate() error {
 		req[name] = true
 		if seen[name] {
 			return fail("同时 provide 和 require %q:这是自依赖,装配期必然成环", name)
+		}
+	}
+	if m.Trust != "" && !caps.ValidTrust(caps.Trust(m.Trust)) {
+		return fail("trust 非法(只允许 builtin/official/verified/third-party),得到 %q", m.Trust)
+	}
+	for _, spec := range m.Caps {
+		if _, err := caps.Parse(spec); err != nil {
+			return fail("caps 非法: %v", err)
 		}
 	}
 	opt := map[string]bool{}
