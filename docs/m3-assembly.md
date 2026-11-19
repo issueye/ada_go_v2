@@ -5,7 +5,7 @@
 
 ## 1. 范围
 
-M3 要回答的是「装哪些插件、按什么顺序、装不上怎么办」。第一刀交付三个东西:
+M3 要回答的是「装哪些插件、按什么顺序、装不上怎么办」。第一刀交付四个东西:
 
 ```
 plugin.json ──plugin.LoadDir──▶ []*Manifest(校验过的清单)
@@ -14,13 +14,16 @@ plugin.json ──plugin.LoadDir──▶ []*Manifest(校验过的清单)
                          assemble.Plan ──▶ Report(顺序/问题/警告)
                                      │
                                      ▼
+              loader.Lookup ◀── kind ──▶ go: 宿主注册表 / ts: 编译或 Artifact
+                                     │
+                                     ▼
                          assemble.Up ──▶ 挂载 + 失败整体回滚
                                      │
                                      ▼
-                         ada plan <目录> ──▶ 人可读 / JSON 报告
+                    ada plan / ada up ──▶ 人可读 / JSON 报告 / 真挂载
 ```
 
-**不在这一刀里**:插件安装与更新、签名校验、capability 授权、preset/bundle/profile 的 patch 合并、`ada up` / `ada inspect`。
+**不在这一刀里**:插件安装与更新、签名校验、capability 授权、preset/bundle/profile 的 patch 合并、`ada inspect`。
 
 ## 2. 清单(`plugin/`)
 
@@ -62,49 +65,61 @@ plugin.json ──plugin.LoadDir──▶ []*Manifest(校验过的清单)
 6. **成环** → 阻断,并点名环路径(`a → b → a`);
 7. 拓扑排序,同级按 id 排序 → 确定性顺序。
 
-报告结构:
-
 ```go
 type Report struct {
     Order    []string  // 拓扑顺序(有问题时只含已确定的部分)
-    Problems []Problem // 阻断项:kind / plugin / service / detail
+    Problems []Problem // kind / plugin / service / detail
     Warnings []string
 }
 func (r *Report) OK() bool
 func (r *Report) Err() error // *assemble.Error,码 EASSEMBLEPLAN
 ```
 
-## 4. 装配(`assemble.Up`)
+## 4. 装载(`loader.Lookup`)
+
+按 `kind` 选路,把清单变成可挂载的 `kernel.Plugin`:
+
+| kind | 来源 | 说明 |
+|---|---|---|
+| `go` | 宿主注册表 `map[id]func() kernel.Plugin` | Go 插件必须编译进宿主;CLI 里没有注册表,会得到明确错误 |
+| `ts` + `artifact` | `compile.ParseArtifact` | 校验摘要后交给 `bridge.Plugin` |
+| `ts` + `entry` | `loader.CollectSources` + `compile.Build` | 现场扫描目录(跳过 `node_modules` 与隐藏目录)并编译 |
+
+装载层不做依赖排序(那是 `assemble.Plan`),也不做事务与回滚(那是 `assemble.Up`);它返回的函数类型与 `assemble.Lookup` 一致,所以装配层不需要知道 `compile`/`bridge` 的存在。
+
+## 5. 装配(`assemble.Up`)
 
 ```go
 up, err := assemble.Up(app, manifests, plan, lookup)
 ```
 
-- `lookup` 负责把清单变成 `kernel.Plugin`(go 插件查注册表,ts 插件由 bridge 构造);
 - 按计划顺序挂载,每个插件等待 `Ready`(上限 10s);
 - **事务语义**:任一插件挂载/就绪失败 → 已挂载的插件**按逆序卸载**(与内核 effect 栈一致);
-- 失败返回 `*assemble.UpError`:带插件名、原因、回滚数量与回滚错误(码 `EASSEMBLEUP`);
+- 失败返回 `*assemble.UpError`:插件名、原因、回滚数量与回滚错误(码 `EASSEMBLEUP`);
 - 计划本身不通过时直接拒绝执行(不会「装一半再报错」)。
 
-## 5. CLI: `ada plan`
+## 6. CLI: `ada plan` / `ada up`
 
 ```powershell
-go run ./cmd/ada plan examples/plugins
-go run ./cmd/ada plan examples/plugins -json
+go run ./cmd/ada plan examples/plugins       # 纯 Go 清单:顺序 + 可选依赖告警
+go run ./cmd/ada plan examples/plugins -json # 机器可读报告
+go run ./cmd/ada up examples/plugins-ts      # 真的挂载 TS 插件,打印 fiber/服务后停止
 ```
 
-输出示例:
+`ada up` 的实际输出:
 
 ```
-清单(3): greeter@0.1.0(go), presenter@0.1.0(go), upper@0.1.0(go)
-顺序: greeter → upper → presenter
-警告: 插件 presenter 的可选依赖 "telemetry" 未提供(按缺失处理,不影响装配)
-结果: 可装配
+  [js] hello-ts 装配完成,name=ada
+装配完成: hello-ts
+  fiber   hello-ts     active
+  service ts.hello     provider=hello-ts#1 dependents=0
+  [js] hello-ts 清理
+已停止。
 ```
 
-退出码:`0` 可装配 / `1` 不可装配或加载失败 / `2` 用法错误。`-json` 输出 `{ok, plugins, order, warnings, problems}`。
+退出码:`0` 成功 / `1` 不可装配或装配失败 / `2` 用法错误。
 
-## 6. 测试矩阵
+## 7. 测试矩阵
 
 | 场景 | 用例 |
 |---|---|
@@ -112,29 +127,31 @@ go run ./cmd/ada plan examples/plugins -json
 | 未知字段拒绝 | `plugin.TestRejectsUnknownField` |
 | 目录扫描 / 单插件目录 / 空目录 | `plugin.TestLoadDir` |
 | 拓扑顺序 + 可选依赖告警 | `assemble.TestPlanOrderIsDeterministic` |
-| 缺提供者 | `assemble.TestPlanRejectsMissingProvider` |
-| 重复提供者 | `assemble.TestPlanRejectsDuplicateProvider` |
-| 成环并点名 | `assemble.TestPlanRejectsCycle` |
-| 级联阻断 | `assemble.TestPlanCascadesBlockedProvider` |
-| disabled / 重复 id | `assemble.TestPlanDisabledAndDuplicateID` |
+| 缺提供者 / 重复提供者 / 成环 / 级联阻断 / disabled / 重复 id | `assemble.TestPlan*` |
 | 按序挂载并真的提供服务 | `assemble.TestUpMountsInPlanOrder` |
 | 失败逆序回滚 | `assemble.TestUpRollsBackOnFailure` |
-| 坏计划拒绝执行 | `assemble.TestUpRejectsBadPlan` |
-| 缺 Lookup 明确报错 | `assemble.TestUpWithoutLookup` |
+| 坏计划拒绝执行 / 缺 Lookup | `assemble.TestUpRejectsBadPlan`、`assemble.TestUpWithoutLookup` |
+| go 插件按注册表装载(含缺注册报错) | `loader.TestGoLookup` |
+| ts 源码模式装载并挂载 | `loader.TestTSSourceLookup` |
+| ts Artifact 模式装载并挂载 | `loader.TestTSArtifactLookup` |
+| 清单信息不足/未知 kind | `loader.TestTSLookupErrors` |
+| 源码扫描跳过 node_modules 与隐藏目录 | `loader.TestCollectSources` |
 
-## 7. 已知边界与下一步
+## 8. 已知边界与下一步
 
-1. **install / 签名 / capability** 未做(M5):当前 plan 只读本地目录。
-2. **ts 插件的 Artifact 解析**没接:清单里的 `entry`/`artifact` 只做必填校验,还没有把它接到 `compile.Build` + `bridge.Plugin`。
-3. **版本约束缺失**:`inject` 只按服务名匹配,没有「期望 provider ≥ v2」;内核对 `MinVersion` 已有支持,plan 还没用上。
-4. **preset / bundle / patch** 未做(M4):当前一个目录就是一份计划。
-5. **`ada up` / `ada inspect`** 未做:装配执行目前只能从代码调用 `assemble.Up`。
+1. **install / 签名 / capability** 未做(M5):`ada plan/up` 只读本地目录。
+2. **版本约束缺失**:`inject` 只按服务名匹配,没有「期望 provider ≥ v2」;内核对 `MinVersion` 已有支持,plan 还没用上。
+3. **preset / bundle / patch** 未做(M4):当前一个目录就是一份计划。
+4. **`ada inspect`** 未做:目前只能看到 `ada up` 打印的即时快照。
+5. **Go 插件无法从 CLI 动态加载**:Go 插件必须编译进宿主,CLI 只对 ts 插件完整可用;这符合「Go 优先、JS 用于第三方」的方向,但宿主需要自己提供注册表。
 6. **多提供者的隔离槽**:`Isolate` 语义还没进入清单(`isolate: { shell: true }`)。
+7. **热重载/增量编译**未做:每次 `ada up` 都是全量编译;S8 的 0.66 ms 数据说明代价可接受,但还没有接。
 
-## 8. 验证命令
+## 9. 验证命令
 
 ```powershell
-go test -race -count=1 ./...              # 含 plugin / assemble
-go run ./cmd/ada plan examples/plugins    # 人可读计划
-pwsh scripts/guard.ps1                    # 红线门禁
+go test -race -count=1 ./...                 # 含 plugin / assemble / loader
+go run ./cmd/ada plan examples/plugins       # 人可读计划
+go run ./cmd/ada up examples/plugins-ts      # 真的挂载 TS 插件
+pwsh scripts/guard.ps1                       # 红线门禁
 ```

@@ -2,7 +2,7 @@
 
 **一个以插件为核心的程序基座**：Go 内核 + TypeScript 插件（纯 Go 编译与执行，无需 Node 环境）+ Cordis 式的作用域与编排。
 
-> 当前处于 **M3 装配层第一刀**:M1 内核、M2 执行层(`compile`/`jsrt`/`bridge`)、M3 清单与装配(`plugin`/`assemble` + `ada plan`)已落地;install/签名/capability 与 preset 仍为设计。
+> 当前处于 **M3 装配层**:M1 内核、M2 执行层(`compile`/`jsrt`/`bridge`)、M3 清单与装配(`plugin`/`assemble`/`loader` + `ada plan|up`)已落地;install/签名/capability 与 preset 仍为设计。
 > **工作约定/红线**：[AGENTS.md](AGENTS.md)（动代码或改设计前先读）
 > 设计文档：[docs/plugin-kernel-design.md](docs/plugin-kernel-design.md)
 > seam 契约：[docs/seam-api.md](docs/seam-api.md)（llm / tools / session / prompts）
@@ -66,7 +66,7 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 
 `Transform` 单文件 0.77–0.88 ms；moejs 新建 Runtime 1.39 µs、加载插件 71 µs、单次调用 6.86 µs、每 Runtime 常驻 80.5 KiB。
 
-## 当前状态:M1 内核 + M2 执行层 + M3 装配第一刀
+## 当前状态:M1 内核 + M2 执行层 + M3 装配(清单/依赖图/事务/装载)
 
 ```powershell
 go test -race -count=1 -timeout 300s ./...   # kernel 21 + schema 7 + compile 6 + jsrt 5 + bridge 2
@@ -74,11 +74,12 @@ go run ./cmd/ada-demo                        # 依赖门控 + 级联重载演示
 pwsh scripts/guard.ps1                       # 门禁:词汇/依赖/gofmt/build/vet/staticcheck/race/交叉编译/预算
 go run ./cmd/ada-ts-demo                     # M2:TS 插件编译→加载→提供服务/派发事件→内核消费
 go run ./cmd/ada plan examples/plugins       # M3:读清单→依赖图→装配顺序/问题报告
+go run ./cmd/ada up examples/plugins-ts      # M3:现场编译 TS 插件并真的挂载一遍
 pwsh scripts/bench.ps1                       # 性能预算:≤20 μs/次、50 插件冷启动 ≤150 ms
 ```
 
-已完成:`kernel/`(Context / Fiber / Service / Effect / Event / Config / Schema)、`kernel/schema`、`cmd/ada-demo`、`cmd/ada-ts-demo`、`compile/`(esbuild)、`jsrt/`(moejs)、`bridge/`、`scripts/guard.ps1`、`scripts/bench.ps1`、`docs/kernel-api.md`、`docs/m2-execution.md`、`docs/adr/0001`、`docs/adr/0002`。
-未开始:`plugins/seam/*`(M4.5)、`host/*`(M5);M3 剩余:install/签名/capability、preset/bundle、`ada up`/`ada inspect`、ts Artifact 解析接入。
+已完成:`kernel/`(Context / Fiber / Service / Effect / Event / Config / Schema)、`kernel/schema`、`cmd/ada`、`cmd/ada-demo`、`cmd/ada-ts-demo`、`compile/`(esbuild)、`jsrt/`(moejs)、`bridge/`、`plugin/`(清单)、`assemble/`(计划/事务)、`loader/`(按 kind 装载)、`scripts/guard.ps1`、`scripts/bench.ps1`、`docs/kernel-api.md`、`docs/m2-execution.md`、`docs/m3-assembly.md`、`docs/adr/0001`、`docs/adr/0002`。
+未开始:`plugins/seam/*`(M4.5)、`host/*`(M5);M3 剩余:install/签名/capability、preset/bundle、`ada inspect`、版本约束、隔离槽。
 
 本轮修复了 M1 评审中复现的缺陷(waterfall 超时幽灵执行、兄弟插件被误拆、failed 不可复活、卸载错误被吞、fiber 注册表泄漏、Intercept 合并反向、Stop 后仍派发、schema 静默放行),每条都有回归用例;清单见 [kernel-api.md §6](docs/kernel-api.md)。
 
