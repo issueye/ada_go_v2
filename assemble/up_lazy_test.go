@@ -2,6 +2,8 @@ package assemble_test
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -257,4 +259,88 @@ func TestTriggerOnCronRegister(t *testing.T) {
 	if err := dispose(context.Background()); err != nil {
 		t.Fatalf("停止任务失败: %v", err)
 	}
+}
+
+// 9. 并发 Ensure 只挂载一次(-race)。
+func TestDeferredConcurrentEnsure(t *testing.T) {
+	app := newApp(t)
+	ms := lazyManifests()
+	plan := assemble.Plan(ms)
+	_, deferred, err := assemble.UpLazy(app, ms, plan, lazyLookup(t))
+	if err != nil {
+		t.Fatalf("UpLazy 失败: %v", err)
+	}
+	const n = 32
+	var (
+		wg  sync.WaitGroup
+		ids = make(chan string, n)
+	)
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func() {
+			defer wg.Done()
+			f, err := deferred.Ensure(context.Background(), "lazy")
+			if err != nil {
+				t.Errorf("并发 Ensure 失败: %v", err)
+				return
+			}
+			ids <- f.ID()
+		}()
+	}
+	wg.Wait()
+	close(ids)
+	first := ""
+	for id := range ids {
+		if first == "" {
+			first = id
+		} else if id != first {
+			t.Fatalf("并发 Ensure 返回了不同 fiber: %s vs %s", first, id)
+		}
+	}
+	if got := len(app.Inspect().Fibers); got != 2 {
+		t.Fatalf("并发 Ensure 不应重复挂载,实际 fiber 数 %d", got)
+	}
+}
+
+// 10. 并发 TriggerOnCron 只有一个成功。
+func TestDeferredConcurrentTrigger(t *testing.T) {
+	app := newApp(t)
+	ms := lazyManifests()
+	plan := assemble.Plan(ms)
+	_, deferred, err := assemble.UpLazy(app, ms, plan, lazyLookup(t))
+	if err != nil {
+		t.Fatalf("UpLazy 失败: %v", err)
+	}
+	scheduler := sched.New(sched.Options{Clock: sched.NewFakeClock(time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC))})
+	t.Cleanup(func() { _ = scheduler.Stop(context.Background()) })
+	store := &sched.MemoryJobStore{}
+
+	var (
+		wg       sync.WaitGroup
+		success  int32
+		mu       sync.Mutex
+		disposes []kernel.Dispose
+	)
+	wg.Add(2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			defer wg.Done()
+			d, err := deferred.TriggerOnCron(scheduler, store, "lazy", "* * * * *", sched.JobSkip)
+			if err == nil {
+				atomic.AddInt32(&success, 1)
+				mu.Lock()
+				disposes = append(disposes, d)
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	if got := atomic.LoadInt32(&success); got != 1 {
+		t.Fatalf("并发注册应只有 1 个成功,实际 %d", got)
+	}
+	mu.Lock()
+	for _, d := range disposes {
+		_ = d(context.Background())
+	}
+	mu.Unlock()
 }

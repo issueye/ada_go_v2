@@ -187,6 +187,8 @@ go run ./cmd/ada up   --preset examples/presets/ts-only.preset.json
 | 服务触发挂载/未知服务/幂等 | `assemble.TestEnsureForService` |
 | EnsureAll 按 id 排序挂载 | `assemble.TestEnsureAll` |
 | TriggerOnCron 参数校验/注册冲突/Dispose | `assemble.TestTriggerOnCronValidation`、`TestTriggerOnCronRegister` |
+| 并发 Ensure 只挂载一次(-race) | `assemble.TestDeferredConcurrentEnsure` |
+| 并发 TriggerOnCron 只成功一次 | `assemble.TestDeferredConcurrentTrigger` |
 | 清单信息不足/未知 kind / 扫描排除规则 | `loader.TestTSLookupErrors`、`loader.TestCollectSources` |
 
 ## 9. 已知边界与下一步

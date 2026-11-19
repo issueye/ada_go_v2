@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/adag/ada-go/v2/kernel"
@@ -134,6 +135,9 @@ type Deferred struct {
 	lookup   Lookup
 	mounted  map[string]*kernel.Fiber
 	triggers map[string]bool
+
+	// mu 保护 mounted / triggers;并发 Ensure 也由它保证只挂载一次。
+	mu sync.Mutex
 }
 
 // UpLazy 只挂载 activation=startup 的插件,on-demand 插件留给 Deferred.Ensure。
@@ -240,12 +244,17 @@ func (d *Deferred) TriggerOnCron(s *sched.Scheduler, store sched.JobStore, id, c
 	if m.Activation != "on-demand" {
 		return nil, fmt.Errorf("assemble: 插件 %q 不是 on-demand(activation=%q)", id, m.Activation)
 	}
+	d.mu.Lock()
 	if d.triggers == nil {
 		d.triggers = map[string]bool{}
 	}
 	if d.triggers[id] {
+		d.mu.Unlock()
 		return nil, fmt.Errorf("assemble: 插件 %q 已注册过定时触发", id)
 	}
+	d.triggers[id] = true
+	d.mu.Unlock()
+
 	dispose, err := s.Job(sched.JobSpec{
 		ID:     "assemble-ensure-" + id,
 		Cron:   cron,
@@ -256,11 +265,15 @@ func (d *Deferred) TriggerOnCron(s *sched.Scheduler, store sched.JobStore, id, c
 		},
 	}, store)
 	if err != nil {
+		d.mu.Lock()
+		delete(d.triggers, id)
+		d.mu.Unlock()
 		return nil, err
 	}
-	d.triggers[id] = true
 	return func(ctx context.Context) error {
+		d.mu.Lock()
 		delete(d.triggers, id)
+		d.mu.Unlock()
 		return dispose(ctx)
 	}, nil
 }
@@ -281,10 +294,14 @@ func (d *Deferred) IDs() []string {
 }
 
 // Ensure 挂载一个 on-demand 插件并等待就绪;重复调用返回同一个 fiber。
+//
+// 并发安全:整段挂载在互斥锁内,32 个 goroutine 同时 Ensure 也只会挂载一次。
 func (d *Deferred) Ensure(ctx context.Context, id string) (*kernel.Fiber, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	if f, ok := d.mounted[id]; ok && f != nil && f.State() != kernel.Disposed {
 		return f, nil
 	}
