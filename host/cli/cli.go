@@ -52,6 +52,8 @@ func Run(args []string, out, errOut io.Writer) int {
 		return cmdRollback(args[1:], out, errOut)
 	case "caps":
 		return cmdCaps(args[1:], out, errOut)
+	case "repo":
+		return cmdRepo(args[1:], out, errOut)
 	case "update":
 		return cmdUpdate(args[1:], out, errOut)
 	default:
@@ -72,6 +74,7 @@ func usage(w io.Writer) {
   ada upgrade <插件目录> -dest <安装根> [-keys 密钥文件] [-require-signature] [-yes] [-keep]
   ada rollback <插件 id> -dest <安装根>
   ada caps    <插件目录|--preset 文件> [-json]
+  ada repo    <仓库索引 URL> [-keys 密钥文件] [-require-repo-signature] [-json]
   ada update  <插件 id> -repo <仓库目录> -dest <安装根> [-keys 密钥文件] [-require-signature] [-require-repo-signature] [-yes]
 
 退出码:0=成功,1=计划不可执行/装配或校验失败,2=用法错误。
@@ -593,6 +596,79 @@ func cmdCaps(args []string, out, errOut io.Writer) int {
 		return 1
 	}
 	fmt.Fprintln(out, "结果: 可授权")
+	return 0
+}
+
+// cmdRepo 在线读取仓库索引(可选验签),列出可用版本。
+func cmdRepo(args []string, out, errOut io.Writer) int {
+	url := ""
+	keysPath := ""
+	requireRepo := false
+	asJSON := false
+	bad := ""
+	for i := 0; i < len(args); i++ {
+		switch a := args[i]; {
+		case a == "-keys":
+			if i+1 >= len(args) {
+				bad = "-keys 缺少文件参数"
+				break
+			}
+			keysPath = args[i+1]
+			i++
+		case a == "-require-repo-signature":
+			requireRepo = true
+		case a == "-json":
+			asJSON = true
+		case strings.HasPrefix(a, "-"):
+			bad = "未知参数 " + a
+		default:
+			if url != "" {
+				bad = "多余的参数 " + a
+			} else {
+				url = a
+			}
+		}
+		if bad != "" {
+			break
+		}
+	}
+	if bad != "" {
+		fmt.Fprintln(errOut, bad)
+		usage(errOut)
+		return 2
+	}
+	if url == "" {
+		fmt.Fprintln(errOut, "需要仓库索引 URL")
+		usage(errOut)
+		return 2
+	}
+	keys, err := loadKeyRing(keysPath)
+	if err != nil {
+		fmt.Fprintln(errOut, "加载密钥失败:", err)
+		return 1
+	}
+	entries, err := install.FetchRepoIndex(context.Background(), url, keys, requireRepo)
+	if err != nil {
+		fmt.Fprintln(errOut, "读取仓库失败:", err)
+		return 1
+	}
+	if asJSON {
+		b, err := json.MarshalIndent(map[string]any{"ok": true, "entries": entries}, "", "  ")
+		if err != nil {
+			fmt.Fprintln(errOut, "序列化失败:", err)
+			return 1
+		}
+		fmt.Fprintln(out, string(b))
+		return 0
+	}
+	if len(entries) == 0 {
+		fmt.Fprintln(out, "仓库: (空)")
+		return 0
+	}
+	fmt.Fprintf(out, "仓库插件(%d):\n", len(entries))
+	for _, e := range entries {
+		fmt.Fprintf(out, "  %s@%s dir=%s\n", e.ID, e.Version, e.Dir)
+	}
 	return 0
 }
 

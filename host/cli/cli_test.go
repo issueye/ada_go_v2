@@ -3,6 +3,8 @@ package cli_test
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -478,5 +480,23 @@ func TestUpdateRequiresRepoSignature(t *testing.T) {
 	code, _, errOut := run("update", "sig-demo", "-repo", repo, "-dest", dest, "-require-repo-signature")
 	if code != 1 || !strings.Contains(errOut, "缺少签名") {
 		t.Fatalf("缺签名应拒绝: code=%d err=%s", code, errOut)
+	}
+}
+
+// 26. repo:在线读取未签名索引;require 时缺签名失败。
+func TestRepo(t *testing.T) {
+	data := []byte(`{"entries":[{"id":"repo-demo","version":"0.1.0","dir":"plugins/repo-demo@0.1.0"}]}`)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repo.json", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(data) })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	code, out, errOut := run("repo", srv.URL+"/repo.json")
+	if code != 0 || !strings.Contains(out, "repo-demo@0.1.0") {
+		t.Fatalf("repo 输出不正确: code=%d err=%s out=%s", code, errOut, out)
+	}
+	code, _, errOut = run("repo", srv.URL+"/repo.json", "-require-repo-signature")
+	if code != 1 || !strings.Contains(errOut, "缺少签名") {
+		t.Fatalf("缺签名应失败: code=%d err=%s", code, errOut)
 	}
 }

@@ -2,10 +2,14 @@ package install_test
 
 import (
 	"bytes"
+	"context"
+
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -601,5 +605,49 @@ func TestUpdateFromSignedRepo(t *testing.T) {
 	}
 	if info.Version != "0.2.0" {
 		t.Fatalf("版本不正确: %s", info.Version)
+	}
+}
+
+// 25. 在线索引:未签名可读;require 时缺签名拒绝。
+func TestFetchRepoIndex(t *testing.T) {
+	data := []byte(`{"entries":[{"id":"r-demo","version":"0.1.0","dir":"plugins/r-demo@0.1.0"}]}`)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repo.json", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(data) })
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	entries, err := install.FetchRepoIndex(context.Background(), server.URL+"/repo.json", nil, false)
+	if err != nil || len(entries) != 1 || entries[0].ID != "r-demo" {
+		t.Fatalf("未签名索引读取失败: %v %+v", err, entries)
+	}
+	if _, err := install.FetchRepoIndex(context.Background(), server.URL+"/repo.json", nil, true); err == nil {
+		t.Fatalf("require 缺签名应拒绝")
+	}
+}
+
+// 26. 在线索引验签:签名通过/篡改拒绝。
+func TestFetchRepoIndexSigned(t *testing.T) {
+	keys, priv := newKeyRing(t, caps.TrustThirdParty)
+	data := []byte(`{"entries":[{"id":"r-demo","version":"0.2.0","dir":"plugins/r-demo@0.2.0"}]}`)
+	sig := install.Signature{KeyID: "k1", Algo: "ed25519", Signature: base64.StdEncoding.EncodeToString(install.SignRepo(priv, data))}
+	sigData, _ := json.Marshal(sig)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repo.json", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(data) })
+	mux.HandleFunc("/repo.sig.json", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(sigData) })
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	if _, err := install.FetchRepoIndex(context.Background(), server.URL+"/repo.json", keys, true); err != nil {
+		t.Fatalf("签名索引应通过: %v", err)
+	}
+
+	tampered := []byte(`{"entries":[{"id":"r-demo","version":"9.9.9","dir":"plugins/r-demo@9.9.9"}]}`)
+	tamperMux := http.NewServeMux()
+	tamperMux.HandleFunc("/repo.json", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(tampered) })
+	tamperMux.HandleFunc("/repo.sig.json", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(sigData) })
+	tamperSrv := httptest.NewServer(tamperMux)
+	defer tamperSrv.Close()
+	if _, err := install.FetchRepoIndex(context.Background(), tamperSrv.URL+"/repo.json", keys, true); err == nil {
+		t.Fatalf("篡改索引应验签失败")
 	}
 }
