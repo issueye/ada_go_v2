@@ -3,6 +3,8 @@ package kernel
 import (
 	"context"
 	"sync"
+	"sync/atomic"
+	"time"
 )
 
 // State 是 fiber 的生命周期状态。
@@ -57,10 +59,27 @@ type Fiber struct {
 	tracked     []*svcImpl
 	provided    []*svcImpl
 	parentEntry *entry // 父作用域里代表自己的条目(主动 Dispose 时摘除)
+
+	// lastActive 是最近一次活动(挂载/服务解析)的 UnixNano;由 atomic 读写,
+	// 因为服务解析可能来自多个并发调用方。
+	lastActive atomic.Int64
 }
 
 // ID 返回实例的唯一标识(形如 "plugin#3")。
 func (f *Fiber) ID() string { return f.id }
+
+// Touch 标记一次活动。内核在服务解析时自动调用;宿主也可以手动标记(例如
+// 收到外部请求时),用于闲置回收的活性判断。
+func (f *Fiber) Touch() { f.lastActive.Store(time.Now().UnixNano()) }
+
+// LastActive 返回最近一次活动时间;零值 fiber(未挂载)返回零时间。
+func (f *Fiber) LastActive() time.Time {
+	ns := f.lastActive.Load()
+	if ns == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, ns)
+}
 
 // Plugin 返回插件定义。
 func (f *Fiber) Plugin() Plugin { return f.plugin }

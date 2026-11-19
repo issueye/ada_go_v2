@@ -111,6 +111,9 @@ func (c *Context) Service(name string) (any, error) {
 	if im == nil {
 		return nil, Fail(CodeServiceMissing, "服务 %q 尚未提供", name)
 	}
+	if c.fiber != nil {
+		c.fiber.Touch()
+	}
 	return im.value, nil
 }
 
@@ -119,6 +122,9 @@ func (c *Context) TryService(name string) (any, bool) {
 	im := c.app.services.resolve(name, c.isolateFor(name))
 	if im == nil {
 		return nil, false
+	}
+	if c.fiber != nil {
+		c.fiber.Touch()
 	}
 	return im.value, true
 }

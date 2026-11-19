@@ -115,6 +115,8 @@ type FiberInfo struct{ ID, Plugin, State string; Epoch uint64; Parent string }
 
 // EffectInfo 是诊断快照里的一个副作用登记项(标签与归属,不含 disposer)。
 type EffectInfo struct{ Fiber, Plugin, Label string }
+
+// Fiber.Touch()/LastActive() 与 App.ReclaimIdle 见 §3.11。
 ```
 
 ## 3. 语义要点(实现必须遵守)
@@ -134,6 +136,7 @@ type EffectInfo struct{ Fiber, Plugin, Label string }
 8. **Config**:先用 schema 补默认值并校验,再交给 `Apply`;校验失败 → `CodeConfig`,不进入 `Apply`。
 9. **停机与注册表**:`Fiber.Dispose` 与 `App.Stop` 都会把实例从注册表移除,`Inspect` 不会列出已卸载的 fiber;`Stop` 之后 `Inspect` 为空。
 10. **可观测**:`Inspect` 只返回快照,不返回 disposer;`Effects` 按登记顺序列出每个 fiber 当前登记的副作用标签,卸载后立即消失。
+11. **闲置回收**:`Fiber.Touch()` 标记活动(服务解析自动 touch);`App.ReclaimIdle(ctx, ttl, now)` 回收超过 ttl 无活动且没有 dependents 的 fiber,返回被回收的 id。`now` 由调用方传入,便于测试;有依赖者的提供者分轮回收,避免一次调用拆散依赖链。
 
 ## 4. 错误码(M1 子集)
 
@@ -152,10 +155,10 @@ type EffectInfo struct{ Fiber, Plugin, Label string }
 
 ## 6. M1 实现状态(2026-11-19)
 
-已落地:`kernel/`(生产 2311 行,测试 881 行)+ `kernel/schema` + `cmd/ada-demo` + `scripts/guard.ps1` + `docs/adr/0001`。
+已落地:`kernel/`(生产 2368 行,测试 1018 行)+ `kernel/schema` + `cmd/ada-demo` + `scripts/guard.ps1` + `docs/adr/0001`。
 
 ```powershell
-go test -race -count=1 -timeout 120s ./...   # 22 + 7 个用例全绿
+go test -race -count=1 -timeout 120s ./...   # 27 + 7 个用例全绿
 go test -run xxx -bench . -benchmem ./kernel # 性能基线
 go run ./cmd/ada-demo                        # 依赖门控、级联重载演示
 pwsh scripts/guard.ps1                       # 门禁:词汇/依赖/gofmt/build/vet/staticcheck/race/交叉编译/预算

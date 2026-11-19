@@ -2,6 +2,7 @@ package kernel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -135,6 +136,7 @@ func (a *App) mount(parent *Context, p Plugin, cfg Config) (*Fiber, error) {
 		ch:     make(chan struct{}),
 		parent: parent.fiber,
 	}
+	f.lastActive.Store(time.Now().UnixNano())
 	f.ctx = parent.derive(func(v *vars) { v.entry = EntryMeta{ID: id, Source: "memory"} })
 	f.ctx.fiber = f
 	a.fibers[id] = f
@@ -284,6 +286,41 @@ type EffectInfo struct {
 	Fiber  string
 	Plugin string
 	Label  string
+}
+
+// ReclaimIdle 回收「无活动超过 ttl 且没有依赖者」的 fiber,返回被回收的 id。
+//
+// now 由调用方显式传入:回收策略需要可测试,不能依赖真实时钟。
+// 有 dependents 的提供者本轮跳过(其依赖者若也被回收,下一次调用再把提供者回收),
+// 因此回收是「分轮收敛」的,不会出现一次调用里把依赖链拆散的情况。
+func (a *App) ReclaimIdle(ctx context.Context, ttl time.Duration, now time.Time) ([]string, error) {
+	if ttl <= 0 {
+		return nil, Fail(CodeInvalid, "kernel: ReclaimIdle 的 ttl 必须为正,得到 %s", ttl)
+	}
+	snap := a.Inspect()
+	depended := map[string]bool{}
+	for _, s := range snap.Services {
+		if s.Provider != "" && len(s.Dependents) > 0 {
+			depended[s.Provider] = true
+		}
+	}
+
+	var reclaimed []string
+	var errs []error
+	for _, f := range a.snapshotFibers() {
+		if f.State() != Active || depended[f.ID()] {
+			continue
+		}
+		if now.Sub(f.LastActive()) < ttl {
+			continue
+		}
+		if err := f.Dispose(ctx); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		reclaimed = append(reclaimed, f.ID())
+	}
+	return reclaimed, errors.Join(errs...)
 }
 
 // Inspect 返回当前运行态快照。
