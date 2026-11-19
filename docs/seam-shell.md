@@ -49,6 +49,22 @@ plugins/policy/shell-guard/     策略:只读白名单、shell 模式默认拒�
 8. **后台任务**:超过 30s 的命令被拒绝(未接 jobs seam)。
 9. **Windows 路径特性**(盘符/UNC/保留名)未覆盖。
 
+### 4.1 `shell/observe` 事件
+
+`policy/shell-observe` 在每次 Run/Stream 后 `Emit("shell/observe", payload)`:
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `op` | string | `run` / `stream` |
+| `program` | string | 程序名;**不含 args**(参数可能含 secret) |
+| `exit` | int | 退出码 |
+| `bytes` | int64 | stdout+stderr 字节数 |
+| `durationMs` | int64 | 执行耗时(毫秒) |
+| `plugin` | string | 调用者插件 id |
+| `error` | string | 失败文本(成功时缺省) |
+
+观察不是门禁:`shell-guard`/`caps-gate` 的拒绝也会被记录(observe priority=250 最外层)。
+
 ## 5. 测试矩阵
 
 | 场景 | 用例 |

@@ -212,6 +212,9 @@ func (c *Chain) Applied() []int {
 
 const pluginID = "seam-shell"
 
+// EventObserve 是 shell 操作观察事件(观察不是门禁;payload 见 docs/seam-shell.md)。
+const EventObserve = "shell/observe"
+
 // Plugin 返回 seam/shell 插件:只提供 shell 服务(Chain),不提供实现。
 func Plugin() kernel.Plugin {
 	return kernel.Func(pluginID, func(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, error) {
