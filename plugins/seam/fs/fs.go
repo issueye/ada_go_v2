@@ -318,6 +318,9 @@ func (c *Chain) Applied() []int {
 // pluginID 是 seam 插件的 id。
 const pluginID = "seam-fs"
 
+// EventObserve 是 fs 操作观察事件(观察,不是门禁;payload 见 docs/seam-fs.md)。
+const EventObserve = "fs/observe"
+
 // Plugin 返回 seam/fs 插件:只提供 fs 服务(Chain),不提供实现。
 func Plugin() kernel.Plugin {
 	return kernel.Func(pluginID, func(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, error) {

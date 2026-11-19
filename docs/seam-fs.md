@@ -57,7 +57,7 @@ policy/fs-sandbox ──inject "fs"──▶ Chain.Decorate(沙箱包装,priorit
    「模式变更写 session 事件、回放后判定一致」仍未做。
 6. **审批已接入可升级拒绝**:`fs-sandbox` 在 sandbox 判定 `Escalatable` 时调用 `seam/approval`(默认审批人拒绝);caps broker 仍未实现。
 7. **Windows 特性未覆盖**:盘符/UNC/8.3 短名/ADS/保留名/大小写不敏感越界/路径长度。
-8. **redact 已实现,observation 未做**:`policy/fs-redact` 对读结果做正则脱敏(默认 key 模式 + 可配置 patterns);「读后写表」仍未实现。
+8. **redact / observe 已实现**:`policy/fs-redact` 对读结果做正则脱敏;`policy/fs-observe` 每次操作后广播 `fs/observe` 事件(payload 含 op/path/bytes/plugin/error)。「读后写表」的持久化投影仍未实现。
 
 ## 5. 测试矩阵
 
@@ -75,6 +75,8 @@ policy/fs-sandbox ──inject "fs"──▶ Chain.Decorate(沙箱包装,priorit
 | 无 provider 时 `EUNIMPLEMENTED` | `fssandbox.TestKernelWithoutProvider` |
 | redact:默认 key 模式命中/无命中不变/非法正则/写透传 | `fsredact.TestRedactsDefault`、`TestNoMatch`、`TestInvalidPattern`、`TestPassthrough` |
 | redact 内核集成(AWS key 被脱敏) | `fsredact.TestKernelIntegration` |
+| observe:读/写记录、失败记录、skipOps | `fsobserve.TestRecordsReadAndWrite`、`TestRecordsError`、`TestSkipOps` |
+| observe 内核集成与「拒绝也记录」 | `fsobserve.TestKernelIntegration`、`TestObserveDeniedCalls` |
 
 ## 6. 下一步
 
