@@ -19,11 +19,13 @@ host/desktop/   内核快照 → 视图模型(View)→ Renderer
 | `New(app, renderer)` | app 与 renderer 都不能为 nil |
 | `Refresh()` | `app.Inspect()` → View → Render;返回本轮视图 |
 | `Subscribe(events)` | 在根上下文监听事件,事件到达时 Refresh;返回 Dispose 取消订阅 |
+| `OpenPage(name)` | 发出 `page/open` 事件(供 `assemble.TriggerOnEvent` 延迟激活) |
 
 ## 3. 测试
 
 - `desktop.TestRefresh`:挂载提供服务的插件后刷新,断言 fibers/services/effects 映射与渲染器调用次数(两次刷新);
 - `desktop.TestSubscribe`:订阅 `fs/observe` → Emit 触发重绘 → Dispose 后不再触发;
+- `desktop.TestOpenPage`:`page/open` 载荷与空页面名校验;
 - `desktop.TestNewValidation`:nil app/renderer 明确报错。
 
 ## 4. 偏差与边界

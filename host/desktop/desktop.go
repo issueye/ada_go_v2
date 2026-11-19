@@ -46,6 +46,9 @@ type View struct {
 	Events   []string
 }
 
+// EventPageOpen 是宿主页面切换事件:由 OpenPage 发出,供延迟激活消费。
+const EventPageOpen = "page/open"
+
 // Host 持有内核 App 与渲染器。
 type Host struct {
 	app      *kernel.App
@@ -61,6 +64,15 @@ func New(app *kernel.App, renderer Renderer) (*Host, error) {
 		return nil, errors.New("desktop: renderer 不能为 nil")
 	}
 	return &Host{app: app, renderer: renderer}, nil
+}
+
+// OpenPage 发出 page/open 事件(宿主触发页面切换);空页面名报错。
+func (h *Host) OpenPage(name string) error {
+	if name == "" {
+		return errors.New("desktop: 页面名不能为空")
+	}
+	h.app.Root().Emit(EventPageOpen, name)
+	return nil
 }
 
 // Subscribe 在根上下文上监听事件,事件到达时 Refresh 并重绘。

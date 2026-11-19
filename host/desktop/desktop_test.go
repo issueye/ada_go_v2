@@ -108,3 +108,29 @@ func TestSubscribe(t *testing.T) {
 		t.Fatalf("取消后不应再重绘,实际 %d", len(r.views))
 	}
 }
+
+// 4. OpenPage 发出页面切换事件。
+func TestOpenPage(t *testing.T) {
+	app := kernel.New(kernel.Options{})
+	t.Cleanup(func() { _ = app.Stop(context.Background()) })
+	var got any
+	app.Root().On(desktop.EventPageOpen, func(_ context.Context, _ *kernel.Context, args []any) (any, error) {
+		if len(args) > 0 {
+			got = args[0]
+		}
+		return nil, nil
+	})
+	h, err := desktop.New(app, &fakeRenderer{})
+	if err != nil {
+		t.Fatalf("构造失败: %v", err)
+	}
+	if err := h.OpenPage("settings"); err != nil {
+		t.Fatalf("OpenPage 失败: %v", err)
+	}
+	if got != "settings" {
+		t.Fatalf("事件载荷不正确: %v", got)
+	}
+	if err := h.OpenPage(""); err == nil {
+		t.Fatalf("空页面名应报错")
+	}
+}
