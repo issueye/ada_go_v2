@@ -130,10 +130,14 @@ func loadTarget(t target) ([]*plugin.Manifest, error) {
 
 // mountAll 是 up 与 inspect 共用的挂载逻辑:失败时停掉半装的 app。
 func mountAll(manifests []*plugin.Manifest, report *assemble.Report, out io.Writer) (*kernel.App, *assemble.UpReport, error) {
+	if err := applyAutoGrants(manifests); err != nil {
+		return nil, nil, err
+	}
 	logger := slog.New(slog.NewTextHandler(out, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	app := kernel.New(kernel.Options{Logger: logger})
 	lookup := loader.Lookup(loader.Options{
-		// CLI 没有编译期的 Go 插件:kind=go 会在这里得到明确错误。
+		// 内置 Go 插件注册表:CLI 也能挂安全栈;第三方 Go 插件仍需宿主编译时注册。
+		Go: builtinGoPlugins(),
 		Logf: func(format string, args ...any) {
 			fmt.Fprintf(out, "  [js] %s\n", fmt.Sprintf(format, args...))
 		},

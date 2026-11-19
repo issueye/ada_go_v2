@@ -37,7 +37,10 @@ cmd/ada/     只做 os.Exit(cli.Run(os.Args[1:], os.Stdout, os.Stderr))
 - verify(未签名 ts → third-party);
 - inspect(挂载 TS preset 并输出 fibers/services);
 - up(挂载后停止);
-- install(安装到临时目录并检查文件)。
+- install(安装到临时目录并检查文件);
+- 内置安全栈 up(seam-fs + fs-local + caps-static + caps-gate)。
+
+**内置 Go 插件注册表**:CLI 编译进了仓库内置的 seam/provider/policy(seam-fs、fs-local、caps-static、caps-gate、observers、redact 等),因此 `up`/`inspect` 可以直接挂安全栈;第三方 Go 插件仍需宿主编译时注册。`up`/`inspect` 会在挂载前把清单 caps 灌进提供 `caps` 服务的插件(`applyAutoGrants`),让 `caps-gate` 用同一份授权表。
 
 **顺带修掉一个缺陷**:`install` 曾复用 `verify` 的参数解析,导致 `-dest` 被当成未知参数而失败;
 现在有独立的 `parseInstallArgs` 与测试覆盖。
@@ -45,7 +48,7 @@ cmd/ada/     只做 os.Exit(cli.Run(os.Args[1:], os.Stdout, os.Stderr))
 ## 4. 偏差与边界
 
 1. **只有 CLI 一个宿主**:`host/desktop`、`host/server` 未实现。
-2. **Go 插件在 CLI 不可用**:`kind=go` 只能由宿主编译进二进制;CLI 对 ts 插件完整可用。
+2. **Go 插件仅限内置**:CLI 注册了仓库内置 Go 插件;第三方 Go 插件需宿主编译注册;CLI 对 ts 插件完整可用。
 3. **文本输出是人读契约,不是机器契约**:脚本请用 `-json`(plan/inspect)。
 4. **没有交互式审批入口**:approval 默认拒绝人仍是唯一实现。
 5. **没有 `ada version`**:宿主版本需由调用方提供。

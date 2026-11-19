@@ -365,3 +365,31 @@ func TestCapsJSON(t *testing.T) {
 		t.Fatalf("JSON 内容不正确: %+v", payload)
 	}
 }
+
+// 23. up:内置 Go 安全栈(seam/fs + fs-local + caps-static + caps-gate)能挂载。
+func TestUpBuiltinSecurityStack(t *testing.T) {
+	dir := t.TempDir()
+	workspace := t.TempDir()
+	writeManifest := func(id, body string) {
+		t.Helper()
+		sub := filepath.Join(dir, id)
+		if err := os.MkdirAll(sub, 0o755); err != nil {
+			t.Fatalf("建目录失败: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(sub, "plugin.json"), []byte(body), 0o644); err != nil {
+			t.Fatalf("写清单失败: %v", err)
+		}
+	}
+	writeManifest("seam-fs", `{"id":"seam-fs","version":"0.1.0","kind":"go","provide":["fs"]}`)
+	writeManifest("fs-local", `{"id":"fs-local","version":"0.1.0","kind":"go","inject":{"required":["fs"]},"config":{"workspace":"`+strings.ReplaceAll(workspace, `\`, `\\`)+`"}}`)
+	writeManifest("caps-static", `{"id":"caps-static","version":"0.1.0","kind":"go","provide":["caps"]}`)
+	writeManifest("caps-gate", `{"id":"caps-gate","version":"0.1.0","kind":"go","inject":{"required":["fs"],"optional":["caps"]}}`)
+
+	code, out, errOut := run("up", dir)
+	if code != 0 {
+		t.Fatalf("内置安全栈应装配成功: code=%d err=%s out=%s", code, errOut, out)
+	}
+	if !strings.Contains(out, "已停止。") {
+		t.Fatalf("up 输出不正确:\n%s", out)
+	}
+}

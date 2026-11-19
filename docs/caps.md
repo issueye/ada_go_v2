@@ -58,7 +58,7 @@ broker.Authorize(ctx, "plugin-a", "fs.write", "/workspace/a") // → *DeniedErro
 ## 5. 偏差与边界
 
 1. **调用点强制已落地(fs/shell)**:`policy/caps-gate` 从 `kernel.Principal(ctx)` 取调用者,向 Broker 查能力;
-   缺少身份/未授权一律拒绝。`caps-gate` 优先使用注入的 `caps` 服务;`assemble.GrantManifests` 可把清单 `caps`/`trust` 灌入同一个 Broker,但 CLI/preset 还没自动接线。
+   缺少身份/未授权一律拒绝。`caps-gate` 优先使用注入的 `caps` 服务;`assemble.GrantManifests` 把清单 `caps`/`trust` 灌入 Broker;CLI 的 `up`/`inspect` 已通过 `applyAutoGrants` 自动接线。
 2. **清单未装载进 Broker**:`plugin.Manifest.Caps/Trust` 已能解析与校验,
    但 loader/assemble 还没把它们灌进 Broker;也没有 preset 层的信任覆盖。
 3. **没有安装同意**:design 的「安装时展示能力并征得同意」未实现;`third-party` 的签名升级未实现。
@@ -92,7 +92,7 @@ broker.Authorize(ctx, "plugin-a", "fs.write", "/workspace/a") // → *DeniedErro
 3. 安装同意 + 签名(§13.4)与 trust 来源判定。
 4. JSONL 审计出口与脱敏。
 
-## 8. CLI 自检(`ada caps`)\n\n```powershell\ngo run ./cmd/ada caps examples/plugins            # 列出 caps/trust 并尝试授权\ngo run ./cmd/ada caps <目录> -json                # 结构化输出(ok/error/plugins)\n```\n\n- 只做**静态授权检查**(`assemble.GrantManifests`),不挂载插件;\n- trust 不足 → 退出码 1,输出「不可授权」;`-json` 里 `ok=false` 并带 `error`;\n- 这是「接线」的第一刀:把清单 caps 灌进 Broker,而不是让 grants 只来自插件 config。\n\n## 9. 验证命令
+## 8. CLI 自检(`ada caps`)\n\n```powershell\ngo run ./cmd/ada caps examples/plugins            # 列出 caps/trust 并尝试授权\ngo run ./cmd/ada caps <目录> -json                # 结构化输出(ok/error/plugins)\n```\n\n- 只做**静态授权检查**(`assemble.GrantManifests`),不挂载插件;\n- trust 不足 → 退出码 1,输出「不可授权」;`-json` 里 `ok=false` 并带 `error`;\n- 这是「静态自检」:把清单 caps 灌进 Broker;运行时接线由 `up`/`inspect` 的 `applyAutoGrants` 完成(写进提供 `caps` 服务的插件配置)。\n\n## 9. 验证命令
 
 ```powershell
 go test -race -count=1 ./caps ./plugin
