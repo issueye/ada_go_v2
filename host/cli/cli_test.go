@@ -120,3 +120,45 @@ func TestUnknownCommand(t *testing.T) {
 		t.Fatalf("未知命令应返回 2: code=%d err=%s", code, errOut)
 	}
 }
+
+// 10. verify 输出能力清单。
+func TestVerifyCaps(t *testing.T) {
+	dir := t.TempDir()
+	manifest := `{"id":"caps-demo","version":"0.1.0","kind":"go","caps":["fs.read","exec"]}`
+	if err := os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("写清单失败: %v", err)
+	}
+	code, out, errOut := run("verify", dir)
+	if code != 0 {
+		t.Fatalf("verify 应成功,code=%d err=%s", code, errOut)
+	}
+	if !strings.Contains(out, "能力: fs.read, exec") {
+		t.Fatalf("verify 应输出能力清单:\n%s", out)
+	}
+}
+
+// 11. install 同意:声明能力的插件没有 -yes 时拒绝;-yes 后安装。
+func TestInstallConsent(t *testing.T) {
+	dir := t.TempDir()
+	manifest := `{"id":"caps-demo","version":"0.1.0","kind":"go","caps":["fs.read"]}`
+	if err := os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("写清单失败: %v", err)
+	}
+	dest := t.TempDir()
+
+	code, out, errOut := run("install", dir, "-dest", dest)
+	if code != 2 || !strings.Contains(errOut, "需要 -yes") {
+		t.Fatalf("未确认应拒绝安装: code=%d err=%s", code, errOut)
+	}
+	if !strings.Contains(out, "能力: fs.read") {
+		t.Fatalf("拒绝前应展示能力:\n%s", out)
+	}
+
+	code, out, errOut = run("install", dir, "-dest", dest, "-yes")
+	if code != 0 || !strings.Contains(out, "已安装") {
+		t.Fatalf("确认后应安装成功: code=%d err=%s out=%s", code, errOut, out)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "caps-demo@0.1.0", "plugin.json")); err != nil {
+		t.Fatalf("安装产物缺失: %v", err)
+	}
+}

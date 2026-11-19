@@ -63,7 +63,7 @@ go run ./cmd/ada verify examples/plugins-ts/hello-ts
 # 已签名: false
 
 go run ./cmd/ada verify <目录> -keys keys.json -require-signature
-go run ./cmd/ada install <目录> -dest <安装根> -keys keys.json -require-signature
+go run ./cmd/ada install <目录> -dest <安装根> -keys keys.json -require-signature -yes
 ```
 
 `keys.json` 格式:
@@ -72,12 +72,13 @@ go run ./cmd/ada install <目录> -dest <安装根> -keys keys.json -require-sig
 { "official-2026": { "public": "<base64>", "trust": "official" } }
 ```
 
-退出码:0 成功 / 1 校验或安装失败 / 2 用法错误。
+退出码:0 成功 / 1 校验或安装失败 / 2 用法错误(含未确认安装)。
+`-yes` 是**安装同意**:插件声明了 `caps` 时,没有 `-yes` 会先展示 id/版本/信任/能力并拒绝安装(退出码 2)。
 
 ## 6. 偏差与边界
 
 1. **没有在线拉取与索引**:`index.json`、下载、版本解析、更新、回滚都未实现。
-2. **没有安装同意**:设计要求的「展示能力清单并征得同意」未实现;`caps` 已能声明与校验,但没有同意 UI。
+2. **安装同意只有 CLI 级**:`-yes` 让 `ada install` 在展示能力后继续;桌面确认框/逐项授权未实现,`-yes` 是一次性整体同意。
 3. **没有 `$ADA_HOME/keys` 与官方 keyring**:key ring 由调用方显式提供。
 4. **trust 未进入 caps 强制**:安装得到 trust 后,没有把 `caps` 授权与 trust 关联(调用点强制仍缺)。
 5. **摘要只覆盖 Artifact 文件内容**:目录级元数据(权限、空目录)不参与签名。
@@ -96,6 +97,7 @@ go run ./cmd/ada install <目录> -dest <安装根> -keys keys.json -require-sig
 | 原子安装、拒绝覆盖 | `install.TestInstallAtomic` |
 | 符号链接拒绝 | `install.TestRejectsSymlink`(平台不支持时跳过) |
 | 文件数/总大小上限 | `install.TestInstallLimits` |
+| CLI:verify 能力清单、install 同意(-yes) | `host/cli.TestVerifyCaps`、`host/cli.TestInstallConsent` |
 
 ## 8. 下一步
 

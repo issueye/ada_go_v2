@@ -52,7 +52,7 @@ func usage(w io.Writer) {
   ada up      <插件目录|--preset 文件>
   ada inspect <插件目录|--preset 文件> [-json]
   ada verify  <插件目录> [-keys 密钥文件] [-require-signature]
-  ada install <插件目录> -dest <安装根> [-keys 密钥文件] [-require-signature]
+  ada install <插件目录> -dest <安装根> [-keys 密钥文件] [-require-signature] [-yes]
 
 退出码:0=成功,1=计划不可执行/装配或校验失败,2=用法错误。
 `)
@@ -415,49 +415,55 @@ func cmdVerify(args []string, out, errOut io.Writer) int {
 		fmt.Fprintln(errOut, "校验失败:", err)
 		return 1
 	}
-	fmt.Fprintf(out, "插件: %s@%s(%s)\n摘要: %s\n信任: %s\n已签名: %v\n",
-		info.ID, info.Version, info.Kind, info.Digest, info.Trust, info.Signed)
+	capList := strings.Join(info.Manifest.Caps, ", ")
+	if capList == "" {
+		capList = "(无)"
+	}
+	fmt.Fprintf(out, "插件: %s@%s(%s)\n摘要: %s\n信任: %s\n已签名: %v\n能力: %s\n",
+		info.ID, info.Version, info.Kind, info.Digest, info.Trust, info.Signed, capList)
 	return 0
 }
 
 // parseInstallArgs 解析 install 参数;-dest 是 install 专属,不能走 verify 的参数解析。
-func parseInstallArgs(args []string) (dir, dest, keys string, require bool, bad string) {
+func parseInstallArgs(args []string) (dir, dest, keys string, require, yes bool, bad string) {
 	for i := 0; i < len(args); i++ {
 		switch a := args[i]; {
 		case a == "-dest":
 			if i+1 >= len(args) {
-				return "", "", "", false, "-dest 缺少目录参数"
+				return "", "", "", false, false, "-dest 缺少目录参数"
 			}
 			dest = args[i+1]
 			i++
 		case a == "-keys":
 			if i+1 >= len(args) {
-				return "", "", "", false, "-keys 缺少文件参数"
+				return "", "", "", false, false, "-keys 缺少文件参数"
 			}
 			keys = args[i+1]
 			i++
 		case a == "-require-signature":
 			require = true
+		case a == "-yes":
+			yes = true
 		case strings.HasPrefix(a, "-"):
-			return "", "", "", false, "未知参数 " + a
+			return "", "", "", false, false, "未知参数 " + a
 		default:
 			if dir != "" {
-				return "", "", "", false, "多余的参数 " + a
+				return "", "", "", false, false, "多余的参数 " + a
 			}
 			dir = a
 		}
 	}
 	if dir == "" {
-		return "", "", "", false, "需要给出插件目录"
+		return "", "", "", false, false, "需要给出插件目录"
 	}
 	if dest == "" {
-		return "", "", "", false, "缺少 -dest 安装根目录"
+		return "", "", "", false, false, "缺少 -dest 安装根目录"
 	}
-	return dir, dest, keys, require, ""
+	return dir, dest, keys, require, yes, ""
 }
 
 func cmdInstall(args []string, out, errOut io.Writer) int {
-	dir, dest, keysPath, require, bad := parseInstallArgs(args)
+	dir, dest, keysPath, require, yes, bad := parseInstallArgs(args)
 	if bad != "" {
 		fmt.Fprintln(errOut, bad)
 		usage(errOut)
@@ -467,6 +473,18 @@ func cmdInstall(args []string, out, errOut io.Writer) int {
 	if err != nil {
 		fmt.Fprintln(errOut, "加载密钥失败:", err)
 		return 1
+	}
+	// 安装同意:先只校验(不落盘),展示能力;没有 -yes 就拒绝。
+	preview, err := install.VerifyDir(dir, install.Options{Keys: keys, RequireSignature: require})
+	if err != nil {
+		fmt.Fprintln(errOut, "校验失败:", err)
+		return 1
+	}
+	if len(preview.Manifest.Caps) > 0 && !yes {
+		fmt.Fprintf(out, "插件: %s@%s(信任 %s,已签名 %v)\n能力: %s\n",
+			preview.ID, preview.Version, preview.Trust, preview.Signed, strings.Join(preview.Manifest.Caps, ", "))
+		fmt.Fprintln(errOut, "该插件声明了能力,需要 -yes 确认安装")
+		return 2
 	}
 	info, err := install.Install(dir, dest, install.Options{Keys: keys, RequireSignature: require})
 	if err != nil {
