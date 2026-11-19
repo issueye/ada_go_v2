@@ -2,7 +2,7 @@
 
 **一个以插件为核心的程序基座**：Go 内核 + TypeScript 插件（纯 Go 编译与执行，无需 Node 环境）+ Cordis 式的作用域与编排。
 
-> 当前处于 **M3 装配层 + M4.5 seam 第一刀**:M1 内核、M2 执行层(`compile`/`jsrt`/`bridge`)、M3 清单/组合/装配(`plugin`/`preset`/`assemble`/`loader` + `ada plan|up`)已落地;install/签名/capability 与 profile 仍为设计。
+> 当前处于 **M3 装配 + M4 编排第一刀(`sched`)+ M4.5 seam 第一刀(`session`)**:M1 内核、M2 执行层、M3 清单/组合/装配已落地;M4 剩余 flow/配额/jobs,M5 尚未开始。
 > **工作约定/红线**：[AGENTS.md](AGENTS.md)（动代码或改设计前先读）
 > 设计文档：[docs/plugin-kernel-design.md](docs/plugin-kernel-design.md)
 > seam 契约：[docs/seam-api.md](docs/seam-api.md)（llm / tools / session / prompts）
@@ -66,7 +66,7 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 
 `Transform` 单文件 0.77–0.88 ms；moejs 新建 Runtime 1.39 µs、加载插件 71 µs、单次调用 6.86 µs、每 Runtime 常驻 80.5 KiB。
 
-## 当前状态:M1 内核 + M2 执行层 + M3 装配 + M4.5 seam(session)
+## 当前状态:M1 内核 + M2 执行层 + M3 装配 + M4 编排(sched) + M4.5 seam(session)
 
 ```powershell
 go test -race -count=1 -timeout 300s ./...   # kernel 21 + schema 7 + compile 6 + jsrt 5 + bridge 2
@@ -80,8 +80,8 @@ go run ./cmd/ada inspect --preset examples/presets/ts-only.preset.json  # M3:诊
 pwsh scripts/bench.ps1                       # 性能预算:≤20 μs/次、50 插件冷启动 ≤150 ms
 ```
 
-已完成:`kernel/`(Context / Fiber / Service / Effect / Event / Config / Schema)、`kernel/schema`、`cmd/ada`、`cmd/ada-demo`、`cmd/ada-ts-demo`、`compile/`(esbuild)、`jsrt/`(moejs)、`bridge/`、`plugin/`(清单)、`preset/`(组合数据)、`assemble/`(计划/事务)、`loader/`(按 kind 装载)、`plugins/seam/session`(seam + 契约测试)、`plugins/provider/session-memory`、`scripts/guard.ps1`、`scripts/bench.ps1`、`docs/kernel-api.md`、`docs/m2-execution.md`、`docs/m3-assembly.md`、`docs/seam-session.md`、`docs/adr/0001`、`docs/adr/0002`。
-未开始:剩余 seam(`prompts`/`llm`/`tools`)、`host/*`(M5);M3 剩余:install/签名/capability、bundle/profile、版本约束、隔离槽;M4.5 剩余:投影、session-jsonl、core/session。
+已完成:`kernel/`(Context / Fiber / Service / Effect / Event / Config / Schema)、`kernel/schema`、`cmd/ada`、`cmd/ada-demo`、`cmd/ada-ts-demo`、`compile/`(esbuild)、`jsrt/`(moejs)、`bridge/`、`plugin/`(清单)、`preset/`(组合数据)、`assemble/`(计划/事务)、`loader/`(按 kind 装载)、`plugins/seam/session`(seam + 契约测试)、`plugins/provider/session-memory`、`sched/`(调度底座)、`scripts/guard.ps1`、`scripts/bench.ps1`、`docs/kernel-api.md`、`docs/m2-execution.md`、`docs/m3-assembly.md`、`docs/seam-session.md`、`docs/adr/0001`、`docs/adr/0002`。
+未开始:M5(`sandbox`/`fs`/`shell`/签名/`host/*`)、剩余 seam(`prompts`/`llm`/`tools`);M4 剩余:`flow` 流水线、激活/闲置回收、配额与 jobs;M4.5 剩余:投影、session-jsonl、core/session。
 
 本轮修复了 M1 评审中复现的缺陷(waterfall 超时幽灵执行、兄弟插件被误拆、failed 不可复活、卸载错误被吞、fiber 注册表泄漏、Intercept 合并反向、Stop 后仍派发、schema 静默放行),每条都有回归用例;清单见 [kernel-api.md §6](docs/kernel-api.md)。
 
