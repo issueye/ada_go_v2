@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/adag/ada-go/v2/caps"
+	"github.com/adag/ada-go/v2/version"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -61,6 +62,9 @@ type Manifest struct {
 	// 能力只在调用点由 caps.Broker 强制;清单声明本身不放行任何操作。
 	Caps  []string `json:"caps,omitempty"`
 	Trust string   `json:"trust,omitempty"`
+
+	// Engines 是宿主版本约束(design §9.2),当前只认 "ada"。
+	Engines map[string]string `json:"engines,omitempty"`
 
 	// Dir 是清单所在的目录,由加载器填写,不来自 JSON。
 	Dir string `json:"-"`
@@ -180,6 +184,14 @@ func (m *Manifest) Validate() error {
 	}
 	if m.Trust != "" && !caps.ValidTrust(caps.Trust(m.Trust)) {
 		return fail("trust 非法(只允许 builtin/official/verified/third-party),得到 %q", m.Trust)
+	}
+	for name, constraint := range m.Engines {
+		if name != "ada" {
+			return fail("engines 目前只支持 ada,得到 %q", name)
+		}
+		if _, err := version.ParseConstraint(constraint); err != nil {
+			return fail("engines.ada 约束非法: %v", err)
+		}
 	}
 	for _, spec := range m.Caps {
 		if _, err := caps.Parse(spec); err != nil {

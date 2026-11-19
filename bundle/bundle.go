@@ -16,6 +16,7 @@ import (
 
 	"github.com/adag/ada-go/v2/expr"
 	"github.com/adag/ada-go/v2/plugin"
+	"github.com/adag/ada-go/v2/version"
 )
 
 // Bundle 是一组插件条目。
@@ -86,6 +87,11 @@ func Parse(data []byte, dir string) (*Bundle, error) {
 	}
 	if len(b.Entries) == 0 {
 		return nil, fmt.Errorf("bundle %q: entries 不能为空", b.Name)
+	}
+	if b.Engine != "" {
+		if _, err := version.ParseConstraint(b.Engine); err != nil {
+			return nil, fmt.Errorf("bundle %q: engine 约束非法: %w", b.Name, err)
+		}
 	}
 	seen := map[string]bool{}
 	for _, e := range b.Entries {
@@ -158,15 +164,29 @@ func ParseProfile(data []byte, dir string) (*Profile, error) {
 	return &p, nil
 }
 
+// ExpandOptions 控制展开:表达式环境与宿主版本(用于 engine/engines 校验)。
+//
+// HostVersion 为空时跳过所有版本校验(测试/离线组装场景可用),但生产宿主应提供。
+type ExpandOptions struct {
+	Env         map[string]any
+	HostVersion string
+}
+
 // Expand 加载 profile 引用的 bundle,按 id 合并并应用补丁;不提供表达式环境。
 func (p *Profile) Expand() ([]*plugin.Manifest, []string, error) {
-	return p.ExpandWithEnv(nil)
+	return p.ExpandWithOptions(ExpandOptions{})
 }
 
 // ExpandWithEnv 是 Expand 的完整版本:env 提供表达式可读的值表。
 //
 // 约定命名空间(由调用方组装):env / os / profile / features;缺失路径视为 null。
 func (p *Profile) ExpandWithEnv(env map[string]any) ([]*plugin.Manifest, []string, error) {
+	return p.ExpandWithOptions(ExpandOptions{Env: env})
+}
+
+// ExpandWithOptions 是完整实现。
+func (p *Profile) ExpandWithOptions(opts ExpandOptions) ([]*plugin.Manifest, []string, error) {
+	env := opts.Env
 	var (
 		manifests []*plugin.Manifest
 		warnings  []string
@@ -180,6 +200,11 @@ func (p *Profile) ExpandWithEnv(env map[string]any) ([]*plugin.Manifest, []strin
 		b, err := Load(path)
 		if err != nil {
 			return nil, nil, err
+		}
+		if b.Engine != "" && opts.HostVersion != "" {
+			if err := version.Satisfy(b.Engine, opts.HostVersion); err != nil {
+				return nil, nil, fmt.Errorf("bundle %q: %w", b.Name, err)
+			}
 		}
 		for _, entry := range b.Entries {
 			if entry.When != "" {
@@ -195,7 +220,7 @@ func (p *Profile) ExpandWithEnv(env map[string]any) ([]*plugin.Manifest, []strin
 			if _, exists := byID[entry.ID]; exists {
 				return nil, nil, fmt.Errorf("bundle: 多个 bundle 里出现重复 id %q", entry.ID)
 			}
-			m, err := loadEntry(b.Dir, entry)
+			m, err := loadEntry(b.Dir, entry, opts.HostVersion)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -233,7 +258,7 @@ func (p *Profile) ExpandWithEnv(env map[string]any) ([]*plugin.Manifest, []strin
 	return manifests, warnings, nil
 }
 
-func loadEntry(bundleDir string, entry Entry) (*plugin.Manifest, error) {
+func loadEntry(bundleDir string, entry Entry, hostVersion string) (*plugin.Manifest, error) {
 	dir := entry.Plugin
 	if !filepath.IsAbs(dir) {
 		dir = filepath.Join(bundleDir, dir)
@@ -248,6 +273,13 @@ func loadEntry(bundleDir string, entry Entry) (*plugin.Manifest, error) {
 	m := manifests[0]
 	if m.ID != entry.ID {
 		return nil, fmt.Errorf("bundle: entry id %q 与插件清单 id %q 不一致(暂不支持别名)", entry.ID, m.ID)
+	}
+	if hostVersion != "" {
+		if constraint := m.Engines["ada"]; constraint != "" {
+			if err := version.Satisfy(constraint, hostVersion); err != nil {
+				return nil, fmt.Errorf("bundle: entry %q 的 engines 不满足: %w", entry.ID, err)
+			}
+		}
 	}
 	if entry.Config != nil {
 		m.Config = entry.Config // 整体替换

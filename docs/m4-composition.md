@@ -70,7 +70,7 @@ manifests, warnings, err := p.Expand()
 ## 4. 偏差与边界
 
 1. **`when` 已支持,但环境由调用方提供**:没有自动绑定 `env/os/profile/features`;`disabled` 仍是静态布尔(如需动态禁用请用 `when` 跳过 entry)。
-2. **不校验 `engine`/`version`**:字段已解析,但没有与宿主版本比较。
+2. **`engine` 已校验**:`ExpandWithOptions` 传入宿主版本做 semver 约束匹配(`HostVersion` 为空时跳过);清单 `engines` 同样在展开期校验。
 3. **不支持 id 别名**:entry id 必须等于清单 id。
 4. **没有 bundle 仓库/在线拉取**:`plugin` 只接受本地路径(相对或绝对)。
 5. **没有 profile 继承链**:当前是「bundles + patch」单层;设计里的 profile 继承/覆盖优先级未实现。
@@ -91,6 +91,7 @@ manifests, warnings, err := p.Expand()
 | entry `when` 为真装配/为假跳过 | `bundle.TestEntryWhen` |
 | patch `when` 为假不生效 | `bundle.TestPatchWhen` |
 | 非法 `when` 解析期拒绝 | `bundle.TestWhenInvalid` |
+| engine/engines 校验与宿主版本 | `bundle.TestEngineChecks`、`bundle.TestEngineInvalid` |
 
 ## 6. 下一步
 

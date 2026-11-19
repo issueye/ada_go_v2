@@ -113,3 +113,22 @@ func TestCapsAndTrust(t *testing.T) {
 		t.Fatalf("非法信任等级应被拒绝")
 	}
 }
+
+// engines:只认 ada,且约束语法必须合法。
+func TestEngines(t *testing.T) {
+	valid := &plugin.Manifest{ID: "p", Version: "0.1.0", Kind: "go",
+		Engines: map[string]string{"ada": ">=2.0.0"}}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("合法 engines 应通过: %v", err)
+	}
+	badConstraint := &plugin.Manifest{ID: "p", Version: "0.1.0", Kind: "go",
+		Engines: map[string]string{"ada": "^2.0.0"}}
+	if err := badConstraint.Validate(); err == nil {
+		t.Fatalf("非法约束应被拒绝")
+	}
+	unknownKey := &plugin.Manifest{ID: "p", Version: "0.1.0", Kind: "go",
+		Engines: map[string]string{"node": ">=1.0.0"}}
+	if err := unknownKey.Validate(); err == nil {
+		t.Fatalf("未知 engine key 应被拒绝")
+	}
+}

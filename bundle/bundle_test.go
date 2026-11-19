@@ -264,3 +264,37 @@ func TestWhenInvalid(t *testing.T) {
 		t.Fatalf("非法 patch when 应拒绝")
 	}
 }
+
+// 11. engine(宿主版本)与插件 engines 校验;HostVersion 为空时跳过。
+func TestEngineChecks(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "plugins", "a", "plugin.json"),
+		`{"id":"a","version":"0.1.0","kind":"go","engines":{"ada":">=2.0.0"}}`)
+	writeFile(t, filepath.Join(root, "b.json"), `{"name":"b","engine":">=2.0.0","entries":[{"id":"a","plugin":"./plugins/a"}]}`)
+
+	p := &bundle.Profile{Name: "p", Bundles: []string{"b.json"}, Dir: root}
+	if _, _, err := p.ExpandWithOptions(bundle.ExpandOptions{HostVersion: "2.1.0"}); err != nil {
+		t.Fatalf("2.1.0 应满足: %v", err)
+	}
+	if _, _, err := p.ExpandWithOptions(bundle.ExpandOptions{HostVersion: "1.0.0"}); err == nil {
+		t.Fatalf("1.0.0 不满足 bundle engine,应报错")
+	}
+
+	// bundle 没有 engine,但插件清单有 engines。
+	writeFile(t, filepath.Join(root, "b2.json"), `{"name":"b2","entries":[{"id":"a","plugin":"./plugins/a"}]}`)
+	p2 := &bundle.Profile{Name: "p2", Bundles: []string{"b2.json"}, Dir: root}
+	if _, _, err := p2.ExpandWithOptions(bundle.ExpandOptions{HostVersion: "1.0.0"}); err == nil {
+		t.Fatalf("插件 engines 不满足应报错")
+	}
+	if _, _, err := p2.Expand(); err != nil {
+		t.Fatalf("未提供宿主版本时应跳过校验: %v", err)
+	}
+}
+
+// 12. bundle 的 engine 语法在解析期校验。
+func TestEngineInvalid(t *testing.T) {
+	raw := []byte(`{"name":"b","engine":"^2.0.0","entries":[{"id":"a","plugin":"./p"}]}`)
+	if _, err := bundle.Parse(raw, t.TempDir()); err == nil {
+		t.Fatalf("非法 engine 应拒绝")
+	}
+}
