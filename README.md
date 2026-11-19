@@ -61,6 +61,7 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 | [host-server.md](docs/host-server.md) | 第二宿主适配器:host/server 只读 HTTP API |
 | [host-desktop.md](docs/host-desktop.md) | 宿主适配器骨架:host/desktop 视图映射 |
 | [host-registry.md](docs/host-registry.md) | 在线仓库服务端:host/registry 只读 HTTP |
+| [audit-log.md](docs/audit-log.md) | M5 审计落盘:policy/audit-log JSONL |
 | [seam-net.md](docs/seam-net.md) | M5 网络能力:seam/net 与 provider/net-http |
 | [seam-secrets.md](docs/seam-secrets.md) | M5 secret 能力:seam/secrets 与 provider/secrets-env |
 | [seam-session.md](docs/seam-session.md) | seam/session 与 session-memory |
@@ -86,7 +87,7 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 ## 当前状态:M1 内核 + M2 执行层 + M3 装配 + M4 编排 + M4.5 seam + M5 安全(fs/shell/sandbox/approval,三闸串联)
 
 ```powershell
-go test -race -count=1 -timeout 300s ./...   # 364 个用例:kernel 29 + schema 7 + compile 6 + jsrt 15 + bridge 3 + plugin 7 + preset 5 + assemble 21 + loader 5 + session 3 + sched 27 + quota 11 + flow 26 + expr 2 + bundle 12 + version 3 + caps 6 + install 31 + fs 12 + shell 17 + sandbox 5 + approval 10 + approval-cli 5 + caps-gate 4 + fs-redact 5 + fs-observe 5 + shell-observe 5 + shell-redact 5 + net-http 6 + net-guard 7 + net-observe 3 + secrets-env 5 + secrets-guard 3 + caps-static 1 + host/builtins 3 + host/cli 29 + host/server 10 + host/desktop 2 + host/registry 3
+go test -race -count=1 -timeout 300s ./...   # 367 个用例:kernel 29 + schema 7 + compile 6 + jsrt 15 + bridge 3 + plugin 7 + preset 5 + assemble 21 + loader 5 + session 3 + sched 27 + quota 11 + flow 26 + expr 2 + bundle 12 + version 3 + caps 6 + install 31 + fs 12 + shell 17 + sandbox 5 + approval 10 + approval-cli 5 + caps-gate 4 + fs-redact 5 + fs-observe 5 + shell-observe 5 + shell-redact 5 + net-http 6 + net-guard 7 + net-observe 3 + secrets-env 5 + secrets-guard 3 + audit-log 3 + caps-static 1 + host/builtins 3 + host/cli 29 + host/server 10 + host/desktop 2 + host/registry 3
 go run ./cmd/ada-demo                        # 依赖门控 + 级联重载演示
 pwsh scripts/guard.ps1                       # 门禁:词汇/依赖/gofmt/build/vet/staticcheck/race/交叉编译/预算
 go run ./cmd/ada-ts-demo                     # M2:TS 插件编译→加载→提供服务/派发事件→内核消费
