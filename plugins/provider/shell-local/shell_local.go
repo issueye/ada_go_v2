@@ -1,7 +1,7 @@
 // Package shelllocal 是 shell seam 的本地实现:无 shell 直接 exec、受管环境、
 // 超时终止、输出上限、流式回调。
 //
-// 进程树终止:POSIX 上用进程组(见 process_unix.go);Windows 目前只终止父进程,
+// 进程树终止:POSIX 用进程组;Windows 用 Job Object(见 process_windows.go),
 // 完整 Job Object 支持列入 docs/seam-shell.md 的边界清单。
 package shelllocal
 
@@ -155,6 +155,10 @@ func (s *Shell) exec(ctx context.Context, cmd seamshell.Command, onChunk func(se
 	if err := command.Start(); err != nil {
 		return seamshell.Result{}, err
 	}
+	if err := afterStart(command); err != nil {
+		terminate(command)
+		return seamshell.Result{}, err
+	}
 
 	outCap := newCapture("stdout", s.maxOutput, onChunk, cancel)
 	errCap := newCapture("stderr", s.maxOutput, onChunk, cancel)
@@ -176,6 +180,7 @@ func (s *Shell) exec(ctx context.Context, cmd seamshell.Command, onChunk func(se
 	waitErr := command.Wait()
 	close(done)
 	wg.Wait()
+	cleanup(command)
 	duration := time.Since(start)
 
 	chunkErr := outCap.chunkError()
