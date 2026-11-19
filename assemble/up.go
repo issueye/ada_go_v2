@@ -174,6 +174,52 @@ func UpLazy(app *kernel.App, manifests []*plugin.Manifest, plan *Report, lookup 
 	return report, d, nil
 }
 
+// EnsureForService 按服务名触发 on-demand 插件:扫描清单的 provide,找到就挂载。
+//
+// 返回 (fiber, found, err);找不到返回 (nil,false,nil)。已挂载时 Ensure 幂等。
+// 宿主应在挂载消费者之前调用它(消费者 inject 该服务时,内核本身不会自动触发)。
+func (d *Deferred) EnsureForService(ctx context.Context, service string) (*kernel.Fiber, bool, error) {
+	if service == "" {
+		return nil, false, fmt.Errorf("assemble: 服务名不能为空")
+	}
+	ids := make([]string, 0, len(d.byID))
+	for id, m := range d.byID {
+		if m == nil || m.Activation != "on-demand" {
+			continue
+		}
+		for _, p := range m.Provide {
+			if p == service {
+				ids = append(ids, id)
+				break
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return nil, false, nil
+	}
+	sort.Strings(ids)
+	f, err := d.Ensure(ctx, ids[0])
+	if err != nil {
+		return nil, true, err
+	}
+	return f, true, nil
+}
+
+// EnsureAll 依次挂载全部 on-demand 插件(按 id 排序),返回成功挂载的 id。
+//
+// 失败即停止并返回已挂载列表,便于宿主诊断「预热到哪一步」。
+func (d *Deferred) EnsureAll(ctx context.Context) ([]string, error) {
+	ids := d.IDs()
+	mounted := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if _, err := d.Ensure(ctx, id); err != nil {
+			return mounted, err
+		}
+		mounted = append(mounted, id)
+	}
+	return mounted, nil
+}
+
 // IDs 返回可延迟激活的插件 id(按计划顺序)。
 func (d *Deferred) IDs() []string {
 	out := make([]string, 0, len(d.byID))

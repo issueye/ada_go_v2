@@ -184,6 +184,8 @@ go run ./cmd/ada up   --preset examples/presets/ts-only.preset.json
 | 延迟激活:startup only / Ensure 幂等 / 错误 | `assemble.TestUpLazyMountsStartupOnly`、`TestEnsureMounts`、`TestEnsureErrors` |
 | startup 失败逆序回滚 | `assemble.TestUpLazyStartupFailureRollsBack` |
 | activation 校验 | `plugin.TestActivation` |
+| 服务触发挂载/未知服务/幂等 | `assemble.TestEnsureForService` |
+| EnsureAll 按 id 排序挂载 | `assemble.TestEnsureAll` |
 | 清单信息不足/未知 kind / 扫描排除规则 | `loader.TestTSLookupErrors`、`loader.TestCollectSources` |
 
 ## 9. 已知边界与下一步

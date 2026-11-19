@@ -141,3 +141,63 @@ func TestUpLazyStartupFailureRollsBack(t *testing.T) {
 		t.Fatalf("失败后应回滚干净,实际 %d", got)
 	}
 }
+
+// 5. EnsureForService:按 provide 的服务名触发挂载;未知服务不动作。
+func TestEnsureForService(t *testing.T) {
+	app := newApp(t)
+	ms := lazyManifests()
+	plan := assemble.Plan(ms)
+	_, deferred, err := assemble.UpLazy(app, ms, plan, lazyLookup(t))
+	if err != nil {
+		t.Fatalf("UpLazy 失败: %v", err)
+	}
+
+	f, found, err := deferred.EnsureForService(context.Background(), "lazy-svc")
+	if err != nil || !found || f == nil {
+		t.Fatalf("服务触发失败: f=%v found=%v err=%v", f, found, err)
+	}
+	snap := app.Inspect()
+	ok := false
+	for _, s := range snap.Services {
+		if s.Name == "lazy-svc" {
+			ok = true
+		}
+	}
+	if !ok {
+		t.Fatalf("lazy-svc 未出现: %+v", snap.Services)
+	}
+
+	f2, found2, err := deferred.EnsureForService(context.Background(), "lazy-svc")
+	if err != nil || !found2 || f2.ID() != f.ID() {
+		t.Fatalf("重复触发应幂等: %v %v %v", f2, found2, err)
+	}
+	if f3, found3, err := deferred.EnsureForService(context.Background(), "nope"); err != nil || found3 || f3 != nil {
+		t.Fatalf("未知服务应不动作: %v %v %v", f3, found3, err)
+	}
+}
+
+// 6. EnsureAll:按 id 排序挂载全部 on-demand。
+func TestEnsureAll(t *testing.T) {
+	app := newApp(t)
+	a := mf("startup", []string{"s1"}, nil, nil)
+	b := mf("lazy-b", []string{"sb"}, nil, nil)
+	b.Activation = "on-demand"
+	c := mf("lazy-c", []string{"sc"}, nil, nil)
+	c.Activation = "on-demand"
+	ms := []*plugin.Manifest{a, b, c}
+	plan := assemble.Plan(ms)
+	_, deferred, err := assemble.UpLazy(app, ms, plan, lazyLookup(t))
+	if err != nil {
+		t.Fatalf("UpLazy 失败: %v", err)
+	}
+	mounted, err := deferred.EnsureAll(context.Background())
+	if err != nil {
+		t.Fatalf("EnsureAll 失败: %v", err)
+	}
+	if len(mounted) != 2 || mounted[0] != "lazy-b" || mounted[1] != "lazy-c" {
+		t.Fatalf("EnsureAll 顺序不正确: %v", mounted)
+	}
+	if got := len(app.Inspect().Fibers); got != 3 {
+		t.Fatalf("应挂载 3 个插件,实际 %d", got)
+	}
+}
