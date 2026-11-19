@@ -2,6 +2,7 @@ package kernel_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/adag/ada-go/v2/kernel"
@@ -64,6 +65,24 @@ func BenchmarkServiceResolve(b *testing.B) {
 		v, err := kernel.Service[int](captured, "bench-svc")
 		if err != nil || v != 7 {
 			b.Fatalf("取服务失败: %v %v", v, err)
+		}
+	}
+}
+
+// BenchmarkMountFiftyPlugins 对应 AGENTS §6.3 的「50 插件冷启动 ≤ 150 ms」。
+// 每个迭代都重建 App,避免把「同一个 App 里越挂越慢」的复杂度算进冷启动。
+func BenchmarkMountFiftyPlugins(b *testing.B) {
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		a := kernel.New(kernel.Options{})
+		b.StartTimer()
+		for j := 0; j < 50; j++ {
+			name := fmt.Sprintf("p%02d", j)
+			p := kernel.Func(name, func(*kernel.Context, kernel.Config) (kernel.Dispose, error) { return nil, nil })
+			if _, err := a.Plugin(p, kernel.NewConfig(nil)); err != nil {
+				b.Fatalf("挂载失败: %v", err)
+			}
 		}
 	}
 }

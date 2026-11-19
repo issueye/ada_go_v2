@@ -56,6 +56,16 @@ if ($LASTEXITCODE -ne 0) { Fail "go build" @("go build 失败") } else { Pass "g
 go vet ./... 2>&1 | Write-Host
 if ($LASTEXITCODE -ne 0) { Fail "go vet" @("go vet 失败") } else { Pass "go vet" }
 
+# 5. staticcheck(AGENTS §5.2)。工具链版本不匹配时给安装命令,而不是静默跳过:
+#    「跳过」会让门禁看起来通过,实际什么都没检查。
+$sc = Get-Command staticcheck -ErrorAction SilentlyContinue
+if (-not $sc) {
+    Fail "staticcheck" @("未安装 staticcheck;go install honnef.co/go/tools/cmd/staticcheck@latest")
+} else {
+    staticcheck ./... 2>&1 | Write-Host
+    if ($LASTEXITCODE -ne 0) { Fail "staticcheck" @("staticcheck 报出问题") } else { Pass "staticcheck" }
+}
+
 go test -race -count=1 -timeout 120s ./... 2>&1 | Write-Host
 if ($LASTEXITCODE -ne 0) { Fail "go test -race" @("测试失败") } else { Pass "go test -race" }
 

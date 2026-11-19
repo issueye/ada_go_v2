@@ -152,18 +152,20 @@ type FiberInfo struct{ ID, Plugin, State string; Epoch uint64; Parent string }
 go test -race -count=1 -timeout 120s ./...   # 20 + 7 个用例全绿
 go test -run xxx -bench . -benchmem ./kernel # 性能基线
 go run ./cmd/ada-demo                        # 依赖门控、级联重载演示
-pwsh scripts/guard.ps1                       # 内核红线门禁(含交叉编译)
+pwsh scripts/guard.ps1                       # 门禁:词汇/依赖/gofmt/build/vet/staticcheck/race/交叉编译/预算
+pwsh scripts/bench.ps1                       # 性能预算:≤20 μs/次、50 插件冷启动 ≤150 ms
 ```
 
-本机性能基线(i5-13420H / windows-amd64,`-count=1`;预算 ≤ 20 µs/次):
+本机性能基线(i5-13420H / windows-amd64,`pwsh scripts/bench.ps1`;预算来自 AGENTS §6.3):
 
-| 基准 | 实测 | 说明 |
-|---|---|---|
-| `BenchmarkServiceResolve` | **51 ns**,0 allocs | 服务解析 + 可见性检查 |
-| `BenchmarkEmitSingleListener` | **1.45 µs**,10 allocs | 广播一个监听器(含计时 goroutine) |
-| `BenchmarkWaterfallThreeLayers` | **4.95 µs**,36 allocs | 三层 waterfall(含三次超时计时器) |
+| 基准 | 实测 | 预算 | 说明 |
+|---|---|---|---|
+| `BenchmarkServiceResolve` | **36 ns**,0 allocs | 1 µs | 服务解析 + 可见性检查 |
+| `BenchmarkEmitSingleListener` | **1.46 µs**,10 allocs | 20 µs | 广播一个监听器(含计时 goroutine) |
+| `BenchmarkWaterfallThreeLayers` | **4.72 µs**,36 allocs | 20 µs | 三层 waterfall |
+| `BenchmarkMountFiftyPlugins` | **0.37 ms**,1463 allocs | 150 ms | 50 插件冷启动(每次重建 App) |
 
-趋势比绝对值重要:CI 接入后应改用 `benchstat` 与基线比对(AGENTS §6.3 的 ±15% 报警目前只有数据、还没有自动比对)。
+门禁:`pwsh scripts/bench.ps1` 校验绝对预算;同机回归用 `-Baseline` 做 ±15% 比对(跨机器基线会把「换了台快机器」误报成回归)。
 
 本轮修复(每条都有回归用例):
 

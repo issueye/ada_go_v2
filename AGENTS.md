@@ -159,6 +159,10 @@ host/*         ✓→ 全部
 | `ada test ./plugins/...` | 契约测试与 golden |
 | `ada inspect --chain` 快照 | 装饰器链未意外变化 |
 | `GOOS=linux/darwin/windows go build` | 交叉编译（CGO_ENABLED=0） |
+| `pwsh scripts/guard.ps1` | 一键门禁:红词汇/依赖/gofmt/build/vet/staticcheck/race/交叉编译/行数预算(CI 三平台跑) |
+| `pwsh scripts/bench.ps1` | 性能预算:单次调用 ≤ 20 μs、50 插件冷启动 ≤ 150 ms |
+
+> CI:[.github/workflows/ci.yml](.github/workflows/ci.yml),`guard` 在 linux/windows/macos 三平台运行,`staticcheck` 与 `bench` 各自独立。
 
 ### 5.3 代码预算（超了要 ADR）
 
