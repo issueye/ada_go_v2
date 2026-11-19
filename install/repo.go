@@ -2,6 +2,8 @@
 package install
 
 import (
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -15,6 +17,21 @@ import (
 // RepoFile 是仓库索引文件名。
 const RepoFile = "repo.json"
 
+// RepoSignatureFile 是仓库索引的签名文件名。
+const RepoSignatureFile = "repo.sig.json"
+
+const repoMessagePrefix = "ada-repo-v2\n"
+
+// RepoMessage 是仓库索引签名覆盖的消息。
+func RepoMessage(repoJSON []byte) []byte {
+	return append([]byte(repoMessagePrefix), repoJSON...)
+}
+
+// SignRepo 对仓库索引签名。
+func SignRepo(priv ed25519.PrivateKey, repoJSON []byte) []byte {
+	return ed25519.Sign(priv, RepoMessage(repoJSON))
+}
+
 // RepoEntry 是仓库里的一个插件版本。
 type RepoEntry struct {
 	ID      string `json:"id"`
@@ -27,8 +44,7 @@ type repoDoc struct {
 	Entries []RepoEntry `json:"entries"`
 }
 
-// LoadRepo 读取仓库索引(不存在时返回空)。
-func LoadRepo(repoRoot string) ([]RepoEntry, error) {
+func readRepoIndex(repoRoot string) ([]byte, error) {
 	data, err := os.ReadFile(filepath.Join(repoRoot, RepoFile))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -36,11 +52,73 @@ func LoadRepo(repoRoot string) ([]RepoEntry, error) {
 		}
 		return nil, fmt.Errorf("install: 读取仓库索引失败: %w", err)
 	}
+	return data, nil
+}
+
+func parseRepoIndex(data []byte) ([]RepoEntry, error) {
 	var doc repoDoc
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("install: 仓库索引损坏: %w", err)
 	}
 	return doc.Entries, nil
+}
+
+// LoadRepo 读取仓库索引(不存在时返回空)。
+func LoadRepo(repoRoot string) ([]RepoEntry, error) {
+	data, err := readRepoIndex(repoRoot)
+	if err != nil || data == nil {
+		return nil, err
+	}
+	return parseRepoIndex(data)
+}
+
+// VerifyRepoSignature 校验仓库索引签名。
+func VerifyRepoSignature(pub ed25519.PublicKey, repoJSON, sig []byte) error {
+	if len(pub) != ed25519.PublicKeySize {
+		return fmt.Errorf("install: 仓库公钥长度非法")
+	}
+	if !ed25519.Verify(pub, RepoMessage(repoJSON), sig) {
+		return fmt.Errorf("install: 仓库签名校验失败")
+	}
+	return nil
+}
+
+// LoadRepoVerified 读取仓库索引并按需验签。
+//
+// - 签名存在但 key 不在 keyring → 拒绝(不能悄悄接受未知签名);
+// - 签名缺失且 requireRepo → 拒绝;否则允许(离线自用仓库);
+// - 验签失败 → 拒绝。
+func LoadRepoVerified(repoRoot string, keys map[string]Key, requireRepo bool) ([]RepoEntry, error) {
+	data, err := readRepoIndex(repoRoot)
+	if err != nil || data == nil {
+		return nil, err
+	}
+	sigData, sigErr := os.ReadFile(filepath.Join(repoRoot, RepoSignatureFile))
+	if sigErr != nil {
+		if !os.IsNotExist(sigErr) {
+			return nil, fmt.Errorf("install: 读取仓库签名失败: %w", sigErr)
+		}
+		if requireRepo {
+			return nil, fmt.Errorf("install: 仓库缺少签名文件 %s", RepoSignatureFile)
+		}
+		return parseRepoIndex(data)
+	}
+	var sig Signature
+	if err := json.Unmarshal(sigData, &sig); err != nil {
+		return nil, fmt.Errorf("install: 仓库签名损坏: %w", err)
+	}
+	key, ok := keys[sig.KeyID]
+	if !ok {
+		return nil, fmt.Errorf("install: 仓库签名的 keyId %q 不在 keyring", sig.KeyID)
+	}
+	rawSig, err := base64.StdEncoding.DecodeString(sig.Signature)
+	if err != nil {
+		return nil, fmt.Errorf("install: 仓库签名不是合法 base64: %w", err)
+	}
+	if err := VerifyRepoSignature(key.Public, data, rawSig); err != nil {
+		return nil, err
+	}
+	return parseRepoIndex(data)
 }
 
 // LatestRepoEntry 返回某插件在仓库里的最高版本。
@@ -90,7 +168,7 @@ func resolveRepoDir(repoRoot, rel string) (string, error) {
 
 // PreviewRepoUpdate 只校验仓库里该插件的最新版本,不落盘(供安装同意预览)。
 func PreviewRepoUpdate(repoRoot, id string, opts Options) (*Info, error) {
-	entries, err := LoadRepo(repoRoot)
+	entries, err := LoadRepoVerified(repoRoot, opts.RepoKeys, opts.RequireRepoSignature)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +201,7 @@ func UpdateFromRepo(repoRoot, id, destRoot string, opts Options) (*Info, error) 
 	if id == "" {
 		return nil, fmt.Errorf("install: 插件 id 不能为空")
 	}
-	entries, err := LoadRepo(repoRoot)
+	entries, err := LoadRepoVerified(repoRoot, opts.RepoKeys, opts.RequireRepoSignature)
 	if err != nil {
 		return nil, err
 	}

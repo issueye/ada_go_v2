@@ -77,6 +77,9 @@ type Options struct {
 	MaxBytes         int64
 	// KeepPrevious 让 Upgrade 保留旧版本目录与索引条目,作为回滚点。
 	KeepPrevious bool
+	// RepoKeys 是仓库索引签名的 keyring;RequireRepoSignature 要求仓库必须带签名。
+	RepoKeys             map[string]Key
+	RequireRepoSignature bool
 }
 
 // Info 是校验/安装结果。

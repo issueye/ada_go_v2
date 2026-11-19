@@ -1,6 +1,7 @@
 package install_test
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
@@ -532,5 +533,73 @@ func TestUpdateFromRepoRejects(t *testing.T) {
 	writeRepoIndex(t, repo, []install.RepoEntry{{ID: "up-demo", Version: "0.3.0", Dir: "../outside"}})
 	if _, err := install.UpdateFromRepo(repo, "up-demo", dest, install.Options{}); err == nil || !strings.Contains(err.Error(), "逃逸") {
 		t.Fatalf("目录逃逸应报错,实际 %v", err)
+	}
+}
+
+// 23. 仓库签名:往返、篡改拒绝、缺签名按 requireRepo 处理。
+func TestRepoSignature(t *testing.T) {
+	keys, priv := newKeyRing(t, caps.TrustThirdParty)
+	repo := t.TempDir()
+	rel, digest := writeRepoPlugin(t, repo, "sig-demo", "0.2.0")
+	entries := []install.RepoEntry{{ID: "sig-demo", Version: "0.2.0", Dir: rel, Digest: digest}}
+	data, err := json.Marshal(map[string]any{"entries": entries})
+	if err != nil {
+		t.Fatalf("序列化失败: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, install.RepoFile), data, 0o644); err != nil {
+		t.Fatalf("写索引失败: %v", err)
+	}
+
+	if _, err := install.LoadRepoVerified(repo, keys, true); err == nil || !strings.Contains(err.Error(), "缺少签名") {
+		t.Fatalf("requireRepo 时缺签名应拒绝,实际 %v", err)
+	}
+	if _, err := install.LoadRepoVerified(repo, keys, false); err != nil {
+		t.Fatalf("不要求签名时应允许: %v", err)
+	}
+
+	sigBytes := install.SignRepo(priv, data)
+	sig := install.Signature{KeyID: "k1", Algo: "ed25519", Signature: base64.StdEncoding.EncodeToString(sigBytes)}
+	sigData, _ := json.Marshal(sig)
+	if err := os.WriteFile(filepath.Join(repo, install.RepoSignatureFile), sigData, 0o644); err != nil {
+		t.Fatalf("写签名失败: %v", err)
+	}
+	if _, err := install.LoadRepoVerified(repo, keys, true); err != nil {
+		t.Fatalf("签名应通过: %v", err)
+	}
+
+	// 篡改索引 → 验签失败。
+	tampered := bytes.Replace(data, []byte("0.2.0"), []byte("0.3.0"), 1)
+	if err := os.WriteFile(filepath.Join(repo, install.RepoFile), tampered, 0o644); err != nil {
+		t.Fatalf("篡改失败: %v", err)
+	}
+	if _, err := install.LoadRepoVerified(repo, keys, true); err == nil {
+		t.Fatalf("篡改索引应验签失败")
+	}
+}
+
+// 24. 签名仓库上的 UpdateFromRepo 正常更新。
+func TestUpdateFromSignedRepo(t *testing.T) {
+	keys, priv := newKeyRing(t, caps.TrustThirdParty)
+	dest := t.TempDir()
+	installVersion(t, dest, "0.1.0")
+	repo := t.TempDir()
+	rel, digest := writeRepoPlugin(t, repo, "up-demo", "0.2.0")
+	data, _ := json.Marshal(map[string]any{"entries": []install.RepoEntry{
+		{ID: "up-demo", Version: "0.2.0", Dir: rel, Digest: digest},
+	}})
+	if err := os.WriteFile(filepath.Join(repo, install.RepoFile), data, 0o644); err != nil {
+		t.Fatalf("写索引失败: %v", err)
+	}
+	sig := install.Signature{KeyID: "k1", Algo: "ed25519", Signature: base64.StdEncoding.EncodeToString(install.SignRepo(priv, data))}
+	sigData, _ := json.Marshal(sig)
+	if err := os.WriteFile(filepath.Join(repo, install.RepoSignatureFile), sigData, 0o644); err != nil {
+		t.Fatalf("写签名失败: %v", err)
+	}
+	info, err := install.UpdateFromRepo(repo, "up-demo", dest, install.Options{RepoKeys: keys, RequireRepoSignature: true})
+	if err != nil {
+		t.Fatalf("签名仓库更新失败: %v", err)
+	}
+	if info.Version != "0.2.0" {
+		t.Fatalf("版本不正确: %s", info.Version)
 	}
 }

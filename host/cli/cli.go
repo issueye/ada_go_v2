@@ -71,7 +71,7 @@ func usage(w io.Writer) {
   ada upgrade <插件目录> -dest <安装根> [-keys 密钥文件] [-require-signature] [-yes] [-keep]
   ada rollback <插件 id> -dest <安装根>
   ada caps    <插件目录|--preset 文件> [-json]
-  ada update  <插件 id> -repo <仓库目录> -dest <安装根> [-keys 密钥文件] [-require-signature] [-yes]
+  ada update  <插件 id> -repo <仓库目录> -dest <安装根> [-keys 密钥文件] [-require-signature] [-require-repo-signature] [-yes]
 
 退出码:0=成功,1=计划不可执行/装配或校验失败,2=用法错误。
 `)
@@ -601,6 +601,7 @@ func cmdUpdate(args []string, out, errOut io.Writer) int {
 	dest := ""
 	keysPath := ""
 	require := false
+	requireRepo := false
 	yes := false
 	bad := ""
 	for i := 0; i < len(args); i++ {
@@ -628,6 +629,8 @@ func cmdUpdate(args []string, out, errOut io.Writer) int {
 			i++
 		case a == "-require-signature":
 			require = true
+		case a == "-require-repo-signature":
+			requireRepo = true
 		case a == "-yes":
 			yes = true
 		case strings.HasPrefix(a, "-"):
@@ -658,7 +661,7 @@ func cmdUpdate(args []string, out, errOut io.Writer) int {
 		fmt.Fprintln(errOut, "加载密钥失败:", err)
 		return 1
 	}
-	opts := install.Options{Keys: keys, RequireSignature: require}
+	opts := install.Options{Keys: keys, RequireSignature: require, RepoKeys: keys, RequireRepoSignature: requireRepo}
 	preview, err := install.PreviewRepoUpdate(repo, id, opts)
 	if err != nil {
 		fmt.Fprintln(errOut, "校验仓库版本失败:", err)

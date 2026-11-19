@@ -81,12 +81,12 @@ go run ./cmd/ada update <插件 id> -repo <仓库目录> -dest <安装根> [-yes
 `uninstall` 删除该 id 的**全部版本**并清理索引;只有索引登记、且位于安装根之下的目录才会被删除。
 `upgrade` 校验新版本 semver **高于**已装版本 → 安装新版本 → 删除旧版本目录,索引收敛为单条最新记录;拒绝降级与同版本重复。
 `-keep` 保留旧版本作为回滚点;`rollback` 删除当前最新版本并把索引回退到次新版本(需要先 `-keep` 升级过)。
-`update` 从**离线仓库**安装更高版本:`repo.json` 列出 `{id,version,dir,digest}`,按 semver 选最高版本、校验摘要后复用 `Upgrade`;已是最新/降级/摘要不匹配/目录逃逸都拒绝。
+`update` 从**离线仓库**安装更高版本:`repo.json` 可用 `repo.sig.json` 签名(Ed25519,消息 `ada-repo-v2\n<索引原文>`);`-require-repo-signature` 要求仓库必须带签名。`repo.json` 列出 `{id,version,dir,digest}`,按 semver 选最高版本、校验摘要后复用 `Upgrade`;已是最新/降级/摘要不匹配/目录逃逸都拒绝。
 `-yes` 是**安装同意**:插件声明了 `caps` 时,没有 `-yes` 会先展示 id/版本/信任/能力并拒绝安装(退出码 2)。
 
 ## 6. 偏差与边界
 
-1. **本机索引/卸载/升级/回滚/离线仓库更新已实现**:`update` 需要调用方提供已经下载到本地的仓库目录;没有网络下载、签名源(registry)与并发锁。
+1. **本机索引/卸载/升级/回滚/离线仓库更新已实现**:`update` 需要调用方提供已经下载到本地的仓库目录;仓库索引可验签(`repo.sig.json`),但没有网络下载/registry 与并发锁。
 2. **安装同意只有 CLI 级**:`-yes` 让 `ada install` 在展示能力后继续;桌面确认框/逐项授权未实现,`-yes` 是一次性整体同意。
 3. **没有 `$ADA_HOME/keys` 与官方 keyring**:key ring 由调用方显式提供。
 4. **trust 未进入 caps 强制**:安装得到 trust 后,没有把 `caps` 授权与 trust 关联(调用点强制仍缺)。
@@ -120,6 +120,8 @@ go run ./cmd/ada update <插件 id> -repo <仓库目录> -dest <安装根> [-yes
 | UpdateFromRepo 更新并清理旧版 | `install.TestUpdateFromRepo` |
 | 已是最新/摘要不匹配/目录逃逸 | `install.TestUpdateFromRepoRejects` |
 | CLI update 成功/已是最新 | `host/cli.TestUpdateFromRepo` |
+| 仓库签名:往返/缺签名/篡改/固定 keyring | `install.TestRepoSignature`、`TestUpdateFromSignedRepo` |
+| CLI update -require-repo-signature 缺签名拒绝 | `host/cli.TestUpdateRequiresRepoSignature` |
 
 ## 8. 下一步
 

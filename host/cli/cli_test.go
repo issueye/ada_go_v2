@@ -443,3 +443,40 @@ func TestUpdateFromRepo(t *testing.T) {
 		t.Fatalf("已是最新应失败: code=%d err=%s", code, errOut)
 	}
 }
+
+// 25. update -require-repo-signature:缺签名 → 退出码 1。
+func TestUpdateRequiresRepoSignature(t *testing.T) {
+	dest := t.TempDir()
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "plugin.json"),
+		[]byte(`{"id":"sig-demo","version":"0.1.0","kind":"go"}`), 0o644); err != nil {
+		t.Fatalf("写清单失败: %v", err)
+	}
+	if code, _, errOut := run("install", src, "-dest", dest); code != 0 {
+		t.Fatalf("安装失败: %s", errOut)
+	}
+	repo := t.TempDir()
+	rel := filepath.Join("plugins", "sig-demo@0.2.0")
+	abs := filepath.Join(repo, rel)
+	if err := os.MkdirAll(abs, 0o755); err != nil {
+		t.Fatalf("建目录失败: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(abs, "plugin.json"),
+		[]byte(`{"id":"sig-demo","version":"0.2.0","kind":"go"}`), 0o644); err != nil {
+		t.Fatalf("写仓库清单失败: %v", err)
+	}
+	info, err := install.VerifyDir(abs, install.Options{})
+	if err != nil {
+		t.Fatalf("校验失败: %v", err)
+	}
+	data, _ := json.Marshal(map[string]any{"entries": []install.RepoEntry{
+		{ID: "sig-demo", Version: "0.2.0", Dir: rel, Digest: info.Digest},
+	}})
+	if err := os.WriteFile(filepath.Join(repo, install.RepoFile), data, 0o644); err != nil {
+		t.Fatalf("写索引失败: %v", err)
+	}
+	code, _, errOut := run("update", "sig-demo", "-repo", repo, "-dest", dest, "-require-repo-signature")
+	if code != 1 || !strings.Contains(errOut, "缺少签名") {
+		t.Fatalf("缺签名应拒绝: code=%d err=%s", code, errOut)
+	}
+}
