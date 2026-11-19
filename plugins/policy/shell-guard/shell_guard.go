@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/adag/ada-go/v2/kernel"
+	seamapproval "github.com/adag/ada-go/v2/plugins/seam/approval"
 	seamsandbox "github.com/adag/ada-go/v2/plugins/seam/sandbox"
 	seamshell "github.com/adag/ada-go/v2/plugins/seam/shell"
 )
@@ -20,13 +21,17 @@ const PolicyName = "shell-guard"
 // Priority 是装饰器优先级(高者在外层)。
 const Priority = 100
 
-// New 构造装饰器。
-func New(inner seamshell.Shell, registry *seamsandbox.Registry, backend string, allow []string, allowShell bool) seamshell.Shell {
+// New 构造装饰器。approval 为 nil 表示没有审批服务:shell 门/白名单拒绝一律不放行。
+func New(inner seamshell.Shell, registry *seamsandbox.Registry, backend string, allow []string, allowShell bool, approvalRegistry *seamapproval.Registry, approvalBackend string, emit func(string, any)) seamshell.Shell {
 	allowed := make(map[string]bool, len(allow))
 	for _, p := range allow {
 		allowed[p] = true
 	}
-	return &guard{inner: inner, registry: registry, backend: backend, allow: allowed, allowShell: allowShell}
+	return &guard{
+		inner: inner, registry: registry, backend: backend,
+		allow: allowed, allowShell: allowShell,
+		approval: approvalRegistry, approvalBackend: approvalBackend, emit: emit,
+	}
 }
 
 type guard struct {
@@ -35,6 +40,10 @@ type guard struct {
 	backend    string
 	allow      map[string]bool
 	allowShell bool
+
+	approval        *seamapproval.Registry
+	approvalBackend string
+	emit            func(string, any)
 }
 
 func (g *guard) Env() seamshell.Env { return g.inner.Env() }
@@ -75,13 +84,42 @@ func (g *guard) check(ctx context.Context, cmd seamshell.Command) error {
 		return seamshell.Denied("sandbox", reason)
 	}
 
+	gateReason := ""
 	if cmd.Shell && !g.allowShell {
-		return seamshell.Denied("sandbox", fmt.Sprintf("shell 模式未授权,拒绝执行 %q", cmd.Program))
+		gateReason = fmt.Sprintf("shell 模式未授权,拒绝执行 %q", cmd.Program)
 	}
-	if sb.Mode(ctx, "") == seamsandbox.ModeReadOnly && !g.allow[cmd.Program] {
-		return seamshell.Denied("sandbox", fmt.Sprintf("只读模式只允许白名单命令,拒绝 %q", cmd.Program))
+	if gateReason == "" && sb.Mode(ctx, "") == seamsandbox.ModeReadOnly && !g.allow[cmd.Program] {
+		gateReason = fmt.Sprintf("只读模式只允许白名单命令,拒绝 %q", cmd.Program)
 	}
-	return nil
+	if gateReason == "" {
+		return nil
+	}
+
+	// 策略层的拒绝也可升级:有审批人才问,否则 fail-closed。
+	if g.approval != nil {
+		dec, err := seamapproval.Ask(ctx, g.approval, g.approvalBackend, seamapproval.Request{
+			Source: "shell", Op: "shell.exec", Target: cmd.Program, Reason: gateReason,
+		})
+		if g.emit != nil {
+			allow := dec.Allow
+			reason := dec.Reason
+			if err != nil {
+				reason = err.Error()
+				allow = false
+			}
+			g.emit("approval/decided", map[string]any{
+				"source": "shell", "target": cmd.Program, "allow": allow, "approver": dec.Approver, "reason": reason,
+			})
+		}
+		if err != nil {
+			return seamshell.Denied("approval", "审批失败: "+err.Error())
+		}
+		if dec.Allow {
+			return nil
+		}
+		return seamshell.Denied("approval", dec.Reason)
+	}
+	return seamshell.Denied("sandbox", gateReason)
 }
 
 // Plugin 返回 shell-guard 插件:inject shell 与 sandbox,注册策略装饰器。
@@ -96,8 +134,16 @@ func Plugin() kernel.Plugin {
 			return nil, err
 		}
 		backend := cfg.String("backend")
+		var approvalRegistry *seamapproval.Registry
+		if v, ok := ctx.TryService("approval"); ok {
+			if reg, ok := v.(*seamapproval.Registry); ok {
+				approvalRegistry = reg
+			}
+		}
 		return chain.Decorate(func(inner seamshell.Shell) seamshell.Shell {
-			return New(inner, registry, backend, cfg.Strings("allow"), cfg.Bool("allowShell"))
+			return New(inner, registry, backend, cfg.Strings("allow"), cfg.Bool("allowShell"),
+				approvalRegistry, cfg.String("approvalBackend"),
+				func(name string, payload any) { ctx.EmitContext(context.Background(), name, payload) })
 		}, Priority)
-	}).WithInject("shell", "sandbox")
+	}).WithInject("shell", "sandbox").WithOptional("approval")
 }

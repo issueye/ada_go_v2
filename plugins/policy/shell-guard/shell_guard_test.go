@@ -9,6 +9,7 @@ import (
 	shellguard "github.com/adag/ada-go/v2/plugins/policy/shell-guard"
 	sandboxnone "github.com/adag/ada-go/v2/plugins/provider/sandbox-none"
 	shelllocal "github.com/adag/ada-go/v2/plugins/provider/shell-local"
+	seamapproval "github.com/adag/ada-go/v2/plugins/seam/approval"
 	seamsandbox "github.com/adag/ada-go/v2/plugins/seam/sandbox"
 	seamshell "github.com/adag/ada-go/v2/plugins/seam/shell"
 )
@@ -49,7 +50,7 @@ func registryWith(t *testing.T, mode seamsandbox.Mode) *seamsandbox.Registry {
 // 1. 只读模式:白名单内放行,白名单外拒绝。
 func TestReadOnlyAllowlist(t *testing.T) {
 	fake := &fakeShell{}
-	g := shellguard.New(fake, registryWith(t, seamsandbox.ModeReadOnly), "", []string{"echo"}, false)
+	g := shellguard.New(fake, registryWith(t, seamsandbox.ModeReadOnly), "", []string{"echo"}, false, nil, "", nil)
 	if _, err := g.Run(context.Background(), seamshell.Command{Program: "echo", Args: []string{"hi"}}); err != nil {
 		t.Fatalf("白名单内应放行: %v", err)
 	}
@@ -64,7 +65,7 @@ func TestReadOnlyAllowlist(t *testing.T) {
 // 2. sandbox 允许执行,但 shell 模式仍需显式授权。
 func TestShellFlag(t *testing.T) {
 	fake := &fakeShell{}
-	g := shellguard.New(fake, registryWith(t, seamsandbox.ModeWorkspaceWrite), "", nil, false)
+	g := shellguard.New(fake, registryWith(t, seamsandbox.ModeWorkspaceWrite), "", nil, false, nil, "", nil)
 	if _, err := g.Run(context.Background(), seamshell.Command{Program: "any-program"}); err != nil {
 		t.Fatalf("普通程序应放行: %v", err)
 	}
@@ -72,7 +73,7 @@ func TestShellFlag(t *testing.T) {
 		t.Fatalf("shell=true 未授权应拒绝")
 	}
 
-	allowed := shellguard.New(fake, registryWith(t, seamsandbox.ModeWorkspaceWrite), "", nil, true)
+	allowed := shellguard.New(fake, registryWith(t, seamsandbox.ModeWorkspaceWrite), "", nil, true, nil, "", nil)
 	if _, err := allowed.Run(context.Background(), seamshell.Command{Program: "echo", Shell: true}); err != nil {
 		t.Fatalf("显式授权后 shell=true 应放行: %v", err)
 	}
@@ -81,7 +82,7 @@ func TestShellFlag(t *testing.T) {
 // 3. 沙箱后端不可用时 fail-closed。
 func TestNoSandboxBackendFailsClosed(t *testing.T) {
 	fake := &fakeShell{}
-	g := shellguard.New(fake, seamsandbox.NewRegistry(), "", nil, true)
+	g := shellguard.New(fake, seamsandbox.NewRegistry(), "", nil, true, nil, "", nil)
 	if _, err := g.Run(context.Background(), seamshell.Command{Program: "echo"}); err == nil {
 		t.Fatalf("没有沙箱后端时命令必须失败")
 	}
@@ -173,4 +174,47 @@ func echoCommand() seamshell.Command {
 		return seamshell.Command{Program: "cmd", Args: []string{"/c", "echo", "hello"}}
 	}
 	return seamshell.Command{Program: "echo", Args: []string{"hello"}}
+}
+
+// 7. 策略层拒绝可升级:有审批人时按审批决定放行/拒绝。
+func TestShellApproval(t *testing.T) {
+	allowReg := seamapproval.NewRegistry()
+	if _, err := allowReg.Register(allowApprover{}); err != nil {
+		t.Fatalf("注册审批人失败: %v", err)
+	}
+	fake := &fakeShell{}
+	g := shellguard.New(fake, registryWith(t, seamsandbox.ModeReadOnly), "", []string{"echo"}, false, allowReg, "", nil)
+	if _, err := g.Run(context.Background(), seamshell.Command{Program: "whoami"}); err != nil {
+		t.Fatalf("审批允许后应放行: %v", err)
+	}
+	if len(fake.runs) != 1 {
+		t.Fatalf("审批允许后应真正执行")
+	}
+
+	denyReg := seamapproval.NewRegistry()
+	if _, err := denyReg.Register(denyApprover{}); err != nil {
+		t.Fatalf("注册审批人失败: %v", err)
+	}
+	fake = &fakeShell{}
+	denied := shellguard.New(fake, registryWith(t, seamsandbox.ModeReadOnly), "", []string{"echo"}, false, denyReg, "", nil)
+	if _, err := denied.Run(context.Background(), seamshell.Command{Program: "whoami"}); err == nil {
+		t.Fatalf("审批拒绝后应拒绝")
+	}
+	if len(fake.runs) != 0 {
+		t.Fatalf("审批拒绝后不应执行")
+	}
+}
+
+type allowApprover struct{}
+
+func (allowApprover) Name() string { return "allow" }
+func (allowApprover) Approve(context.Context, seamapproval.Request) (seamapproval.Decision, error) {
+	return seamapproval.Decision{Allow: true, Reason: "允许", Approver: "allow"}, nil
+}
+
+type denyApprover struct{}
+
+func (denyApprover) Name() string { return "deny" }
+func (denyApprover) Approve(context.Context, seamapproval.Request) (seamapproval.Decision, error) {
+	return seamapproval.Decision{Allow: false, Reason: "审批人拒绝", Approver: "deny"}, nil
 }

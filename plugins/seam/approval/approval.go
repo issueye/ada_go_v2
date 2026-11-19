@@ -6,6 +6,7 @@ package approval
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -121,6 +122,39 @@ func Plugin() kernel.Plugin {
 		_, err := ctx.Provide("approval", NewRegistry(), kernel.WithVersion(1), kernel.WithKind("object"))
 		return nil, err
 	}).WithProvide("approval")
+}
+
+// Ask 是一次带超时的审批调用。
+//
+// 所有失败路径都返回错误或 Allow=false:没有审批人、审批人报错、超时都视为拒绝,
+// 调用方不得把错误当成放行。
+func Ask(ctx context.Context, registry *Registry, backend string, req Request) (Decision, error) {
+	if registry == nil {
+		return Decision{Allow: false, Reason: "没有 approval 服务"}, seamerr.New(seamerr.ErrUnimplemented, "approval", "没有 approval 服务", false)
+	}
+	approver, err := registry.Get(backend)
+	if err != nil {
+		return Decision{Allow: false, Reason: err.Error()}, err
+	}
+	timeout := req.Timeout
+	if timeout <= 0 {
+		timeout = DefaultTimeout
+	}
+	actx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	dec, err := approver.Approve(actx, req)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(actx.Err(), context.DeadlineExceeded) {
+			return Decision{Allow: false, Reason: "审批超时", Approver: approver.Name()},
+				&seamerr.Error{Code: seamerr.ErrTimeout, Provider: "approval", Message: "审批超时", Err: err}
+		}
+		return Decision{Allow: false, Reason: err.Error(), Approver: approver.Name()}, err
+	}
+	if dec.Approver == "" {
+		dec.Approver = approver.Name()
+	}
+	return dec, nil
 }
 
 // Describe 便于日志。

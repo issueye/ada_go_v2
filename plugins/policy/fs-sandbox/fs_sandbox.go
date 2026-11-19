@@ -23,8 +23,8 @@ const Priority = 100
 
 // New 构造装饰器。registry 与 backend 懒取:装配顺序不影响正确性。
 // approval 为 nil 表示没有审批服务:可升级的拒绝一律按拒绝处理(fail-closed)。
-func New(inner seamfs.FS, registry *seamsandbox.Registry, backend string, approvalRegistry *seamapproval.Registry, approvalBackend string) seamfs.FS {
-	return &sandbox{inner: inner, registry: registry, backend: backend, approval: approvalRegistry, approvalBackend: approvalBackend}
+func New(inner seamfs.FS, registry *seamsandbox.Registry, backend string, approvalRegistry *seamapproval.Registry, approvalBackend string, emit func(string, any)) seamfs.FS {
+	return &sandbox{inner: inner, registry: registry, backend: backend, approval: approvalRegistry, approvalBackend: approvalBackend, emit: emit}
 }
 
 type sandbox struct {
@@ -33,6 +33,22 @@ type sandbox struct {
 	backend         string
 	approval        *seamapproval.Registry
 	approvalBackend string
+	emit            func(string, any)
+}
+
+func (s *sandbox) emitDecision(op seamsandbox.Op, p seamfs.Path, dec seamapproval.Decision, callErr error) {
+	if s.emit == nil {
+		return
+	}
+	allow := dec.Allow
+	reason := dec.Reason
+	if callErr != nil {
+		reason = callErr.Error()
+	}
+	s.emit("approval/decided", map[string]any{
+		"source": "fs", "op": string(op), "target": string(p),
+		"allow": allow, "approver": dec.Approver, "reason": reason,
+	})
 }
 
 func (s *sandbox) judge(ctx context.Context, op seamsandbox.Op, p seamfs.Path, write bool) error {
@@ -56,11 +72,10 @@ func (s *sandbox) judge(ctx context.Context, op seamsandbox.Op, p seamfs.Path, w
 	}
 	// 可升级的拒绝:问审批;没有审批服务/审批人报错/拒绝 → 仍然拒绝(fail-closed)。
 	if decision.Escalatable && s.approval != nil {
-		approver, err := s.approval.Get(s.approvalBackend)
-		if err != nil {
-			return seamfs.Denied("approval", "没有可用的审批人: "+err.Error())
-		}
-		dec, err := approver.Approve(ctx, seamapproval.Request{Source: "fs", Op: string(op), Target: string(p), Reason: reason})
+		dec, err := seamapproval.Ask(ctx, s.approval, s.approvalBackend, seamapproval.Request{
+			Source: "fs", Op: string(op), Target: string(p), Reason: reason,
+		})
+		s.emitDecision(op, p, dec, err)
 		if err != nil {
 			return seamfs.Denied("approval", "审批失败: "+err.Error())
 		}
@@ -133,7 +148,9 @@ func Plugin() kernel.Plugin {
 			}
 		}
 		return chain.Decorate(func(inner seamfs.FS) seamfs.FS {
-			return New(inner, registry, backend, approvalRegistry, cfg.String("approvalBackend"))
+			return New(inner, registry, backend, approvalRegistry, cfg.String("approvalBackend"), func(name string, payload any) {
+				ctx.EmitContext(context.Background(), name, payload)
+			})
 		}, Priority)
 	}).WithInject("fs", "sandbox").WithOptional("approval")
 }

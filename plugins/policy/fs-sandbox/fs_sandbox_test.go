@@ -72,7 +72,7 @@ func TestModeMatrix(t *testing.T) {
 		{seamsandbox.ModeDanger, "/plugin/x/a.txt", false},
 	}
 	for _, tc := range cases {
-		fsys := fssandbox.New(fake, registryWith(t, tc.mode), "", nil, "")
+		fsys := fssandbox.New(fake, registryWith(t, tc.mode), "", nil, "", nil)
 		_, err := fsys.Write(context.Background(), seamfs.WriteRequest{Path: tc.path})
 		if tc.allowed && err != nil {
 			t.Fatalf("%s 写 %s 应允许,实际 %v", tc.mode, tc.path, err)
@@ -82,7 +82,7 @@ func TestModeMatrix(t *testing.T) {
 		}
 	}
 
-	readOnly := fssandbox.New(fake, registryWith(t, seamsandbox.ModeReadOnly), "", nil, "")
+	readOnly := fssandbox.New(fake, registryWith(t, seamsandbox.ModeReadOnly), "", nil, "", nil)
 	if _, err := readOnly.Read(context.Background(), seamfs.ReadRequest{Path: "/workspace/a.txt"}); err != nil {
 		t.Fatalf("只读模式读应放行: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestModeMatrix(t *testing.T) {
 // 2. 拒绝时底层实现不会被调用。
 func TestDeniedDoesNotReachInner(t *testing.T) {
 	fake := &fakeFS{}
-	fsys := fssandbox.New(fake, registryWith(t, seamsandbox.ModeReadOnly), "", nil, "")
+	fsys := fssandbox.New(fake, registryWith(t, seamsandbox.ModeReadOnly), "", nil, "", nil)
 	if _, err := fsys.Write(context.Background(), seamfs.WriteRequest{Path: "/workspace/x"}); err == nil {
 		t.Fatalf("应拒绝")
 	}
@@ -103,7 +103,7 @@ func TestDeniedDoesNotReachInner(t *testing.T) {
 // 3. 沙箱后端不可用时 fail-closed。
 func TestNoSandboxBackendFailsClosed(t *testing.T) {
 	fake := &fakeFS{}
-	fsys := fssandbox.New(fake, seamsandbox.NewRegistry(), "", nil, "")
+	fsys := fssandbox.New(fake, seamsandbox.NewRegistry(), "", nil, "", nil)
 	if _, err := fsys.Write(context.Background(), seamfs.WriteRequest{Path: "/workspace/a"}); err == nil {
 		t.Fatalf("没有沙箱后端时写必须失败(不能放行)")
 	}
@@ -170,7 +170,7 @@ func TestApprovalEscalation(t *testing.T) {
 		t.Fatalf("注册审批人失败: %v", err)
 	}
 	fake := &fakeFS{}
-	fsys := fssandbox.New(fake, registryWith(t, seamsandbox.ModeReadOnly), "", allowReg, "")
+	fsys := fssandbox.New(fake, registryWith(t, seamsandbox.ModeReadOnly), "", allowReg, "", nil)
 	if _, err := fsys.Write(context.Background(), seamfs.WriteRequest{Path: "/workspace/a"}); err != nil {
 		t.Fatalf("审批允许后写应放行: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestApprovalEscalation(t *testing.T) {
 		t.Fatalf("注册审批人失败: %v", err)
 	}
 	fake = &fakeFS{}
-	denied := fssandbox.New(fake, registryWith(t, seamsandbox.ModeReadOnly), "", denyReg, "")
+	denied := fssandbox.New(fake, registryWith(t, seamsandbox.ModeReadOnly), "", denyReg, "", nil)
 	if _, err := denied.Write(context.Background(), seamfs.WriteRequest{Path: "/workspace/a"}); err == nil {
 		t.Fatalf("审批拒绝后写必须失败")
 	}
@@ -193,7 +193,7 @@ func TestApprovalEscalation(t *testing.T) {
 
 	// 没有审批服务:可升级的拒绝也必须 fail-closed。
 	fake = &fakeFS{}
-	noApproval := fssandbox.New(fake, registryWith(t, seamsandbox.ModeReadOnly), "", nil, "")
+	noApproval := fssandbox.New(fake, registryWith(t, seamsandbox.ModeReadOnly), "", nil, "", nil)
 	if _, err := noApproval.Write(context.Background(), seamfs.WriteRequest{Path: "/workspace/a"}); err == nil {
 		t.Fatalf("没有审批服务时必须拒绝")
 	}
