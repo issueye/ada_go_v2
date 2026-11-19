@@ -22,7 +22,7 @@ host/server/   只读 HTTP API:plan / caps / list
 
 - 非 GET → **405**;
 - 绝对路径、`..` 逃逸、符号链接指向根外 → **400**;
-- 没有鉴权,只应绑定 localhost 或由外层网关保护。
+- `Options.Token` 非空时要求 `Authorization: Bearer <token>`(常量时间比较);空 Token 表示不鉴权,此时只应绑定 localhost 或由外层网关保护。
 
 ## 3. 内置插件与 inspect\n\n`/api/inspect` 使用共享的 `host/builtins` 注册表(与 host/cli 同一份内置 Go 插件),并在挂载前 `ApplyAutoGrants`。\n它**会执行插件副作用**(打开文件、注册服务、启动 goroutine),因此只适合本地开发/诊断,文档明确不应暴露到公网。\n\n## 4. 安全约束
 
@@ -33,13 +33,13 @@ host/server/   只读 HTTP API:plan / caps / list
 
 `host/server.Test*` 用 `httptest` 直接打 handler:
 
-- plan 顺序、caps 授权、路径逃逸 400、POST 405、list 索引、根路由、inspect 内置栈快照;
+- plan 顺序、caps 授权、路径逃逸 400、POST 405、list 索引、根路由、inspect 内置栈快照、Token 认证;
 - 不启动真实端口,不依赖网络。
 
 ## 6. 偏差与边界
 
 1. **基本只读**:`/api/inspect` 会临时挂载(有副作用)后立即停止;没有长期 app 生命周期与审批/执行接口。
-2. **无鉴权/无 TLS**:本地开发工具定位;跨机部署需外层网关。
+2. **有静态 Token、无 TLS**:Token 从 `Options` 注入;没有签发/轮换,跨机部署仍需外层 TLS 网关。
 3. **root 内任意目录可读**:没有按插件/用户的能力过滤。
 4. **没有分页/流式**:结果一次性 JSON;大插件集另说。
 5. **没有 CORS/限流**。

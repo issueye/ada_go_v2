@@ -6,6 +6,7 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -27,12 +28,15 @@ import (
 type Options struct {
 	// Root 是允许访问的根目录(必填,会被解析为绝对路径)。
 	Root string
+	// Token 非空时,所有路由要求 Authorization: Bearer <Token>。
+	Token string
 }
 
 // Server 是只读 HTTP 适配器。
 type Server struct {
-	root string
-	mux  *http.ServeMux
+	root  string
+	token string
+	mux   *http.ServeMux
 }
 
 // NewHandler 构造 HTTP handler;根目录必须存在。
@@ -50,13 +54,32 @@ func NewHandler(opts Options) (http.Handler, error) {
 	if info, err := os.Stat(root); err != nil || !info.IsDir() {
 		return nil, fmt.Errorf("host/server: 根目录不是目录: %s", root)
 	}
-	s := &Server{root: root, mux: http.NewServeMux()}
+	s := &Server{root: root, token: opts.Token, mux: http.NewServeMux()}
 	s.mux.HandleFunc("/api/plan", s.handlePlan)
 	s.mux.HandleFunc("/api/inspect", s.handleInspect)
 	s.mux.HandleFunc("/api/caps", s.handleCaps)
 	s.mux.HandleFunc("/api/list", s.handleList)
 	s.mux.HandleFunc("/", s.handleIndex)
-	return s.mux, nil
+	return s.authenticate(s.mux), nil
+}
+
+// authenticate 在 Token 非空时校验 Bearer 令牌(常量时间比较);空 Token 表示不鉴权。
+func (s *Server) authenticate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.token == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		const prefix = "Bearer "
+		h := r.Header.Get("Authorization")
+		if !strings.HasPrefix(h, prefix) ||
+			subtle.ConstantTimeCompare([]byte(h[len(prefix):]), []byte(s.token)) != 1 {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "未认证"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // resolve 把相对路径限制在 root 之下(拒绝绝对路径、.. 逃逸与符号链接逃逸)。

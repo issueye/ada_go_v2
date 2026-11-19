@@ -183,3 +183,29 @@ func TestInspectBadPath(t *testing.T) {
 		t.Fatalf("未知路径应 400,实际 %d", rec.Code)
 	}
 }
+
+// 9. 令牌认证:缺失/错误 401,正确放行。
+func TestAuth(t *testing.T) {
+	h, err := server.NewHandler(server.Options{Root: "../../examples", Token: "secret"})
+	if err != nil {
+		t.Fatalf("构造失败: %v", err)
+	}
+	request := func(auth string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/api/plan?path=plugins", nil)
+		if auth != "" {
+			req.Header.Set("Authorization", auth)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := request(""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("缺 token 应 401,实际 %d", rec.Code)
+	}
+	if rec := request("Bearer wrong"); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("错 token 应 401,实际 %d", rec.Code)
+	}
+	if rec := request("Bearer secret"); rec.Code != http.StatusOK {
+		t.Fatalf("正确 token 应 200,实际 %d: %s", rec.Code, rec.Body.String())
+	}
+}
