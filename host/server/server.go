@@ -1,0 +1,210 @@
+// Package server 是 host/server 适配器:只读 HTTP API(plan / caps / list)。
+//
+// 它只做协议映射与路径约束,不做业务;所有路径都必须落在 Options.Root 之下。
+// 没有鉴权:只应绑定到 localhost 或由外层网关保护。
+package server
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/adag/ada-go/v2/assemble"
+	"github.com/adag/ada-go/v2/caps"
+	"github.com/adag/ada-go/v2/install"
+	"github.com/adag/ada-go/v2/plugin"
+	"github.com/adag/ada-go/v2/preset"
+)
+
+// Options 配置只读服务器。
+type Options struct {
+	// Root 是允许访问的根目录(必填,会被解析为绝对路径)。
+	Root string
+}
+
+// Server 是只读 HTTP 适配器。
+type Server struct {
+	root string
+	mux  *http.ServeMux
+}
+
+// NewHandler 构造 HTTP handler;根目录必须存在。
+func NewHandler(opts Options) (http.Handler, error) {
+	if opts.Root == "" {
+		return nil, fmt.Errorf("host/server: Root 不能为空")
+	}
+	root, err := filepath.Abs(opts.Root)
+	if err != nil {
+		return nil, fmt.Errorf("host/server: 解析根目录失败: %w", err)
+	}
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
+	if info, err := os.Stat(root); err != nil || !info.IsDir() {
+		return nil, fmt.Errorf("host/server: 根目录不是目录: %s", root)
+	}
+	s := &Server{root: root, mux: http.NewServeMux()}
+	s.mux.HandleFunc("/api/plan", s.handlePlan)
+	s.mux.HandleFunc("/api/caps", s.handleCaps)
+	s.mux.HandleFunc("/api/list", s.handleList)
+	s.mux.HandleFunc("/", s.handleIndex)
+	return s.mux, nil
+}
+
+// resolve 把相对路径限制在 root 之下(拒绝绝对路径、.. 逃逸与符号链接逃逸)。
+func (s *Server) resolve(rel string) (string, error) {
+	rel = strings.TrimSpace(rel)
+	if rel == "" {
+		return "", fmt.Errorf("缺少 path 参数")
+	}
+	if filepath.IsAbs(rel) {
+		return "", fmt.Errorf("只允许相对路径")
+	}
+	clean := filepath.Clean(rel)
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("路径不能逃逸根目录")
+	}
+	abs, err := filepath.Abs(filepath.Join(s.root, clean))
+	if err != nil {
+		return "", fmt.Errorf("解析路径失败")
+	}
+	inside, err := filepath.Rel(s.root, abs)
+	if err != nil || inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("路径不能逃逸根目录")
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		inside, err := filepath.Rel(s.root, resolved)
+		if err != nil || inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) {
+			return "", fmt.Errorf("符号链接指向根目录之外")
+		}
+		abs = resolved
+	}
+	return abs, nil
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(v)
+}
+
+func writeError(w http.ResponseWriter, status int, err error) {
+	writeJSON(w, status, map[string]string{"error": err.Error()})
+}
+
+func (s *Server) onlyGet(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "只支持 GET"})
+		return false
+	}
+	return true
+}
+
+// loadTarget 按路径加载插件目录或 preset 文件。
+func (s *Server) loadTarget(rel string) ([]*plugin.Manifest, error) {
+	path, err := s.resolve(rel)
+	if err != nil {
+		return nil, err
+	}
+	if strings.HasSuffix(path, ".preset.json") {
+		p, err := preset.Load(path)
+		if err != nil {
+			return nil, err
+		}
+		return p.Expand()
+	}
+	return plugin.LoadDir(path)
+}
+
+func (s *Server) handlePlan(w http.ResponseWriter, r *http.Request) {
+	if !s.onlyGet(w, r) {
+		return
+	}
+	manifests, err := s.loadTarget(r.URL.Query().Get("path"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	report := assemble.Plan(manifests)
+	pluginsList := make([]string, 0, len(manifests))
+	for _, m := range manifests {
+		pluginsList = append(pluginsList, m.String())
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":       report.OK(),
+		"plugins":  pluginsList,
+		"order":    report.Order,
+		"warnings": report.Warnings,
+		"problems": report.Problems,
+	})
+}
+
+func (s *Server) handleCaps(w http.ResponseWriter, r *http.Request) {
+	if !s.onlyGet(w, r) {
+		return
+	}
+	manifests, err := s.loadTarget(r.URL.Query().Get("path"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	broker := caps.NewBroker(nil)
+	grantErr := assemble.GrantManifests(broker, manifests)
+	type row struct {
+		ID      string   `json:"id"`
+		Version string   `json:"version"`
+		Trust   string   `json:"trust"`
+		Caps    []string `json:"caps"`
+	}
+	rows := make([]row, 0, len(manifests))
+	for _, m := range manifests {
+		trust := m.Trust
+		if trust == "" {
+			trust = string(caps.TrustThirdParty)
+		}
+		rows = append(rows, row{ID: m.ID, Version: m.Version, Trust: trust, Caps: m.Caps})
+	}
+	payload := map[string]any{"ok": grantErr == nil, "plugins": rows}
+	if grantErr != nil {
+		payload["error"] = grantErr.Error()
+		writeJSON(w, http.StatusOK, payload)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
+	if !s.onlyGet(w, r) {
+		return
+	}
+	rel := r.URL.Query().Get("dest")
+	if rel == "" {
+		rel = "."
+	}
+	path, err := s.resolve(rel)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	entries, err := install.List(path)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
+}
+
+func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "未知路径"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"routes": []string{"/api/plan?path=", "/api/caps?path=", "/api/list?dest="},
+	})
+}
