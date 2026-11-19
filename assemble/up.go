@@ -10,6 +10,7 @@ import (
 
 	"github.com/adag/ada-go/v2/kernel"
 	"github.com/adag/ada-go/v2/plugin"
+	"github.com/adag/ada-go/v2/sched"
 )
 
 // CodeUp 是装配执行层的错误码。
@@ -128,10 +129,11 @@ func mountOne(app *kernel.App, m *plugin.Manifest, lookup Lookup, report *UpRepo
 
 // Deferred 是延迟激活插件的句柄:宿主在需要时调用 Ensure 挂载。
 type Deferred struct {
-	app     *kernel.App
-	byID    map[string]*plugin.Manifest
-	lookup  Lookup
-	mounted map[string]*kernel.Fiber
+	app      *kernel.App
+	byID     map[string]*plugin.Manifest
+	lookup   Lookup
+	mounted  map[string]*kernel.Fiber
+	triggers map[string]bool
 }
 
 // UpLazy 只挂载 activation=startup 的插件,on-demand 插件留给 Deferred.Ensure。
@@ -170,7 +172,7 @@ func UpLazy(app *kernel.App, manifests []*plugin.Manifest, plan *Report, lookup 
 		mounted = append(mounted, fiber)
 	}
 
-	d := &Deferred{app: app, byID: byID, lookup: lookup, mounted: map[string]*kernel.Fiber{}}
+	d := &Deferred{app: app, byID: byID, lookup: lookup, mounted: map[string]*kernel.Fiber{}, triggers: map[string]bool{}}
 	return report, d, nil
 }
 
@@ -218,6 +220,49 @@ func (d *Deferred) EnsureAll(ctx context.Context) ([]string, error) {
 		mounted = append(mounted, id)
 	}
 	return mounted, nil
+}
+
+// TriggerOnCron 注册定时任务:到点挂载指定的 on-demand 插件。
+//
+// 返回的 Dispose 用于停止任务;cron/policy 的语义由 sched 负责。任务 id 固定为
+// "assemble-ensure-<插件 id>",重复注册同一插件会由 sched 报冲突。
+func (d *Deferred) TriggerOnCron(s *sched.Scheduler, store sched.JobStore, id, cron string, policy sched.JobPolicy) (kernel.Dispose, error) {
+	if s == nil {
+		return nil, fmt.Errorf("assemble: scheduler 不能为 nil")
+	}
+	if store == nil {
+		return nil, fmt.Errorf("assemble: job store 不能为 nil")
+	}
+	m, ok := d.byID[id]
+	if !ok {
+		return nil, fmt.Errorf("assemble: 未知的延迟插件 %q", id)
+	}
+	if m.Activation != "on-demand" {
+		return nil, fmt.Errorf("assemble: 插件 %q 不是 on-demand(activation=%q)", id, m.Activation)
+	}
+	if d.triggers == nil {
+		d.triggers = map[string]bool{}
+	}
+	if d.triggers[id] {
+		return nil, fmt.Errorf("assemble: 插件 %q 已注册过定时触发", id)
+	}
+	dispose, err := s.Job(sched.JobSpec{
+		ID:     "assemble-ensure-" + id,
+		Cron:   cron,
+		Policy: policy,
+		Handler: func(ctx context.Context) error {
+			_, err := d.Ensure(ctx, id)
+			return err
+		},
+	}, store)
+	if err != nil {
+		return nil, err
+	}
+	d.triggers[id] = true
+	return func(ctx context.Context) error {
+		delete(d.triggers, id)
+		return dispose(ctx)
+	}, nil
 }
 
 // IDs 返回可延迟激活的插件 id(按计划顺序)。

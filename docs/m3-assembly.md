@@ -186,6 +186,7 @@ go run ./cmd/ada up   --preset examples/presets/ts-only.preset.json
 | activation 校验 | `plugin.TestActivation` |
 | 服务触发挂载/未知服务/幂等 | `assemble.TestEnsureForService` |
 | EnsureAll 按 id 排序挂载 | `assemble.TestEnsureAll` |
+| TriggerOnCron 参数校验/注册冲突/Dispose | `assemble.TestTriggerOnCronValidation`、`TestTriggerOnCronRegister` |
 | 清单信息不足/未知 kind / 扫描排除规则 | `loader.TestTSLookupErrors`、`loader.TestCollectSources` |
 
 ## 9. 已知边界与下一步

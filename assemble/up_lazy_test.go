@@ -3,10 +3,12 @@ package assemble_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/adag/ada-go/v2/assemble"
 	"github.com/adag/ada-go/v2/kernel"
 	"github.com/adag/ada-go/v2/plugin"
+	"github.com/adag/ada-go/v2/sched"
 )
 
 func lazyManifests() []*plugin.Manifest {
@@ -199,5 +201,60 @@ func TestEnsureAll(t *testing.T) {
 	}
 	if got := len(app.Inspect().Fibers); got != 3 {
 		t.Fatalf("应挂载 3 个插件,实际 %d", got)
+	}
+}
+
+// 7. TriggerOnCron 参数校验。
+func TestTriggerOnCronValidation(t *testing.T) {
+	app := newApp(t)
+	ms := lazyManifests()
+	plan := assemble.Plan(ms)
+	_, deferred, err := assemble.UpLazy(app, ms, plan, lazyLookup(t))
+	if err != nil {
+		t.Fatalf("UpLazy 失败: %v", err)
+	}
+	store := &sched.MemoryJobStore{}
+	scheduler := sched.New(sched.Options{Clock: sched.NewFakeClock(time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC))})
+
+	if _, err := deferred.TriggerOnCron(nil, store, "lazy", "* * * * *", sched.JobSkip); err == nil {
+		t.Fatalf("nil scheduler 应报错")
+	}
+	if _, err := deferred.TriggerOnCron(scheduler, nil, "lazy", "* * * * *", sched.JobSkip); err == nil {
+		t.Fatalf("nil store 应报错")
+	}
+	if _, err := deferred.TriggerOnCron(scheduler, store, "nope", "* * * * *", sched.JobSkip); err == nil {
+		t.Fatalf("未知插件应报错")
+	}
+	if _, err := deferred.TriggerOnCron(scheduler, store, "startup", "* * * * *", sched.JobSkip); err == nil {
+		t.Fatalf("非 on-demand 应报错")
+	}
+	if _, err := deferred.TriggerOnCron(scheduler, store, "lazy", "", sched.JobSkip); err == nil {
+		t.Fatalf("空 cron 应报错")
+	}
+}
+
+// 8. TriggerOnCron 注册成功、重复注册报冲突、Dispose 停止任务。
+func TestTriggerOnCronRegister(t *testing.T) {
+	app := newApp(t)
+	ms := lazyManifests()
+	plan := assemble.Plan(ms)
+	_, deferred, err := assemble.UpLazy(app, ms, plan, lazyLookup(t))
+	if err != nil {
+		t.Fatalf("UpLazy 失败: %v", err)
+	}
+	clock := sched.NewFakeClock(time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC))
+	scheduler := sched.New(sched.Options{Clock: clock})
+	t.Cleanup(func() { _ = scheduler.Stop(context.Background()) })
+	store := &sched.MemoryJobStore{}
+
+	dispose, err := deferred.TriggerOnCron(scheduler, store, "lazy", "* * * * *", sched.JobSkip)
+	if err != nil {
+		t.Fatalf("注册失败: %v", err)
+	}
+	if _, err := deferred.TriggerOnCron(scheduler, store, "lazy", "* * * * *", sched.JobSkip); err == nil {
+		t.Fatalf("重复注册同一插件应冲突")
+	}
+	if err := dispose(context.Background()); err != nil {
+		t.Fatalf("停止任务失败: %v", err)
 	}
 }
