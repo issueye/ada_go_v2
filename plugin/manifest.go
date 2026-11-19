@@ -65,6 +65,8 @@ type Manifest struct {
 
 	// Engines 是宿主版本约束(design §9.2),当前只认 "ada"。
 	Engines map[string]string `json:"engines,omitempty"`
+	// Activation 决定装配时机:startup(默认)或 on-demand(M4 延迟激活)。
+	Activation string `json:"activation,omitempty"`
 
 	// Dir 是清单所在的目录,由加载器填写,不来自 JSON。
 	Dir string `json:"-"`
@@ -184,6 +186,11 @@ func (m *Manifest) Validate() error {
 	}
 	if m.Trust != "" && !caps.ValidTrust(caps.Trust(m.Trust)) {
 		return fail("trust 非法(只允许 builtin/official/verified/third-party),得到 %q", m.Trust)
+	}
+	switch m.Activation {
+	case "", "startup", "on-demand":
+	default:
+		return fail("activation 非法(只允许 startup/on-demand),得到 %q", m.Activation)
 	}
 	for name, constraint := range m.Engines {
 		if name != "ada" {

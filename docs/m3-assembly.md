@@ -181,17 +181,21 @@ go run ./cmd/ada up   --preset examples/presets/ts-only.preset.json
 | ts 源码/Artifact 模式装载并挂载 | `loader.TestTSSourceLookup`、`loader.TestTSArtifactLookup` |
 | 清单信息不足/未知 kind / 扫描排除规则 | `loader.TestTSLookupErrors`、`loader.TestCollectSources` |
 | Inspect 能看到 fiber/服务/effect 标签 | `kernel.TestInspectShowsEffects` |
+| 延迟激活:startup only / Ensure 幂等 / 错误 | `assemble.TestUpLazyMountsStartupOnly`、`TestEnsureMounts`、`TestEnsureErrors` |
+| startup 失败逆序回滚 | `assemble.TestUpLazyStartupFailureRollsBack` |
+| activation 校验 | `plugin.TestActivation` |
 | 清单信息不足/未知 kind / 扫描排除规则 | `loader.TestTSLookupErrors`、`loader.TestCollectSources` |
 
 ## 9. 已知边界与下一步
 
-1. **install / 签名 / capability** 未做(M5):`ada plan/up` 只读本地目录。
+1. **install / 签名 / capability** 未做在这里(见 M5 文档):`ada plan/up` 只读本地目录。
 2. **bundle / profile 未做**:当前 preset 是单层;设计 §12.4 的多级 patch 与 profile 继承还没实现。
 3. **版本约束缺失**:`inject` 只按服务名匹配,没有「期望 provider ≥ v2」;内核对 `MinVersion` 已有支持,plan 还没用上。
 4. **`ada inspect` 不含 JS 侧 effect**:bridge 的 effect 由 Apply disposer 执行,不进入内核快照(见 m2-execution §2.3)。
 5. **Go 插件无法从 CLI 动态加载**:Go 插件必须编译进宿主,CLI 只对 ts 插件完整可用。
 6. **隔离槽**:`Isolate` 语义还没进入清单(`isolate: { shell: true }`)。
 7. **热重载/增量编译**未做:每次 `ada up` 都是全量编译。
+8. **自动触发未做**:延迟激活只有宿主显式 `Ensure`;`onService`/`onCron` 触发器未实现。
 
 ## 10. 验证命令
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -88,30 +89,139 @@ func Up(app *kernel.App, manifests []*plugin.Manifest, plan *Report, lookup Look
 	}
 
 	for _, id := range plan.Order {
-		m := byID[id]
-		if m == nil {
-			return rollback(id, fmt.Errorf("计划里的插件在清单集合中不存在"))
-		}
-		if lookup == nil {
-			return rollback(id, fmt.Errorf("没有为插件类型 %q 提供 Lookup", m.Kind))
-		}
-		p, err := lookup(m)
+		fiber, err := mountOne(app, byID[id], lookup, report)
 		if err != nil {
-			return rollback(id, fmt.Errorf("解析实现失败: %w", err))
-		}
-		fiber, err := app.Plugin(p, kernel.NewConfig(m.Config))
-		if err != nil {
-			return rollback(id, fmt.Errorf("挂载失败: %w", err))
+			return rollback(id, err)
 		}
 		mounted = append(mounted, fiber)
-
-		rctx, cancel := context.WithTimeout(context.Background(), readyTimeout)
-		readyErr := fiber.Ready(rctx)
-		cancel()
-		if readyErr != nil {
-			return rollback(id, fmt.Errorf("未就绪(状态 %s): %w", fiber.State(), readyErr))
-		}
-		report.Fibers[id] = fiber.ID()
 	}
 	return report, nil
+}
+
+// mountOne 挂载一个插件并等待就绪;失败时返回可读错误。
+func mountOne(app *kernel.App, m *plugin.Manifest, lookup Lookup, report *UpReport) (*kernel.Fiber, error) {
+	if m == nil {
+		return nil, fmt.Errorf("计划里的插件在清单集合中不存在")
+	}
+	if lookup == nil {
+		return nil, fmt.Errorf("没有为插件类型 %q 提供 Lookup", m.Kind)
+	}
+	p, err := lookup(m)
+	if err != nil {
+		return nil, fmt.Errorf("解析实现失败: %w", err)
+	}
+	fiber, err := app.Plugin(p, kernel.NewConfig(m.Config))
+	if err != nil {
+		return nil, fmt.Errorf("挂载失败: %w", err)
+	}
+	rctx, cancel := context.WithTimeout(context.Background(), readyTimeout)
+	readyErr := fiber.Ready(rctx)
+	cancel()
+	if readyErr != nil {
+		state := fiber.State()
+		_ = fiber.Dispose(context.Background())
+		return nil, fmt.Errorf("未就绪(状态 %s): %w", state, readyErr)
+	}
+	report.Fibers[m.ID] = fiber.ID()
+	return fiber, nil
+}
+
+// Deferred 是延迟激活插件的句柄:宿主在需要时调用 Ensure 挂载。
+type Deferred struct {
+	app     *kernel.App
+	byID    map[string]*plugin.Manifest
+	lookup  Lookup
+	mounted map[string]*kernel.Fiber
+}
+
+// UpLazy 只挂载 activation=startup 的插件,on-demand 插件留给 Deferred.Ensure。
+//
+// 注意:on-demand 插件如果提供了别人 inject 的服务,依赖它的插件会保持 pending,
+// 直到 Ensure 挂载该插件。装配计划仍按依赖图排序,不区分激活方式。
+func UpLazy(app *kernel.App, manifests []*plugin.Manifest, plan *Report, lookup Lookup) (*UpReport, *Deferred, error) {
+	if app == nil {
+		return nil, nil, &UpError{Code: CodeUp, Plugin: "-", Cause: errors.New("app 不能为 nil")}
+	}
+	if plan == nil || !plan.OK() {
+		if plan == nil {
+			return nil, nil, &UpError{Code: CodeUp, Plugin: "-", Cause: errors.New("缺少装配计划")}
+		}
+		return nil, nil, plan.Err()
+	}
+	byID := make(map[string]*plugin.Manifest, len(manifests))
+	for _, m := range manifests {
+		byID[m.ID] = m
+	}
+
+	report := &UpReport{Order: append([]string{}, plan.Order...), Fibers: map[string]string{}}
+	mounted := make([]*kernel.Fiber, 0, len(plan.Order))
+	for _, id := range plan.Order {
+		m := byID[id]
+		if m != nil && m.Activation == "on-demand" {
+			continue
+		}
+		fiber, err := mountOne(app, m, lookup, report)
+		if err != nil {
+			for i := len(mounted) - 1; i >= 0; i-- {
+				_ = mounted[i].Dispose(context.Background())
+			}
+			return report, nil, &UpError{Code: CodeUp, Plugin: id, Cause: err, RolledBack: len(mounted)}
+		}
+		mounted = append(mounted, fiber)
+	}
+
+	d := &Deferred{app: app, byID: byID, lookup: lookup, mounted: map[string]*kernel.Fiber{}}
+	return report, d, nil
+}
+
+// IDs 返回可延迟激活的插件 id(按计划顺序)。
+func (d *Deferred) IDs() []string {
+	out := make([]string, 0, len(d.byID))
+	// 保持插入顺序意义不大,调用方主要用它诊断;按 id 排序更稳定。
+	ids := make([]string, 0, len(d.byID))
+	for id, m := range d.byID {
+		if m != nil && m.Activation == "on-demand" {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	out = append(out, ids...)
+	return out
+}
+
+// Ensure 挂载一个 on-demand 插件并等待就绪;重复调用返回同一个 fiber。
+func (d *Deferred) Ensure(ctx context.Context, id string) (*kernel.Fiber, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if f, ok := d.mounted[id]; ok && f != nil && f.State() != kernel.Disposed {
+		return f, nil
+	}
+	m, ok := d.byID[id]
+	if !ok {
+		return nil, fmt.Errorf("assemble: 未知的延迟插件 %q", id)
+	}
+	if m.Activation != "on-demand" {
+		return nil, fmt.Errorf("assemble: 插件 %q 不是 on-demand(activation=%q)", id, m.Activation)
+	}
+	if d.lookup == nil {
+		return nil, fmt.Errorf("assemble: 没有为插件类型 %q 提供 Lookup", m.Kind)
+	}
+	p, err := d.lookup(m)
+	if err != nil {
+		return nil, fmt.Errorf("assemble: 解析 %q 实现失败: %w", id, err)
+	}
+	f, err := d.app.Plugin(p, kernel.NewConfig(m.Config))
+	if err != nil {
+		return nil, fmt.Errorf("assemble: 挂载 %q 失败: %w", id, err)
+	}
+	rctx, cancel := context.WithTimeout(ctx, readyTimeout)
+	readyErr := f.Ready(rctx)
+	cancel()
+	if readyErr != nil {
+		_ = f.Dispose(context.Background())
+		return nil, fmt.Errorf("assemble: %q 未就绪(状态 %s): %w", id, f.State(), readyErr)
+	}
+	d.mounted[id] = f
+	return f, nil
 }

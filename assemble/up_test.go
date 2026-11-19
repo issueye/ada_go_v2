@@ -85,9 +85,9 @@ func TestUpRollsBackOnFailure(t *testing.T) {
 		t.Fatalf("b 失败时应返回错误")
 	}
 	var ue *assemble.UpError
-	// 失败插件自身也在 mounted 里(它会被 Disposed 回收),所以回滚数量是 2。
-	if !errors.As(err, &ue) || ue.Plugin != "b" || ue.RolledBack != 2 {
-		t.Fatalf("错误应点名 b 且回滚 2 个,实际 %v", err)
+	// 失败插件本身已被 mountOne 回收,回滚计数只算此前成功挂载的插件。
+	if !errors.As(err, &ue) || ue.Plugin != "b" || ue.RolledBack != 1 {
+		t.Fatalf("错误应点名 b 且回滚 1 个,实际 %v", err)
 	}
 	if !disposed {
 		t.Fatalf("已挂载的 a 应被回滚卸载")

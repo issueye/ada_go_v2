@@ -132,3 +132,17 @@ func TestEngines(t *testing.T) {
 		t.Fatalf("未知 engine key 应被拒绝")
 	}
 }
+
+// activation 只允许 startup / on-demand。
+func TestActivation(t *testing.T) {
+	valid := &plugin.Manifest{ID: "p", Version: "0.1.0", Kind: "go", Activation: "on-demand"}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("合法 activation 应通过: %v", err)
+	}
+	for _, bad := range []string{"lazy", "OnDemand", "cold"} {
+		m := &plugin.Manifest{ID: "p", Version: "0.1.0", Kind: "go", Activation: bad}
+		if err := m.Validate(); err == nil {
+			t.Fatalf("非法 activation %q 应被拒绝", bad)
+		}
+	}
+}
