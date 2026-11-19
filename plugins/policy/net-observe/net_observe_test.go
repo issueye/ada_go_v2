@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/adag/ada-go/v2/kernel"
@@ -92,5 +93,22 @@ func TestKernelIntegration(t *testing.T) {
 	}).WithInject("net"), nil)
 	if payload == nil || payload["host"] != "127.0.0.1" || payload["plugin"] != "consumer" {
 		t.Fatalf("事件 payload 不正确: %+v", payload)
+	}
+}
+
+// 4. 错误文本里的 URL query 被脱敏。
+func TestScrubsError(t *testing.T) {
+	const raw = "http://example.com/x?token=secret"
+	var rec netobserve.Record
+	c := netobserve.New(&fakeClient{err: errors.New("请求失败: " + raw)},
+		func(_ context.Context, r netobserve.Record) { rec = r }, nil)
+	if _, err := c.Do(context.Background(), seamnet.Request{URL: raw}); err == nil {
+		t.Fatalf("应返回错误")
+	}
+	if strings.Contains(rec.Err, "secret") {
+		t.Fatalf("错误文本泄露 token: %s", rec.Err)
+	}
+	if !strings.Contains(rec.Err, "REDACTED") && !strings.Contains(rec.Err, "http://example.com/x") {
+		t.Fatalf("脱敏结果不正确: %s", rec.Err)
 	}
 }

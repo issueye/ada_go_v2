@@ -7,6 +7,7 @@ package netobserve
 import (
 	"context"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/adag/ada-go/v2/kernel"
@@ -66,10 +67,30 @@ func (o *observer) Do(ctx context.Context, req seamnet.Request) (seamnet.Respons
 		rec.Plugin = id
 	}
 	if err != nil {
-		rec.Err = err.Error()
+		rec.Err = scrubError(err.Error(), req.URL)
 	}
 	o.emit(ctx, rec)
 	return resp, err
+}
+
+// scrubError 从错误文本里删掉 URL query(可能含 token)与 userinfo。
+func scrubError(msg, rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return msg
+	}
+	if u.RawQuery != "" {
+		msg = strings.ReplaceAll(msg, u.RawQuery, "REDACTED")
+	}
+	if u.User != nil && u.User.String() != "" {
+		msg = strings.ReplaceAll(msg, u.User.String()+"@", "")
+	}
+	// 整段 URL 统一替换为不含 query/fragment/user 的形式。
+	if u.Scheme != "" && u.Host != "" {
+		safe := u.Scheme + "://" + u.Host + u.Path
+		msg = strings.ReplaceAll(msg, rawURL, safe)
+	}
+	return msg
 }
 
 type config struct {

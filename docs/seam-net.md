@@ -56,7 +56,7 @@ plugins/policy/net-observe/  策略:每次抓取后广播 net/observe(观察,不
 | `plugin` | string | 调用者插件 id |
 | `error` | string | 失败文本(成功时缺省) |
 
-**不含 body/headers**(避免把 secret/内容写进事件);观察不阻断,`net-guard` 的拒绝也会被记录(priority=250 最外层)。
+**不含 body/headers**(避免把 secret/内容写进事件);`error` 文本会去掉 URL query 与 userinfo(query 置换为 `REDACTED`);观察不阻断,`net-guard` 的拒绝也会被记录(priority=250 最外层)。
 
 ## 5. 测试矩阵
 
@@ -76,6 +76,7 @@ plugins/policy/net-observe/  策略:每次抓取后广播 net/observe(观察,不
 | net-guard:审批批准放行 | `netguard.TestEscalationAllow` |
 | net-guard:审批拒绝/未开启 escalate 拒绝 | `netguard.TestEscalationDeny` |
 | observe:成功/失败/内核事件身份 | `netobserve.TestRecordsSuccess`、`TestRecordsError`、`TestKernelIntegration` |
+| observe:错误文本脱敏 | `netobserve.TestScrubsError` |
 
 ## 6. 下一步
 
