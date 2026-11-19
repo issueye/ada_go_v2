@@ -12,7 +12,7 @@ plugins/policy/net-guard/    策略:principal + net.fetch.<host> + 私网段拒�
 plugins/policy/net-observe/  策略:每次抓取后广播 net/observe(观察,不阻断)
 ```
 
-策略已有 `net-guard`:按 `net.fetch.<host>`(可用 `net.fetch` 通配)向 Broker 授权,默认拒绝私有/本地地址;审批与脱敏未实现。
+策略已有 `net-guard`:按 `net.fetch.<host>`(可用 `net.fetch` 通配)向 Broker 授权,默认拒绝私有/本地地址;`escalate=true` 且注入 approval 服务时,未授权 host 可走审批(获批一次放行);脱敏未实现。
 
 ## 2. 契约要点
 
@@ -34,7 +34,7 @@ plugins/policy/net-observe/  策略:每次抓取后广播 net/observe(观察,不
 
 ## 4. 偏差与边界
 
-1. **策略只有 `net-guard`**:caps 强制、字面私网与**域名解析后私网**拒绝已有;审批(访问未知 host 升级)与响应脱敏未实现;`net-http` 本身仍可访问任意 http(s),不装 net-guard 就没有门禁。
+1. **策略只有 `net-guard`**:caps 强制、字面/解析私网拒绝、可选审批升级已有;响应脱敏未实现;`net-http` 本身仍可访问任意 http(s),不装 net-guard 就没有门禁。
 2. **没有请求体大小上限**:`Request.Body` 由调用方控制;provider 不限制。
 3. **响应体全量读入内存**(到上限为止),没有流式接口。
 4. **没有代理/证书/HTTP2 配置**;用默认 Transport。
@@ -73,6 +73,8 @@ plugins/policy/net-observe/  策略:每次抓取后广播 net/observe(观察,不
 | net-guard:DNS 解析到私网拒绝 | `netguard.TestResolvedPrivateDenied` |
 | net-guard:DNS 解析公网放行 | `netguard.TestResolvedPublicAllowed` |
 | net-guard:DNS 解析失败拒绝 | `netguard.TestResolverErrorDenied` |
+| net-guard:审批批准放行 | `netguard.TestEscalationAllow` |
+| net-guard:审批拒绝/未开启 escalate 拒绝 | `netguard.TestEscalationDeny` |
 | observe:成功/失败/内核事件身份 | `netobserve.TestRecordsSuccess`、`TestRecordsError`、`TestKernelIntegration` |
 
 ## 6. 下一步

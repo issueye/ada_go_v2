@@ -12,6 +12,7 @@ import (
 	netguard "github.com/adag/ada-go/v2/plugins/policy/net-guard"
 	capsstatic "github.com/adag/ada-go/v2/plugins/provider/caps-static"
 	nethttp "github.com/adag/ada-go/v2/plugins/provider/net-http"
+	seamapproval "github.com/adag/ada-go/v2/plugins/seam/approval"
 	seamnet "github.com/adag/ada-go/v2/plugins/seam/net"
 )
 
@@ -165,5 +166,50 @@ func TestResolverErrorDenied(t *testing.T) {
 	})
 	if _, err := g.Do(kernel.WithPrincipal(context.Background(), "p1"), seamnet.Request{URL: "http://flaky.example/x"}); err == nil {
 		t.Fatalf("解析失败应拒绝")
+	}
+}
+
+type staticApprover struct {
+	name  string
+	allow bool
+}
+
+func (a *staticApprover) Name() string { return a.name }
+func (a *staticApprover) Approve(context.Context, seamapproval.Request) (seamapproval.Decision, error) {
+	return seamapproval.Decision{Allow: a.allow, Approver: a.name}, nil
+}
+
+func approvalRegistry(t *testing.T, allow bool) *seamapproval.Registry {
+	t.Helper()
+	reg := seamapproval.NewRegistry()
+	if _, err := reg.Register(&staticApprover{name: "test", allow: allow}); err != nil {
+		t.Fatalf("注册审批人失败: %v", err)
+	}
+	return reg
+}
+
+// 8. 未授权 host + escalate:批准后放行。
+func TestEscalationAllow(t *testing.T) {
+	fake := &fakeClient{}
+	b := brokerWith(t, map[string][]string{})
+	g := netguard.NewWithEscalation(fake, b, true, nil, approvalRegistry(t, true), true)
+	if _, err := g.Do(kernel.WithPrincipal(context.Background(), "p1"), seamnet.Request{URL: "http://example.com/x"}); err != nil {
+		t.Fatalf("批准后应放行: %v", err)
+	}
+	if !fake.called {
+		t.Fatalf("放行时应调用底层")
+	}
+}
+
+// 9. 拒绝审批 / 未开启 escalate → 拒绝。
+func TestEscalationDeny(t *testing.T) {
+	req := seamnet.Request{URL: "http://example.com/x"}
+	g := netguard.NewWithEscalation(&fakeClient{}, brokerWith(t, nil), true, nil, approvalRegistry(t, false), true)
+	if _, err := g.Do(kernel.WithPrincipal(context.Background(), "p1"), req); err == nil {
+		t.Fatalf("审批拒绝应拒绝")
+	}
+	g2 := netguard.NewWithEscalation(&fakeClient{}, brokerWith(t, nil), true, nil, approvalRegistry(t, true), false)
+	if _, err := g2.Do(kernel.WithPrincipal(context.Background(), "p1"), req); err == nil {
+		t.Fatalf("未开启 escalate 应拒绝")
 	}
 }

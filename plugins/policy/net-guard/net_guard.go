@@ -11,6 +11,7 @@ import (
 
 	"github.com/adag/ada-go/v2/caps"
 	"github.com/adag/ada-go/v2/kernel"
+	seamapproval "github.com/adag/ada-go/v2/plugins/seam/approval"
 	seamnet "github.com/adag/ada-go/v2/plugins/seam/net"
 )
 
@@ -49,11 +50,21 @@ func NewWithResolver(inner seamnet.Client, broker *caps.Broker, allowPrivate boo
 	return &guard{inner: inner, broker: broker, allowPrivate: allowPrivate, resolver: resolver}
 }
 
+// NewWithEscalation 在授权失败时可走 approval 升级(获批一次后放行本次请求)。
+func NewWithEscalation(inner seamnet.Client, broker *caps.Broker, allowPrivate bool, resolver Resolver, reg *seamapproval.Registry, escalate bool) seamnet.Client {
+	g := NewWithResolver(inner, broker, allowPrivate, resolver).(*guard)
+	g.approval = reg
+	g.escalate = escalate
+	return g
+}
+
 type guard struct {
 	inner        seamnet.Client
 	broker       *caps.Broker
 	allowPrivate bool
 	resolver     Resolver
+	approval     *seamapproval.Registry
+	escalate     bool
 }
 
 func (g *guard) Do(ctx context.Context, req seamnet.Request) (seamnet.Response, error) {
@@ -84,7 +95,16 @@ func (g *guard) Do(ctx context.Context, req seamnet.Request) (seamnet.Response, 
 		return seamnet.Response{}, seamnet.Denied("缺少调用者身份:请使用 ctx.Context()")
 	}
 	if err := g.broker.Authorize(ctx, id, "net.fetch."+host, req.URL); err != nil {
-		return seamnet.Response{}, seamnet.Denied(err.Error())
+		if !g.escalate || g.approval == nil {
+			return seamnet.Response{}, seamnet.Denied(err.Error())
+		}
+		dec, aerr := seamapproval.Ask(ctx, g.approval, "", seamapproval.Request{
+			ID: "net:" + req.Method + ":" + host, Source: "net", Op: req.Method,
+			Target: req.URL, Reason: "未授权的 net.fetch host: " + host,
+		})
+		if aerr != nil || !dec.Allow {
+			return seamnet.Response{}, seamnet.Denied("审批未通过: " + host)
+		}
 	}
 	return g.inner.Do(ctx, req)
 }
@@ -104,6 +124,7 @@ func isPrivateHost(host string) bool {
 type config struct {
 	Grants       map[string][]string `json:"grants,omitempty"`
 	AllowPrivate bool                `json:"allowPrivate,omitempty"`
+	Escalate     bool                `json:"escalate,omitempty"`
 }
 
 // Plugin 返回 net-guard 插件:inject net(可选 caps 服务),注册授权装饰器。
@@ -132,8 +153,12 @@ func Plugin() kernel.Plugin {
 				}
 			}
 		}
+		var approvalReg *seamapproval.Registry
+		if v, ok := ctx.TryService("approval"); ok {
+			approvalReg, _ = v.(*seamapproval.Registry)
+		}
 		return chain.Decorate(func(inner seamnet.Client) seamnet.Client {
-			return New(inner, broker, conf.AllowPrivate)
+			return NewWithEscalation(inner, broker, conf.AllowPrivate, nil, approvalReg, conf.Escalate)
 		}, Priority)
 	}).WithOptional("caps", "net")
 }
