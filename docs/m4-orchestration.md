@@ -62,7 +62,22 @@ RealClock / FakeClock ──▶ Scheduler
 - `release` 幂等:重复调用不会把并发计数减成负数;
 - 配额是**服务侧约束**,因此放在 L2 基础设施;调用方按错误码选择退避或降级。
 
-## 5. 测试矩阵
+## 5. 定时任务(jobs)
+
+`sched.Scheduler.Job(spec, store)` 在 `Cron` 之上加两件事:
+
+| 能力 | 语义 |
+|---|---|
+| `JobPolicy` | `skip`(不补跑)/ `once`(补最近一次,默认)/ `all`(补全部,上限 1000 次) |
+| `JobStore` | `LastRun` / `SetLastRun`(同时释放租约)/ `AcquireLease`(原子抢租约) |
+| 租约 | 单次执行 `JobLease=5m`;被其它实例持有时跳过本次,**不推进 lastRun** |
+| 首次运行 | 没有 lastRun 时不补跑历史,等下一次触发 |
+
+- 补跑发生在任务启动时(停机/重启后),之后按 cron 正常触发;
+- `SetLastRun` 同时释放租约;成功与失败都推进 lastRun(避免失败后无限重跑);
+- `MemoryJobStore` 是测试与最小宿主实现;持久化 store 由宿主提供。
+
+## 6. 测试矩阵
 
 | 场景 | 用例 |
 |---|---|
@@ -79,17 +94,19 @@ RealClock / FakeClock ──▶ Scheduler
 | Stop 后不再触发且拒绝新注册 | `sched.TestStopStopsEverything` |
 | 并发上限 / 速率上限 / 窗口重置 / release 幂等 / 并发申请(-race) | `sched` 之外的 `quota` 6 个用例 |
 | 非法参数/非法 cron 报错 | `sched.TestInvalidRegistrations` |
+| jobs 补跑策略(skip/once/all)与首次运行 | `sched.TestJobCatchUpOnce`、`TestJobCatchUpAll`、`TestJobCatchUpSkip`、`TestJobFirstRunWaitsNext` |
+| 租约占用/释放、非法声明 | `sched.TestJobLeaseBlocks`、`TestMemoryJobStoreLease`、`TestJobValidation` |
 
-## 6. 已知边界与下一步
+## 7. 已知边界与下一步
 
-1. **`flow` 只做了顺序子集**:use/event/when/abort/retry/timeout/checkpoint/resume 已落地(见 [m4-flow.md](m4-flow.md));parallel/fanout/forEach/subflow/Compensate 未做。
+1. **`flow` 已做顺序/并发子集**:use/event/parallel/forEach/compensate/when/retry/timeout/checkpoint/resume 已落地(见 [m4-flow.md](m4-flow.md));fanout/subflow 未做。
 2. **激活与闲置回收未做**:§12.3 的 `onService/onCron/...` 延迟激活、`idleTTL` 回收需要 kernel 侧调度挂钩。
 3. **配额只做了速率与并发**:`MaxCPUTime`/`MaxMemory` 需要计量,全局 governor 与跨插件总并发上限未做。
-4. **jobs 的补跑策略未做**:`skip/once/all` 与 `store` 租约(防多窗口重复执行)。
+4. **jobs 已做补跑与租约**:`skip/once/all` + `MemoryJobStore`;没有持久化 store 与跨进程分布式锁(租约是单机语义)。
 5. **时区**:cron 用传入 `time.Location` 计算;`Asia/Shanghai` 这类 IANA 时区由宿主的 `Clock.Now()` 负责。
 6. 与内核的接线未做:目前 `sched` 只能由宿主/插件在代码里使用,还没有作为服务暴露。
 
-## 7. 验证命令
+## 8. 验证命令
 
 ```powershell
 go test -race -count=1 ./sched
