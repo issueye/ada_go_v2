@@ -9,6 +9,7 @@
 plugins/seam/net/            契约:Request/Response/Client/Chain(只类型与链)
 plugins/provider/net-http/   实现:基于 net/http 的一次抓取
 plugins/policy/net-guard/    策略:principal + net.fetch.<host> + 私网段拒绝
+plugins/policy/net-observe/  策略:每次抓取后广播 net/observe(观察,不阻断)
 ```
 
 策略已有 `net-guard`:按 `net.fetch.<host>`(可用 `net.fetch` 通配)向 Broker 授权,默认拒绝私有/本地地址;审批与脱敏未实现。
@@ -41,6 +42,22 @@ plugins/policy/net-guard/    策略:principal + net.fetch.<host> + 私网段拒�
 6. **SSRF 防护在 policy 层**:`net-guard` 拒绝字面私网与解析后的私网 IP;但存在 **TOCTOU**(校验时解析与请求时解析可能不同),且 provider 直接用默认 Transport,不做连接级地址校验。
 7. **重定向后的最终 URL** 记录在 `Response.URL`,但中间跳转不可见。
 
+### 4.1 `net/observe` 事件
+
+`policy/net-observe` 在每次 Do 之后 `Emit("net/observe", payload)`:
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `method` | string | 请求方法(空 = GET) |
+| `host` | string | URL host(不含 path/query) |
+| `status` | int | 响应状态码(失败/拒绝时 0) |
+| `bytes` | int64 | 响应体字节数 |
+| `durationMs` | int64 | 耗时(毫秒) |
+| `plugin` | string | 调用者插件 id |
+| `error` | string | 失败文本(成功时缺省) |
+
+**不含 body/headers**(避免把 secret/内容写进事件);观察不阻断,`net-guard` 的拒绝也会被记录(priority=250 最外层)。
+
 ## 5. 测试矩阵
 
 | 场景 | 用例 |
@@ -56,6 +73,7 @@ plugins/policy/net-guard/    策略:principal + net.fetch.<host> + 私网段拒�
 | net-guard:DNS 解析到私网拒绝 | `netguard.TestResolvedPrivateDenied` |
 | net-guard:DNS 解析公网放行 | `netguard.TestResolvedPublicAllowed` |
 | net-guard:DNS 解析失败拒绝 | `netguard.TestResolverErrorDenied` |
+| observe:成功/失败/内核事件身份 | `netobserve.TestRecordsSuccess`、`TestRecordsError`、`TestKernelIntegration` |
 
 ## 6. 下一步
 

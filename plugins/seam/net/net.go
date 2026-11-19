@@ -137,6 +137,9 @@ func Denied(reason string) error {
 
 const pluginID = "seam-net"
 
+// EventObserve 是 net 操作观察事件(观察不是门禁;payload 见 docs/seam-net.md)。
+const EventObserve = "net/observe"
+
 // Plugin 返回 seam/net 插件:只提供 net 服务(Chain)。
 func Plugin() kernel.Plugin {
 	return kernel.Func(pluginID, func(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, error) {
