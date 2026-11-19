@@ -31,8 +31,8 @@ export function run(ctx: Ctx) {
 		Artifact: art,
 		Logf:     func(f string, a ...any) { logs = append(logs, fmt.Sprintf(f, a...)) },
 		Host: jsrt.Host{
-			Provide: func(name string, v any) error {
-				providedName, providedValue = name, v
+			Provide: func(name string, svc *jsrt.Service) error {
+				providedName, providedValue = name, svc
 				return nil
 			},
 			Emit: func(event string, payload any) error {
@@ -55,8 +55,12 @@ export function run(ctx: Ctx) {
 	if providedName != "svc" {
 		t.Fatalf("ctx.provide 的服务名不正确: %q", providedName)
 	}
-	if m, ok := providedValue.(map[string]any); !ok || asInt(t, m["n"]) != 1 {
-		t.Fatalf("ctx.provide 的值不正确: %v(%T)", providedValue, providedValue)
+	svc, ok := providedValue.(*jsrt.Service)
+	if !ok {
+		t.Fatalf("ctx.provide 应产出 *jsrt.Service,实际 %T", providedValue)
+	}
+	if svc.Name() != "svc" || asInt(t, svc.Data()["n"]) != 1 {
+		t.Fatalf("ctx.provide 的内容不正确: name=%q data=%v", svc.Name(), svc.Data())
 	}
 	if emittedEvent != "ev" || emittedPayload != "payload" {
 		t.Fatalf("ctx.emit 不正确: %q %v", emittedEvent, emittedPayload)

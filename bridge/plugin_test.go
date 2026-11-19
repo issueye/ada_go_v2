@@ -6,6 +6,7 @@ import (
 
 	"github.com/adag/ada-go/v2/bridge"
 	"github.com/adag/ada-go/v2/compile"
+	"github.com/adag/ada-go/v2/jsrt"
 	"github.com/adag/ada-go/v2/kernel"
 )
 
@@ -31,7 +32,11 @@ type Ctx = {
 }
 export function apply(ctx: Ctx, cfg: { name: string }) {
   ctx.log(greet(cfg.name))
-  ctx.provide("ts.greeting", { text: greet(cfg.name), level: Level.High })
+  ctx.provide("ts.greeting", {
+    text: greet(cfg.name),
+    level: Level.High,
+    render() { return this.text + "!" },
+  })
   ctx.emit("ts/ready", { name: cfg.name })
   ctx.on("ts/ping", (p) => ctx.log("ping:" + p.n))
 }`,
@@ -46,15 +51,20 @@ export function apply(ctx: Ctx, cfg: { name: string }) {
 	a := kernel.New(kernel.Options{})
 	t.Cleanup(func() { _ = a.Stop(context.Background()) })
 
-	// 消费者先挂:依赖 JS 插件提供的服务,应当在 JS 提供后自动激活。
-	var got any
+	// 消费者先挂:依赖 JS 插件提供的服务,应当在 JS 提供后自动激活;
+	// 并且真的调用一次 JS 方法(内核 → JS 的反向调用)。
+	var (
+		gotText  any
+		rendered any
+	)
 	consumer := kernel.Func("ts-consumer", func(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, error) {
-		v, err := ctx.Service("ts.greeting")
+		svc, err := kernel.Service[*jsrt.Service](ctx, "ts.greeting")
 		if err != nil {
 			return nil, err
 		}
-		got = v
-		return nil, nil
+		gotText = svc.Data()["text"]
+		rendered, err = svc.Call(context.Background(), "render")
+		return nil, err
 	}).WithInject("ts.greeting")
 	cf, err := a.Plugin(consumer, kernel.NewConfig(nil))
 	if err != nil {
@@ -83,9 +93,11 @@ export function apply(ctx: Ctx, cfg: { name: string }) {
 	if cf.State() != kernel.Active {
 		t.Fatalf("依赖 JS 服务的消费者应被激活,实际 %s", cf.State())
 	}
-	m, ok := got.(map[string]any)
-	if !ok || m["text"] != "hello, ada" {
-		t.Fatalf("消费者拿到的服务值不正确: %v(%T)", got, got)
+	if gotText != "hello, ada" {
+		t.Fatalf("消费者拿到的服务数据不正确: %v", gotText)
+	}
+	if rendered != "hello, ada!" {
+		t.Fatalf("JS 方法 render() 的返回值不正确: %v", rendered)
 	}
 	if eventPayload == nil {
 		t.Fatalf("JS 侧 emit 的事件没有派发")

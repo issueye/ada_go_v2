@@ -12,6 +12,7 @@ import (
 
 	"github.com/adag/ada-go/v2/bridge"
 	"github.com/adag/ada-go/v2/compile"
+	"github.com/adag/ada-go/v2/jsrt"
 	"github.com/adag/ada-go/v2/kernel"
 )
 
@@ -25,7 +26,11 @@ type Ctx = {
 }
 export function apply(ctx: Ctx, cfg: { name: string }) {
   ctx.log(format(cfg.name))
-  ctx.provide("ts.greeting", { text: format(cfg.name), level: Level.High })
+  ctx.provide("ts.greeting", {
+    text: format(cfg.name),
+    level: Level.High,
+    render(): string { return this.text + "!" },
+  })
   ctx.emit("ts/ready", { name: cfg.name })
   ctx.on("ts/ping", (p) => ctx.log("收到 ping:" + p.n))
 }`
@@ -57,15 +62,19 @@ func main() {
 	app := kernel.New(kernel.Options{Logger: logger})
 	defer func() { _ = app.Stop(context.Background()) }()
 
-	// Go 侧消费者:先挂载,依赖 JS 提供的服务,等 JS 提供后自动激活。
-	var seen any
+	// Go 侧消费者:先挂载,依赖 JS 提供的服务;激活后调用一次 JS 方法。
+	var (
+		seenText any
+		rendered any
+	)
 	consumer := kernel.Func("ts-consumer", func(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, error) {
-		v, err := ctx.Service("ts.greeting")
+		svc, err := kernel.Service[*jsrt.Service](ctx, "ts.greeting")
 		if err != nil {
 			return nil, err
 		}
-		seen = v
-		return nil, nil
+		seenText = svc.Data()["text"]
+		rendered, err = svc.Call(context.Background(), "render")
+		return nil, err
 	}).WithInject("ts.greeting")
 	if _, err := app.Plugin(consumer, kernel.NewConfig(nil)); err != nil {
 		fmt.Println("挂载消费者失败:", err)
@@ -88,7 +97,8 @@ func main() {
 	// 反向回调:内核派发事件,JS 处理器在自己的 goroutine 上执行。
 	app.Root().Emit("ts/ping", map[string]any{"n": 1})
 
-	fmt.Println("Go 消费者拿到的服务值:", seen)
+	fmt.Println("Go 消费者拿到的服务数据:", seenText)
+	fmt.Println("Go 调用 JS 方法 render():", rendered)
 	if fiber.State() != kernel.Active {
 		os.Exit(1)
 	}

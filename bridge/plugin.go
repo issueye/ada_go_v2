@@ -36,7 +36,7 @@ type Options struct {
 
 type provideReq struct {
 	name  string
-	value any
+	value *jsrt.Service
 }
 
 type emitReq struct {
@@ -71,7 +71,7 @@ func (s *stager) on(event string, invoke func(ctx context.Context, payload any) 
 	return nil
 }
 
-func (s *stager) provide(name string, value any) error {
+func (s *stager) provide(name string, value *jsrt.Service) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {

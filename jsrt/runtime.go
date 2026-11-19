@@ -32,13 +32,65 @@ var (
 	ErrBroken = errors.New("jsrt: 运行时已损坏")
 )
 
+// Service 是 JS 侧 ctx.provide 的产物,也是 Go 侧拿到的服务值。
+//
+// 对象上的函数成员变成方法(调用转发到 JS worker),其余成员按 JSON 转成 Data;
+// 非对象值(标量/数组)放在 Value 里。方法调用与普通调用共用中断/超时语义。
+type Service struct {
+	rt      *Runtime
+	name    string
+	methods []string
+	data    map[string]any
+	value   any
+	ids     map[string]uint64
+}
+
+// Name 返回服务名。
+func (s *Service) Name() string { return s.name }
+
+// Methods 返回方法名(排序后的副本)。
+func (s *Service) Methods() []string {
+	out := make([]string, len(s.methods))
+	copy(out, s.methods)
+	return out
+}
+
+// Data 返回非函数成员。返回值只读,调用方不得修改。
+func (s *Service) Data() map[string]any { return s.data }
+
+// Value 返回非对象服务的原始值;对象服务返回 nil。
+func (s *Service) Value() any { return s.value }
+
+// Call 调用服务方法。参数与返回值只走 JSON,与内核调用 JS 的其他入口一致。
+func (s *Service) Call(ctx context.Context, method string, args ...any) (any, error) {
+	id, ok := s.ids[method]
+	if !ok {
+		return nil, fmt.Errorf("jsrt: 服务 %q 没有方法 %q", s.name, method)
+	}
+	payload := make([][]byte, len(args))
+	for i, a := range args {
+		b, err := json.Marshal(a)
+		if err != nil {
+			return nil, fmt.Errorf("jsrt: 方法 %q 的参数 %d 无法序列化: %w", method, i, err)
+		}
+		payload[i] = b
+	}
+	return s.rt.invokeMethod(ctx, id, payload)
+}
+
+// handlerEntry 是登记在 worker 上的一次 JS 函数调用:函数本身与 this。
+type handlerEntry struct {
+	fn   moejs.Value
+	this moejs.Value
+}
+
 // Host 是 JS 侧 ctx 对象能调到的宿主能力。
 //
 // 回调在 JS 的 worker goroutine 上执行,所以实现方必须自己保证线程安全,
 // 并且**不得**直接操作内核状态——桥接层负责把请求暂存,回到内核协程再提交。
 // 回调返回 error 会变成 JS 异常;nil 表示该能力未启用。
 type Host struct {
-	Provide func(name string, value any) error
+	Provide func(name string, svc *Service) error
 	Emit    func(event string, payload any) error
 	// On 注册「内核 → JS」的回调。invoke 可以在任意 goroutine 上调用:
 	// 它会把请求投递到 worker 并在 ctx 取消时中断 JS。
@@ -75,9 +127,9 @@ type Runtime struct {
 	broken bool
 	closed bool
 
-	// handlers 是 ctx.on 注册的 JS 函数。只在 worker goroutine 上读写:
-	// 注册发生在 nativeOn(worker),调用发生在 invokeOnWorker(worker)。
-	handlers map[uint64]moejs.Value
+	// handlers 是 ctx.on 与 JS 服务方法共用的函数表。只在 worker goroutine 上读写:
+	// 注册与调用都发生在 worker 上。
+	handlers map[uint64]handlerEntry
 	nextID   uint64
 }
 
@@ -97,7 +149,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		jobs:     make(chan func()),
 		quit:     make(chan struct{}),
 		stopped:  make(chan struct{}),
-		handlers: make(map[uint64]moejs.Value),
+		handlers: make(map[uint64]handlerEntry),
 	}
 	go r.worker()
 
@@ -270,11 +322,11 @@ func (r *Runtime) nativeProvide(raw *moejs.Runtime) moejs.NativeFunc {
 		if !ok || name == "" {
 			return engine.Undefined(), fmt.Errorf("ctx.provide 的服务名必须是非空字符串")
 		}
-		value, err := raw.ToGo(args[1])
+		svc, err := r.describeService(raw, name, args[1])
 		if err != nil {
-			return engine.Undefined(), fmt.Errorf("ctx.provide 的值无法转换: %w", err)
+			return engine.Undefined(), err
 		}
-		if err := r.opts.Host.Provide(name, value); err != nil {
+		if err := r.opts.Host.Provide(name, svc); err != nil {
 			return engine.Undefined(), err
 		}
 		return engine.Undefined(), nil
@@ -462,7 +514,7 @@ func (r *Runtime) nativeOn(raw *moejs.Runtime) moejs.NativeFunc {
 		}
 		r.nextID++
 		id := r.nextID
-		r.handlers[id] = args[1]
+		r.handlers[id] = handlerEntry{fn: args[1], this: engine.Undefined()}
 		if err := r.opts.Host.On(event, func(ctx context.Context, payload any) (any, error) {
 			return r.invokeHandler(ctx, id, payload)
 		}); err != nil {
@@ -511,7 +563,7 @@ func (r *Runtime) invokeOnWorker(id uint64, payload []byte) callResult {
 	case raw == nil:
 		return callResult{err: ErrClosed}
 	}
-	fn, ok := r.handlers[id]
+	entry, ok := r.handlers[id]
 	if !ok {
 		return callResult{err: fmt.Errorf("jsrt: 事件处理器 %d 不存在", id)}
 	}
@@ -519,7 +571,7 @@ func (r *Runtime) invokeOnWorker(id uint64, payload []byte) callResult {
 	if err != nil {
 		return callResult{err: fmt.Errorf("jsrt: 事件载荷不是合法 JSON: %w", err)}
 	}
-	out, err := raw.CallFunction(fn, engine.Undefined(), arg)
+	out, err := raw.CallFunction(entry.fn, entry.this, arg)
 	if err != nil {
 		return callResult{err: r.wrap(raw, err)}
 	}
@@ -527,6 +579,108 @@ func (r *Runtime) invokeOnWorker(id uint64, payload []byte) callResult {
 	v, convErr := raw.ToGo(out)
 	if convErr != nil {
 		return callResult{value: nil}
+	}
+	return callResult{value: v}
+}
+
+// describeService 把 JS 侧给 ctx.provide 的值转成 Go 侧可用的 Service。
+//
+// 只认对象自身的属性:函数成为方法,其余按 JSON 成为数据。
+// 深层嵌套里的函数不会变成方法——「跨边界不传递函数」是 C3 的硬约束。
+func (r *Runtime) describeService(raw *moejs.Runtime, name string, v moejs.Value) (*Service, error) {
+	svc := &Service{rt: r, name: name, ids: map[string]uint64{}}
+	if !v.IsObject() {
+		data, err := raw.ToGo(v)
+		if err != nil {
+			return nil, fmt.Errorf("jsrt: 服务 %q 的值无法转换: %w", name, err)
+		}
+		svc.value = data
+		return svc, nil
+	}
+	realm := raw.Realm()
+	obj := v.AsObject()
+	svc.data = map[string]any{}
+	for _, key := range obj.OwnPropertyKeys() {
+		if key.IsSymbol() || key.IsPrivate() {
+			continue
+		}
+		keyName := key.GoString()
+		val, err := obj.GetProp(realm, key)
+		if err != nil {
+			return nil, fmt.Errorf("jsrt: 服务 %q 的属性 %q 读取失败: %w", name, keyName, err)
+		}
+		if engine.IsCallable(val) {
+			r.nextID++
+			id := r.nextID
+			// this 绑定到服务对象本身:方法里的 this.x 才能读到兄弟成员。
+			r.handlers[id] = handlerEntry{fn: val, this: v}
+			svc.ids[keyName] = id
+			svc.methods = append(svc.methods, keyName)
+			continue
+		}
+		data, err := raw.ToGo(val)
+		if err != nil {
+			return nil, fmt.Errorf("jsrt: 服务 %q 的属性 %q 无法转换(深层函数不能跨边界): %w", name, keyName, err)
+		}
+		svc.data[keyName] = data
+	}
+	sort.Strings(svc.methods)
+	return svc, nil
+}
+
+// invokeMethod 调用 JS 服务方法;可从任意 goroutine 调用。
+func (r *Runtime) invokeMethod(ctx context.Context, id uint64, payload [][]byte) (any, error) {
+	res := make(chan callResult, 1)
+	if err := r.enqueue(ctx, func() { res <- r.invokeMethodOnWorker(id, payload) }); err != nil {
+		return nil, err
+	}
+	select {
+	case got := <-res:
+		return got.value, got.err
+	case <-ctx.Done():
+		r.interrupt(ctx.Err())
+		select {
+		case <-res:
+			r.clearInterrupt()
+			return nil, ctx.Err()
+		case <-time.After(interruptGrace):
+			r.mu.Lock()
+			r.broken = true
+			r.mu.Unlock()
+			return nil, fmt.Errorf("%w: 方法调用 %d 在 %s 内未响应取消", ErrBroken, id, interruptGrace)
+		}
+	}
+}
+
+func (r *Runtime) invokeMethodOnWorker(id uint64, payload [][]byte) callResult {
+	r.mu.Lock()
+	raw, broken := r.raw, r.broken
+	r.mu.Unlock()
+	switch {
+	case broken:
+		return callResult{err: ErrBroken}
+	case raw == nil:
+		return callResult{err: ErrClosed}
+	}
+	entry, ok := r.handlers[id]
+	if !ok {
+		return callResult{err: fmt.Errorf("jsrt: 服务方法 %d 不存在", id)}
+	}
+	vals := make([]moejs.Value, len(payload))
+	for i, b := range payload {
+		v, err := raw.ParseJSON(b)
+		if err != nil {
+			return callResult{err: fmt.Errorf("jsrt: 方法参数 %d 不是合法 JSON: %w", i, err)}
+		}
+		vals[i] = v
+	}
+	out, err := raw.CallFunction(entry.fn, entry.this, vals...)
+	if err != nil {
+		return callResult{err: r.wrap(raw, err)}
+	}
+	v, err := raw.ToGo(out)
+	if err != nil {
+		return callResult{err: fmt.Errorf("jsrt: 方法返回值无法转换: %w", err)}
 	}
 	return callResult{value: v}
 }
