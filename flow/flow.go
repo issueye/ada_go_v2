@@ -14,12 +14,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/adag/ada-go/v2/expr"
 	"github.com/adag/ada-go/v2/kernel"
 	"github.com/adag/ada-go/v2/sched"
 )
@@ -298,8 +298,8 @@ func validateStep(s Step) error {
 		return kernel.Fail(kernel.CodeInvalid, "flow: 步骤 %q 的 retry.max 不能为负", s.ID)
 	}
 	if s.When != "" {
-		if _, err := compileExpr(s.When); err != nil {
-			return kernel.Wrap(kernel.CodeInvalid, err, "flow: 步骤 %q 的 when 非法", s.ID)
+		if err := expr.Validate(s.When); err != nil {
+			return kernel.Fail(kernel.CodeInvalid, "flow: 步骤 %q 的 when 非法: %v", s.ID, err)
 		}
 	}
 	return nil
@@ -841,69 +841,4 @@ func resolveValue(v any, values map[string]any) (any, error) {
 	default:
 		return v, nil
 	}
-}
-
-func lookupPath(path string, values map[string]any) (any, error) {
-	segs, err := pathSegments(path)
-	if err != nil {
-		return nil, err
-	}
-	var cur any = values
-	for _, seg := range segs {
-		m, ok := cur.(map[string]any)
-		if !ok {
-			return nil, nil
-		}
-		v, ok := m[seg]
-		if !ok {
-			return nil, nil
-		}
-		cur = v
-	}
-	return cur, nil
-}
-
-// pathSegments 把 "$.a.b" 拆成 ["a","b"]。
-func pathSegments(path string) ([]string, error) {
-	if !strings.HasPrefix(path, "$.") {
-		return nil, fmt.Errorf("flow: 路径必须以 $. 开头: %q", path)
-	}
-	raw := strings.TrimPrefix(path, "$.")
-	if raw == "" {
-		return nil, fmt.Errorf("flow: 路径缺少字段名: %q", path)
-	}
-	segs := strings.Split(raw, ".")
-	for _, s := range segs {
-		if s == "" {
-			return nil, fmt.Errorf("flow: 路径里有空段: %q", path)
-		}
-	}
-	return segs, nil
-}
-
-// equal 判断两个值是否相等(数字按数值比较,其余按深比较)。
-func equal(a, b any) bool {
-	af, aok := toFloat(a)
-	bf, bok := toFloat(b)
-	if aok && bok {
-		return af == bf
-	}
-	return reflect.DeepEqual(a, b)
-}
-
-func toFloat(v any) (float64, bool) {
-	switch n := v.(type) {
-	case float64:
-		return n, true
-	case float32:
-		return float64(n), true
-	case int:
-		return float64(n), true
-	case int64:
-		return float64(n), true
-	case json.Number:
-		f, err := n.Float64()
-		return f, err == nil
-	}
-	return 0, false
 }

@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"sync"
 	"time"
 
@@ -69,12 +70,36 @@ func Is(err error, code string) bool {
 	return false
 }
 
-// Governor 是全部 key 的配额表。
+// Governor 是全部 key 的配额表,同时承担全局并发上限。
 type Governor struct {
 	clock sched.Clock
 
-	mu   sync.Mutex
-	keys map[string]*bucket
+	mu             sync.Mutex
+	keys           map[string]*bucket
+	globalLimit    int
+	globalInflight int
+}
+
+// Option 配置 Governor。
+type Option func(*Governor)
+
+// WithGlobalLimit 设置全局并发上限;n<=0 表示不限。
+//
+// 全局上限与 per-key 配额叠加:先判 key,再判全局;两者任一超限都返回 EBUSY。
+func WithGlobalLimit(n int) Option {
+	return func(g *Governor) {
+		if n > 0 {
+			g.globalLimit = n
+		} else {
+			g.globalLimit = 0
+		}
+	}
+}
+
+// GlobalStats 是全局并发统计(诊断用)。
+type GlobalStats struct {
+	Inflight int
+	Limit    int
 }
 
 type bucket struct {
@@ -92,11 +117,21 @@ type Stats struct {
 }
 
 // NewGovernor 创建配额表。clock 为 nil 时使用真实时钟。
-func NewGovernor(clock sched.Clock) *Governor {
+//
+// 默认全局并发上限是 min(4*GOMAXPROCS, 64)(design §12.3 的 governor)。
+func NewGovernor(clock sched.Clock, opts ...Option) *Governor {
 	if clock == nil {
 		clock = sched.RealClock{}
 	}
-	return &Governor{clock: clock, keys: make(map[string]*bucket)}
+	g := &Governor{
+		clock:       clock,
+		keys:        make(map[string]*bucket),
+		globalLimit: min(4*runtime.GOMAXPROCS(0), 64),
+	}
+	for _, opt := range opts {
+		opt(g)
+	}
+	return g
 }
 
 // Set 设置某个 key 的配额;重复设置会重置该 key 的窗口与计数。
@@ -115,7 +150,7 @@ func (g *Governor) Set(key string, q Quota) error {
 
 // Acquire 申请一次调用许可。返回的 release 必须调用一次(幂等)。
 //
-// 未配置配额的 key 一律放行:配额是「按需收紧」的策略,不是默认拒绝。
+// 未配置配额的 key 不限制速率/并发,但仍计入全局并发上限。
 func (g *Governor) Acquire(ctx context.Context, key string) (func(), error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -124,9 +159,17 @@ func (g *Governor) Acquire(ctx context.Context, key string) (func(), error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
+	if g.globalLimit > 0 && g.globalInflight >= g.globalLimit {
+		return nil, &Error{
+			Code: CodeBusy, Key: key, Retryable: true,
+			Message: fmt.Sprintf("全局并发上限 %d 已用尽", g.globalLimit),
+		}
+	}
+
 	b := g.keys[key]
 	if b == nil {
-		return func() {}, nil
+		g.globalInflight++
+		return g.releaseFunc(nil), nil
 	}
 	now := g.clock.Now()
 	if now.Sub(b.windowStart) >= window {
@@ -151,18 +194,33 @@ func (g *Governor) Acquire(ctx context.Context, key string) (func(), error) {
 	}
 	b.calls++
 	b.inflight++
+	g.globalInflight++
 
+	return g.releaseFunc(b), nil
+}
+
+// releaseFunc 返回幂等 release;b 为 nil 表示未配置 per-key 配额。
+func (g *Governor) releaseFunc(b *bucket) func() {
 	var once sync.Once
-	release := func() {
+	return func() {
 		once.Do(func() {
 			g.mu.Lock()
-			if b.inflight > 0 {
+			if b != nil && b.inflight > 0 {
 				b.inflight--
+			}
+			if g.globalInflight > 0 {
+				g.globalInflight--
 			}
 			g.mu.Unlock()
 		})
 	}
-	return release, nil
+}
+
+// Global 返回全局并发统计。
+func (g *Governor) Global() GlobalStats {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return GlobalStats{Inflight: g.globalInflight, Limit: g.globalLimit}
 }
 
 // Snapshot 返回全部 key 的当前计数(诊断用;不影响配额状态)。

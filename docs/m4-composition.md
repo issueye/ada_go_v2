@@ -52,7 +52,7 @@ bundle/  L2 组合数据:bundle(插件条目)+ profile(bundle 列表 + 按 id �
 - 同一个 id 在多个 bundle 里重复 → **报错**;
 - `entry.config` / `patch.config` **整体替换**清单里的 config(不是深合并);
 - `patch.disabled` 可覆盖 bundle 的 disabled(`*bool` 区分「没写」与 `false`);
-- `insertBefore/After` 只产生 warning,不影响顺序(顺序由依赖图决定);
+- `when`(entry/patch 都可写)是受限表达式(复用 `expr/` 包);为假时 entry 跳过/patch 不生效;\n- `insertBefore/After` 只产生 warning,不影响顺序(顺序由依赖图决定);
 - `patch.id` 指向不存在的插件 → **报错**(静默忽略会让作者以为配置生效了)。
 
 ## 3. API
@@ -63,13 +63,13 @@ p, err := bundle.LoadProfile("my.profile.json")
 manifests, warnings, err := p.Expand()
 ```
 
-- `Parse` / `ParseProfile`:严格 JSON(未知字段报错);
+- `Parse` / `ParseProfile`:严格 JSON(未知字段报错,`when` 语法解析期校验);\n- `ExpandWithEnv(env map[string]any)`:表达式环境由调用方组装(约定命名空间 `env/os/profile/features`;缺失路径视为 null);
 - `Expand`:加载 bundle → 应用 entry config/disabled → 应用 profile patch → 返回清单与警告;
 - 返回值可直接交给 `assemble.Plan` / `assemble.Up`。
 
 ## 4. 偏差与边界
 
-1. **不支持 `when` 表达式**:`disabled` 只有布尔;受限表达式求值器尚未抽成公共包(flow 里有一份,但组合层还没接)。
+1. **`when` 已支持,但环境由调用方提供**:没有自动绑定 `env/os/profile/features`;`disabled` 仍是静态布尔(如需动态禁用请用 `when` 跳过 entry)。
 2. **不校验 `engine`/`version`**:字段已解析,但没有与宿主版本比较。
 3. **不支持 id 别名**:entry id 必须等于清单 id。
 4. **没有 bundle 仓库/在线拉取**:`plugin` 只接受本地路径(相对或绝对)。
@@ -88,6 +88,9 @@ manifests, warnings, err := p.Expand()
 | bundle 解析校验(未知字段/空/重复/逃逸) | `bundle.TestParseErrors` |
 | profile 解析校验 | `bundle.TestProfileValidation` |
 | 多 bundle 合并 | `bundle.TestMultipleBundles` |
+| entry `when` 为真装配/为假跳过 | `bundle.TestEntryWhen` |
+| patch `when` 为假不生效 | `bundle.TestPatchWhen` |
+| 非法 `when` 解析期拒绝 | `bundle.TestWhenInvalid` |
 
 ## 6. 下一步
 

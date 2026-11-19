@@ -51,13 +51,14 @@ RealClock / FakeClock ──▶ Scheduler
 | API | 语义 |
 |---|---|
 | `Quota{MaxCallsPerMinute, MaxConcurrent}` | 0 表示不限;`MaxCPUTime`/`MaxMemory` 是预留字段(需计时/计量,暂不生效) |
+| `WithGlobalLimit(n)` | 全局并发上限(默认 `min(4*GOMAXPROCS, 64)`);对未配置 key 同样生效 |
 | `Set(key, Quota)` | 设置并重置该 key 的窗口与计数;非法值在 Set 时拒绝 |
 | `Acquire(ctx, key)` | 返回 `release`;超出速率 → `EQUOTA`(可重试 + `RetryAfter`),并发满 → `EBUSY`(可重试) |
 | `Snapshot()` | 诊断:窗口内调用数 / 在途并发 / 窗口结束时间 |
 
 语义:
 
-- **未配置的 key 一律放行**:配额是「按需收紧」,不是默认拒绝;
+- **未配置的 key 不限制 per-key 速率/并发**,但仍计入全局并发上限;全局超限与 per-key 一样返回 `EBUSY`(可重试);
 - 窗口按 `sched.Clock` 计算(测试用 FakeClock 推进,不依赖真实时间);
 - `release` 幂等:重复调用不会把并发计数减成负数;
 - 配额是**服务侧约束**,因此放在 L2 基础设施;调用方按错误码选择退避或降级。
@@ -92,7 +93,8 @@ RealClock / FakeClock ──▶ Scheduler
 | Cron 按表达式触发 | `sched.TestCronFires` |
 | panic 后继续 | `sched.TestPanicDoesNotKillScheduler` |
 | Stop 后不再触发且拒绝新注册 | `sched.TestStopStopsEverything` |
-| 并发上限 / 速率上限 / 窗口重置 / release 幂等 / 并发申请(-race) | `sched` 之外的 `quota` 6 个用例 |
+| 并发上限 / 速率上限 / 窗口重置 / release 幂等 / 并发申请(-race) | `quota` 6 个用例 |
+| 全局并发上限默认值/阻断/与 per-key 叠加/不限值/-race | `quota` 的 5 个全局 governor 用例 |
 | 非法参数/非法 cron 报错 | `sched.TestInvalidRegistrations` |
 | jobs 补跑策略(skip/once/all)与首次运行 | `sched.TestJobCatchUpOnce`、`TestJobCatchUpAll`、`TestJobCatchUpSkip`、`TestJobFirstRunWaitsNext` |
 | 租约占用/释放、非法声明 | `sched.TestJobLeaseBlocks`、`TestMemoryJobStoreLease`、`TestJobValidation` |
@@ -103,7 +105,7 @@ RealClock / FakeClock ──▶ Scheduler
 
 1. **`flow` 已做顺序/并发子集**:use/event/parallel/forEach/compensate/when/retry/timeout/checkpoint/resume 已落地(见 [m4-flow.md](m4-flow.md));fanout/subflow 未做。
 2. **激活与闲置回收未做**:§12.3 的 `onService/onCron/...` 延迟激活、`idleTTL` 回收需要 kernel 侧调度挂钩。
-3. **配额只做了速率与并发**:`MaxCPUTime`/`MaxMemory` 需要计量,全局 governor 与跨插件总并发上限未做。
+3. **配额做了速率/并发/全局上限**:`WithGlobalLimit` 已实现(默认 `min(4*GOMAXPROCS,64)`);`MaxCPUTime`/`MaxMemory` 需要计量,仍未生效。
 4. **jobs 已做补跑/租约/文件存储**:`skip/once/all` + `MemoryJobStore`/`FileJobStore`;文件存储是原子写但**不是跨进程分布式锁**,多进程同时写同一文件仍可能互相覆盖。
 5. **时区**:cron 用传入 `time.Location` 计算;`Asia/Shanghai` 这类 IANA 时区由宿主的 `Clock.Now()` 负责。
 6. 与内核的接线未做:目前 `sched` 只能由宿主/插件在代码里使用,还没有作为服务暴露。

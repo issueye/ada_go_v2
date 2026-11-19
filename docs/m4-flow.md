@@ -69,7 +69,7 @@ type SubflowStep struct {
 
 ## 3. `when`:受限表达式
 
-只允许:路径(`$.step.field`)、字面量(字符串/数字/true/false/null)、比较(`== != > >= < <=`)、
+实现位于 `expr/` 包(flow 与 bundle 共用)。只允许:路径(`$.step.field`)、字面量(字符串/数字/true/false/null)、比较(`== != > >= < <=`)、
 逻辑(`&& || !`)、括号。**没有函数调用、没有赋值、没有 I/O**——数据不允许带执行。
 
 | 规则 | 说明 |

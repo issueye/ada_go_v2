@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/adag/ada-go/v2/expr"
 	"github.com/adag/ada-go/v2/plugin"
 )
 
@@ -33,6 +34,8 @@ type Entry struct {
 	Plugin   string         `json:"plugin"` // 插件目录(相对 bundle 文件或绝对路径)
 	Config   map[string]any `json:"config,omitempty"`
 	Disabled bool           `json:"disabled,omitempty"`
+	// When 是受限表达式;为假时该 entry 不参与装配(语法在解析期校验)。
+	When string `json:"when,omitempty"`
 }
 
 // Profile 是在 bundle 之上按 id 叠加的补丁。
@@ -51,6 +54,8 @@ type PatchEntry struct {
 	Disabled     *bool          `json:"disabled,omitempty"`
 	InsertBefore []string       `json:"insertBefore,omitempty"`
 	InsertAfter  []string       `json:"insertAfter,omitempty"`
+	// When 为假时整个 patch 不生效。
+	When string `json:"when,omitempty"`
 }
 
 // Load 读取 bundle。
@@ -97,6 +102,11 @@ func Parse(data []byte, dir string) (*Bundle, error) {
 		if err := checkPluginPath(e.Plugin); err != nil {
 			return nil, fmt.Errorf("bundle %q: entry %q: %w", b.Name, e.ID, err)
 		}
+		if e.When != "" {
+			if err := expr.Validate(e.When); err != nil {
+				return nil, fmt.Errorf("bundle %q: entry %q 的 when 非法: %w", b.Name, e.ID, err)
+			}
+		}
 	}
 	return &b, nil
 }
@@ -139,14 +149,24 @@ func ParseProfile(data []byte, dir string) (*Profile, error) {
 			return nil, fmt.Errorf("bundle: profile %q: patch id %q 重复", p.Name, patch.ID)
 		}
 		seen[patch.ID] = true
+		if patch.When != "" {
+			if err := expr.Validate(patch.When); err != nil {
+				return nil, fmt.Errorf("bundle: profile %q: patch %q 的 when 非法: %w", p.Name, patch.ID, err)
+			}
+		}
 	}
 	return &p, nil
 }
 
-// Expand 加载 profile 引用的 bundle,按 id 合并并应用补丁。
-//
-// 返回清单与警告;补丁里指向不存在的 id 一律报错(静默忽略会让作者以为配置生效了)。
+// Expand 加载 profile 引用的 bundle,按 id 合并并应用补丁;不提供表达式环境。
 func (p *Profile) Expand() ([]*plugin.Manifest, []string, error) {
+	return p.ExpandWithEnv(nil)
+}
+
+// ExpandWithEnv 是 Expand 的完整版本:env 提供表达式可读的值表。
+//
+// 约定命名空间(由调用方组装):env / os / profile / features;缺失路径视为 null。
+func (p *Profile) ExpandWithEnv(env map[string]any) ([]*plugin.Manifest, []string, error) {
 	var (
 		manifests []*plugin.Manifest
 		warnings  []string
@@ -162,6 +182,16 @@ func (p *Profile) Expand() ([]*plugin.Manifest, []string, error) {
 			return nil, nil, err
 		}
 		for _, entry := range b.Entries {
+			if entry.When != "" {
+				ok, err := expr.Eval(entry.When, env)
+				if err != nil {
+					return nil, nil, fmt.Errorf("bundle: entry %q 的 when 求值失败: %w", entry.ID, err)
+				}
+				if !ok {
+					warnings = append(warnings, fmt.Sprintf("bundle %q: entry %q 的 when 为假,已跳过", b.Name, entry.ID))
+					continue
+				}
+			}
 			if _, exists := byID[entry.ID]; exists {
 				return nil, nil, fmt.Errorf("bundle: 多个 bundle 里出现重复 id %q", entry.ID)
 			}
@@ -175,6 +205,16 @@ func (p *Profile) Expand() ([]*plugin.Manifest, []string, error) {
 	}
 
 	for _, patch := range p.Patch {
+		if patch.When != "" {
+			ok, err := expr.Eval(patch.When, env)
+			if err != nil {
+				return nil, nil, fmt.Errorf("bundle: profile %q: patch %q 的 when 求值失败: %w", p.Name, patch.ID, err)
+			}
+			if !ok {
+				warnings = append(warnings, fmt.Sprintf("profile %q: patch %q 的 when 为假,已跳过", p.Name, patch.ID))
+				continue
+			}
+		}
 		m, ok := byID[patch.ID]
 		if !ok {
 			return nil, nil, fmt.Errorf("bundle: profile %q 的 patch 指向不存在的 id %q", p.Name, patch.ID)

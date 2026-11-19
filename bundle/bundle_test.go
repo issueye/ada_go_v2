@@ -191,3 +191,76 @@ func TestMultipleBundles(t *testing.T) {
 		t.Fatalf("多 bundle 合并结果不正确")
 	}
 }
+
+// 8. entry 的 when 表达式:为假时跳过,为真时装配。
+func TestEntryWhen(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "plugins", "a", "plugin.json"), pluginManifest("a", ""))
+	writeFile(t, filepath.Join(root, "b.json"), `{"name":"b","entries":[
+	  {"id":"a","plugin":"./plugins/a","when":"$.features.enabled == true"}
+	]}`)
+
+	p := &bundle.Profile{Name: "p", Bundles: []string{"b.json"}, Dir: root}
+	manifests, warnings, err := p.ExpandWithEnv(map[string]any{
+		"features": map[string]any{"enabled": true},
+	})
+	if err != nil {
+		t.Fatalf("when 为真展开失败: %v", err)
+	}
+	if len(manifests) != 1 || find(t, manifests, "a") == nil {
+		t.Fatalf("when 为真应装配 entry")
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("不应有警告: %v", warnings)
+	}
+
+	manifests, warnings, err = p.ExpandWithEnv(map[string]any{
+		"features": map[string]any{"enabled": false},
+	})
+	if err != nil {
+		t.Fatalf("when 为假展开失败: %v", err)
+	}
+	if len(manifests) != 0 {
+		t.Fatalf("when 为假应跳过 entry,实际 %d", len(manifests))
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "when") {
+		t.Fatalf("跳过应告警: %v", warnings)
+	}
+}
+
+// 9. patch 的 when:为假时整个补丁不生效。
+func TestPatchWhen(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "plugins", "a", "plugin.json"), pluginManifest("a", `{"x":1}`))
+	writeFile(t, filepath.Join(root, "base.bundle.json"), `{"name":"base","entries":[{"id":"a","plugin":"./plugins/a"}]}`)
+	p := &bundle.Profile{Name: "p", Bundles: []string{"base.bundle.json"},
+		Patch: []bundle.PatchEntry{{ID: "a", Config: map[string]any{"y": 2}, When: "$.features.patch == true"}}, Dir: root}
+
+	manifests, _, err := p.ExpandWithEnv(map[string]any{"features": map[string]any{"patch": false}})
+	if err != nil {
+		t.Fatalf("展开失败: %v", err)
+	}
+	a := find(t, manifests, "a")
+	if a.Config["x"] != float64(1) {
+		t.Fatalf("when 为假时 patch 不应生效: %v", a.Config)
+	}
+
+	manifests, _, err = p.ExpandWithEnv(map[string]any{"features": map[string]any{"patch": true}})
+	if err != nil {
+		t.Fatalf("展开失败: %v", err)
+	}
+	a = find(t, manifests, "a")
+	if a.Config["y"] != 2 || a.Config["x"] != nil {
+		t.Fatalf("when 为真时 patch 应生效: %v", a.Config)
+	}
+}
+
+// 10. when 表达式非法在解析期拒绝。
+func TestWhenInvalid(t *testing.T) {
+	if _, err := bundle.Parse([]byte(`{"name":"b","entries":[{"id":"a","plugin":"./p","when":"$.a >"}]}`), t.TempDir()); err == nil {
+		t.Fatalf("非法 entry when 应拒绝")
+	}
+	if _, err := bundle.ParseProfile([]byte(`{"name":"p","bundles":["b.json"],"patch":[{"id":"a","when":"bad ident"}]}`), t.TempDir()); err == nil {
+		t.Fatalf("非法 patch when 应拒绝")
+	}
+}

@@ -3,6 +3,8 @@ package quota_test
 import (
 	"context"
 	"errors"
+	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -165,5 +167,135 @@ func TestConcurrentAcquire(t *testing.T) {
 	}
 	if stats := g.Snapshot()["p"]; stats.InFlight != 0 {
 		t.Fatalf("全部释放后并发计数应为 0,实际 %d", stats.InFlight)
+	}
+}
+
+// 7. 默认全局并发上限:min(4*GOMAXPROCS, 64)。
+func TestDefaultGlobalLimit(t *testing.T) {
+	g := quota.NewGovernor(nil)
+	if got := g.Global().Limit; got != min(4*runtime.GOMAXPROCS(0), 64) {
+		t.Fatalf("默认全局上限不正确: %d", got)
+	}
+}
+
+// 8. 全局上限对未配置 quota 的 key 同样生效。
+func TestGlobalLimitBlocks(t *testing.T) {
+	g := quota.NewGovernor(sched.NewFakeClock(base()), quota.WithGlobalLimit(2))
+	r1, err := g.Acquire(context.Background(), "a")
+	if err != nil {
+		t.Fatalf("第一次申请失败: %v", err)
+	}
+	r2, err := g.Acquire(context.Background(), "b")
+	if err != nil {
+		t.Fatalf("第二次申请失败: %v", err)
+	}
+	_, err = g.Acquire(context.Background(), "c")
+	if !quota.Is(err, quota.CodeBusy) {
+		t.Fatalf("超过全局上限应 EBUSY,实际 %v", err)
+	}
+	if !strings.Contains(err.Error(), "全局") {
+		t.Fatalf("错误应指明是全局上限: %v", err)
+	}
+	r1()
+	if _, err := g.Acquire(context.Background(), "c"); err != nil {
+		t.Fatalf("释放后应可再申请: %v", err)
+	}
+	r2()
+}
+
+// 9. per-key 配额与全局上限叠加。
+func TestGlobalWithPerKey(t *testing.T) {
+	g := quota.NewGovernor(sched.NewFakeClock(base()), quota.WithGlobalLimit(3))
+	if err := g.Set("a", quota.Quota{MaxConcurrent: 2}); err != nil {
+		t.Fatalf("设置配额失败: %v", err)
+	}
+	r1, err := g.Acquire(context.Background(), "a")
+	if err != nil {
+		t.Fatalf("a1 失败: %v", err)
+	}
+	r2, err := g.Acquire(context.Background(), "a")
+	if err != nil {
+		t.Fatalf("a2 失败: %v", err)
+	}
+	if _, err := g.Acquire(context.Background(), "a"); !quota.Is(err, quota.CodeBusy) {
+		t.Fatalf("per-key 上限应 EBUSY,实际 %v", err)
+	}
+	if _, err := g.Acquire(context.Background(), "b"); err != nil {
+		t.Fatalf("全局还有余量,b 应放行: %v", err)
+	}
+	if _, err := g.Acquire(context.Background(), "c"); !quota.Is(err, quota.CodeBusy) {
+		t.Fatalf("全局上限应 EBUSY,实际 %v", err)
+	}
+	r1()
+	r2()
+}
+
+// 10. 全局 release 幂等;WithGlobalLimit(0) 表示不限。
+func TestGlobalReleaseAndUnlimited(t *testing.T) {
+	g := quota.NewGovernor(sched.NewFakeClock(base()), quota.WithGlobalLimit(1))
+	release, err := g.Acquire(context.Background(), "a")
+	if err != nil {
+		t.Fatalf("申请失败: %v", err)
+	}
+	release()
+	release()
+	if got := g.Global().Inflight; got != 0 {
+		t.Fatalf("重复 release 后全局计数应为 0,实际 %d", got)
+	}
+	if _, err := g.Acquire(context.Background(), "a"); err != nil {
+		t.Fatalf("释放后应可申请: %v", err)
+	}
+
+	unlimited := quota.NewGovernor(nil, quota.WithGlobalLimit(0))
+	var releases []func()
+	for i := 0; i < 70; i++ {
+		release, err := unlimited.Acquire(context.Background(), "x")
+		if err != nil {
+			t.Fatalf("不限全局时应放行: %v", err)
+		}
+		releases = append(releases, release)
+	}
+	for _, r := range releases {
+		r()
+	}
+	if got := unlimited.Global().Inflight; got != 0 {
+		t.Fatalf("全部释放后全局计数应为 0,实际 %d", got)
+	}
+}
+
+// 11. 全局并发上限在 -race 下真正守住。
+func TestGlobalConcurrentAcquire(t *testing.T) {
+	const limit = 8
+	const attempts = 64
+
+	g := quota.NewGovernor(sched.NewFakeClock(base()), quota.WithGlobalLimit(limit))
+	var (
+		wg       sync.WaitGroup
+		success  atomic.Int32
+		start    = make(chan struct{})
+		releases = make(chan func(), attempts)
+	)
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			release, err := g.Acquire(context.Background(), "p")
+			if err == nil {
+				success.Add(1)
+				releases <- release
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if got := success.Load(); got > limit {
+		t.Fatalf("全局上限应 ≤ %d,实际成功 %d", limit, got)
+	}
+	for i := 0; i < int(success.Load()); i++ {
+		(<-releases)()
+	}
+	if got := g.Global().Inflight; got != 0 {
+		t.Fatalf("全部释放后全局计数应为 0,实际 %d", got)
 	}
 }

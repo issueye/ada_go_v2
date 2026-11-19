@@ -1,15 +1,16 @@
-package flow
+// Package expr 是受限表达式求值器(数据不允许带执行)。
+//
+// 语法:路径($.step.field)、字面量(字符串/数字/true/false/null)、比较
+// (== != > >= < <=)、逻辑(&& || !)、括号。没有函数调用、赋值与 I/O。
+// flow 的 when、bundle 的 when/disabled 都复用它。
+package expr
 
 import (
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 )
-
-// 本文件实现 when 用的受限表达式:路径访问、字面量、比较、&&/||/!、括号。
-//
-// 为什么自研而不是 eval JS(design §12.4):流线是数据,数据不允许带执行;
-// 自研求值器无 I/O、无副作用、10 微秒级,且可以在编译期拒绝非法表达式。
 
 type node interface {
 	eval(values map[string]any) (any, error)
@@ -21,7 +22,7 @@ func (n litNode) eval(map[string]any) (any, error) { return n.value, nil }
 
 type pathNode struct{ path string }
 
-func (n pathNode) eval(values map[string]any) (any, error) { return lookupPath(n.path, values) }
+func (n pathNode) eval(values map[string]any) (any, error) { return Lookup(n.path, values) }
 
 type notNode struct{ inner node }
 
@@ -40,7 +41,6 @@ func (n notNode) eval(values map[string]any) (any, error) {
 type andNode struct{ left, right node }
 
 func (n andNode) eval(values map[string]any) (any, error) {
-	// 短路:左边为假时不再求右边(右边的类型错误不应影响结果)。
 	lv, err := n.left.eval(values)
 	if err != nil {
 		return nil, err
@@ -96,12 +96,12 @@ func (n cmpNode) eval(values map[string]any) (any, error) {
 	}
 	switch n.op {
 	case "==":
-		return equal(lv, rv), nil
+		return Equal(lv, rv), nil
 	case "!=":
-		return !equal(lv, rv), nil
+		return !Equal(lv, rv), nil
 	}
-	if lf, lok := toFloat(lv); lok {
-		if rf, rok := toFloat(rv); rok {
+	if lf, lok := ToFloat(lv); lok {
+		if rf, rok := ToFloat(rv); rok {
 			switch n.op {
 			case ">":
 				return lf > rf, nil
@@ -124,12 +124,11 @@ func (n cmpNode) eval(values map[string]any) (any, error) {
 			return ls >= rs, nil
 		case "<":
 			return ls < rs, nil
-			// <=
 		case "<=":
 			return ls <= rs, nil
 		}
 	}
-	return nil, fmt.Errorf("flow: 无法比较 %T 与 %T", lv, rv)
+	return nil, fmt.Errorf("expr: 无法比较 %T 与 %T", lv, rv)
 }
 
 func truthy(v any) (bool, error) {
@@ -139,40 +138,90 @@ func truthy(v any) (bool, error) {
 	case nil:
 		return false, nil
 	}
-	return false, fmt.Errorf("flow: 条件必须是布尔值,得到 %T(%v)", v, v)
-}
-
-// expr 是编译后的表达式。
-type expr struct{ root node }
-
-// compileExpr 把表达式编译成 AST;语法错误在编译期暴露。
-func compileExpr(s string) (*expr, error) {
-	toks, err := lexExpr(s)
-	if err != nil {
-		return nil, err
-	}
-	p := &exprParser{toks: toks}
-	root, err := p.parseOr()
-	if err != nil {
-		return nil, err
-	}
-	if p.peek().kind != tokEOF {
-		return nil, fmt.Errorf("flow: 表达式有多余内容: %q", p.peek().text)
-	}
-	return &expr{root: root}, nil
+	return false, fmt.Errorf("expr: 条件必须是布尔值,得到 %T(%v)", v, v)
 }
 
 // Eval 求值一个表达式,结果必须是布尔(或 nil,视为假)。
 func Eval(s string, values map[string]any) (bool, error) {
-	e, err := compileExpr(s)
+	root, err := parse(s)
 	if err != nil {
 		return false, err
 	}
-	v, err := e.root.eval(values)
+	v, err := root.eval(values)
 	if err != nil {
 		return false, err
 	}
 	return truthy(v)
+}
+
+// Validate 只检查语法(不求值);用于配置解析期提前暴露拼写错误。
+func Validate(s string) error {
+	_, err := parse(s)
+	return err
+}
+
+// Equal 判断两个值是否相等(数字按数值比较,其余按深比较)。
+func Equal(a, b any) bool {
+	af, aok := ToFloat(a)
+	bf, bok := ToFloat(b)
+	if aok && bok {
+		return af == bf
+	}
+	return reflect.DeepEqual(a, b)
+}
+
+// ToFloat 把 JSON/Go 数字统一成 float64。
+func ToFloat(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	}
+	return 0, false
+}
+
+// Lookup 读取 "$.a.b" 路径;缺失路径返回 nil(与 null 比较时视为相等)。
+func Lookup(path string, values map[string]any) (any, error) {
+	segs, err := Segments(path)
+	if err != nil {
+		return nil, err
+	}
+	var cur any = values
+	for _, seg := range segs {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return nil, nil
+		}
+		v, ok := m[seg]
+		if !ok {
+			return nil, nil
+		}
+		cur = v
+	}
+	return cur, nil
+}
+
+// Segments 把 "$.a.b" 拆成 ["a","b"]。
+func Segments(path string) ([]string, error) {
+	if !strings.HasPrefix(path, "$.") {
+		return nil, fmt.Errorf("expr: 路径必须以 $. 开头: %q", path)
+	}
+	raw := strings.TrimPrefix(path, "$.")
+	if raw == "" {
+		return nil, fmt.Errorf("expr: 路径缺少字段名: %q", path)
+	}
+	segs := strings.Split(raw, ".")
+	for _, s := range segs {
+		if s == "" {
+			return nil, fmt.Errorf("expr: 路径里有空段: %q", path)
+		}
+	}
+	return segs, nil
 }
 
 // ---------- 词法 ----------
@@ -198,7 +247,7 @@ type token struct {
 	boolVal bool
 }
 
-func lexExpr(s string) ([]token, error) {
+func lex(s string) ([]token, error) {
 	var toks []token
 	i := 0
 	for i < len(s) {
@@ -216,7 +265,7 @@ func lexExpr(s string) ([]token, error) {
 			start := i
 			i++
 			if i >= len(s) || s[i] != '.' {
-				return nil, fmt.Errorf("flow: 路径必须以 $. 开头(位置 %d)", start)
+				return nil, fmt.Errorf("expr: 路径必须以 $. 开头(位置 %d)", start)
 			}
 			i++
 			for i < len(s) {
@@ -227,7 +276,7 @@ func lexExpr(s string) ([]token, error) {
 				break
 			}
 			text := s[start:i]
-			if _, err := pathSegments(text); err != nil {
+			if _, err := Segments(text); err != nil {
 				return nil, err
 			}
 			toks = append(toks, token{kind: tokPath, text: text})
@@ -253,9 +302,9 @@ func lexExpr(s string) ([]token, error) {
 				i++
 			}
 			if i >= len(s) {
-				return nil, fmt.Errorf("flow: 字符串没有闭合: %q", s)
+				return nil, fmt.Errorf("expr: 字符串没有闭合: %q", s)
 			}
-			i++ // 结束引号
+			i++
 			toks = append(toks, token{kind: tokString, text: b.String()})
 		case (c >= '0' && c <= '9') || (c == '-' && i+1 < len(s) && s[i+1] >= '0' && s[i+1] <= '9'):
 			start := i
@@ -266,7 +315,7 @@ func lexExpr(s string) ([]token, error) {
 			text := s[start:i]
 			n, err := strconv.ParseFloat(text, 64)
 			if err != nil {
-				return nil, fmt.Errorf("flow: 非法数字 %q", text)
+				return nil, fmt.Errorf("expr: 非法数字 %q", text)
 			}
 			toks = append(toks, token{kind: tokNumber, text: text, num: n})
 		case isIdentStart(c):
@@ -283,10 +332,9 @@ func lexExpr(s string) ([]token, error) {
 			case "null":
 				toks = append(toks, token{kind: tokNull, text: word})
 			default:
-				return nil, fmt.Errorf("flow: 不支持标识符 %q(只允许 true/false/null 与 $. 路径)", word)
+				return nil, fmt.Errorf("expr: 不支持标识符 %q(只允许 true/false/null 与 $. 路径)", word)
 			}
 		default:
-			// 运算符:先试双字符。
 			two := ""
 			if i+1 < len(s) {
 				two = s[i : i+2]
@@ -302,7 +350,7 @@ func lexExpr(s string) ([]token, error) {
 				toks = append(toks, token{kind: tokOp, text: string(c)})
 				i++
 			default:
-				return nil, fmt.Errorf("flow: 无法识别的字符 %q(位置 %d)", string(c), i)
+				return nil, fmt.Errorf("expr: 无法识别的字符 %q(位置 %d)", string(c), i)
 			}
 		}
 	}
@@ -320,15 +368,31 @@ func isIdentByte(c byte) bool {
 
 // ---------- 语法 ----------
 
-type exprParser struct {
+type parser struct {
 	toks []token
 	pos  int
 }
 
-func (p *exprParser) peek() token { return p.toks[p.pos] }
-func (p *exprParser) next() token { t := p.toks[p.pos]; p.pos++; return t }
+func (p *parser) peek() token { return p.toks[p.pos] }
+func (p *parser) next() token { t := p.toks[p.pos]; p.pos++; return t }
 
-func (p *exprParser) parseOr() (node, error) {
+func parse(s string) (node, error) {
+	toks, err := lex(s)
+	if err != nil {
+		return nil, err
+	}
+	p := &parser{toks: toks}
+	root, err := p.parseOr()
+	if err != nil {
+		return nil, err
+	}
+	if p.peek().kind != tokEOF {
+		return nil, fmt.Errorf("expr: 表达式有多余内容: %q", p.peek().text)
+	}
+	return root, nil
+}
+
+func (p *parser) parseOr() (node, error) {
 	left, err := p.parseAnd()
 	if err != nil {
 		return nil, err
@@ -344,7 +408,7 @@ func (p *exprParser) parseOr() (node, error) {
 	return left, nil
 }
 
-func (p *exprParser) parseAnd() (node, error) {
+func (p *parser) parseAnd() (node, error) {
 	left, err := p.parseNot()
 	if err != nil {
 		return nil, err
@@ -360,7 +424,7 @@ func (p *exprParser) parseAnd() (node, error) {
 	return left, nil
 }
 
-func (p *exprParser) parseNot() (node, error) {
+func (p *parser) parseNot() (node, error) {
 	if p.peek().kind == tokOp && p.peek().text == "!" {
 		p.next()
 		inner, err := p.parseNot()
@@ -374,7 +438,7 @@ func (p *exprParser) parseNot() (node, error) {
 
 var cmpOps = map[string]bool{"==": true, "!=": true, ">": true, ">=": true, "<": true, "<=": true}
 
-func (p *exprParser) parseComparison() (node, error) {
+func (p *parser) parseComparison() (node, error) {
 	left, err := p.parseTerm()
 	if err != nil {
 		return nil, err
@@ -391,7 +455,7 @@ func (p *exprParser) parseComparison() (node, error) {
 	return left, nil
 }
 
-func (p *exprParser) parseTerm() (node, error) {
+func (p *parser) parseTerm() (node, error) {
 	t := p.next()
 	switch t.kind {
 	case tokLParen:
@@ -400,7 +464,7 @@ func (p *exprParser) parseTerm() (node, error) {
 			return nil, err
 		}
 		if p.peek().kind != tokRParen {
-			return nil, fmt.Errorf("flow: 缺少右括号")
+			return nil, fmt.Errorf("expr: 缺少右括号")
 		}
 		p.next()
 		return inner, nil
@@ -415,5 +479,5 @@ func (p *exprParser) parseTerm() (node, error) {
 	case tokNull:
 		return litNode{value: nil}, nil
 	}
-	return nil, fmt.Errorf("flow: 表达式里出现意外的 %q", t.text)
+	return nil, fmt.Errorf("expr: 表达式里出现意外的 %q", t.text)
 }
