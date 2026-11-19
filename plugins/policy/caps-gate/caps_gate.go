@@ -133,10 +133,21 @@ func Plugin() kernel.Plugin {
 		if err := cfg.Decode(&conf); err != nil {
 			return nil, kernel.Fail(kernel.CodeInvalid, "caps-gate: 解析 grants 失败: %v", err)
 		}
+		// 优先使用注入的 caps 服务(caps-static 提供),这样宿主可以把清单 caps
+		// 与 install 的 trust 灌进同一个 Broker;没有服务时才退回 config grants。
 		broker := caps.NewBroker(nil)
-		for plugin, list := range conf.Grants {
-			if err := broker.Grant(plugin, list...); err != nil {
-				return nil, kernel.Fail(kernel.CodeInvalid, "caps-gate: 授予 %q 失败: %v", plugin, err)
+		fromService := false
+		if v, ok := ctx.TryService("caps"); ok {
+			if b, ok := v.(*caps.Broker); ok {
+				broker = b
+				fromService = true
+			}
+		}
+		if !fromService {
+			for plugin, list := range conf.Grants {
+				if err := broker.Grant(plugin, list...); err != nil {
+					return nil, kernel.Fail(kernel.CodeInvalid, "caps-gate: 授予 %q 失败: %v", plugin, err)
+				}
 			}
 		}
 
@@ -175,5 +186,5 @@ func Plugin() kernel.Plugin {
 			}
 			return errors.Join(errs...)
 		}, nil
-	}).WithOptional("fs", "shell")
+	}).WithOptional("caps", "fs", "shell")
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/adag/ada-go/v2/caps"
 	"github.com/adag/ada-go/v2/kernel"
 	capsgate "github.com/adag/ada-go/v2/plugins/policy/caps-gate"
+	capsstatic "github.com/adag/ada-go/v2/plugins/provider/caps-static"
 	fslocal "github.com/adag/ada-go/v2/plugins/provider/fs-local"
 	seamfs "github.com/adag/ada-go/v2/plugins/seam/fs"
 	seamshell "github.com/adag/ada-go/v2/plugins/seam/shell"
@@ -166,5 +167,45 @@ func TestKernelIntegration(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "c.txt")); err == nil {
 		t.Fatalf("未授权写入不应落盘")
+	}
+}
+
+// 4. caps-gate 优先使用注入的 caps 服务(caps-static),忽略 config grants。
+func TestServiceBrokerPreferred(t *testing.T) {
+	dir := t.TempDir()
+	app := kernel.New(kernel.Options{})
+	t.Cleanup(func() { _ = app.Stop(context.Background()) })
+
+	mount := func(name string, p kernel.Plugin, cfg map[string]any) {
+		t.Helper()
+		if _, err := app.Plugin(p, kernel.NewConfig(cfg)); err != nil {
+			t.Fatalf("挂载 %s 失败: %v", name, err)
+		}
+	}
+	mount("seam/fs", seamfs.Plugin(), nil)
+	mount("fs-local", fslocal.Plugin(), map[string]any{"workspace": dir})
+	mount("caps-static", capsstatic.Plugin(), map[string]any{
+		"grants": map[string][]string{"consumer": {"fs.write"}},
+	})
+	// config grants 为空:如果 caps-gate 没使用服务,写会被拒绝。
+	mount("caps-gate", capsgate.Plugin(), map[string]any{"grants": map[string]any{}})
+
+	consumer := kernel.Func("consumer", func(ctx *kernel.Context, _ kernel.Config) (kernel.Dispose, error) {
+		chain, err := kernel.Service[*seamfs.Chain](ctx, "fs")
+		if err != nil {
+			return nil, err
+		}
+		fsys, err := chain.Get()
+		if err != nil {
+			return nil, err
+		}
+		_, err = fsys.Write(ctx.Context(), seamfs.WriteRequest{Path: "/workspace/a.txt", Content: []byte("x")})
+		return nil, err
+	}).WithInject("fs")
+	if _, err := app.Plugin(consumer, kernel.NewConfig(nil)); err != nil {
+		t.Fatalf("消费者应能通过 caps 服务授权: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "a.txt")); err != nil {
+		t.Fatalf("写入应落盘: %v", err)
 	}
 }
