@@ -34,7 +34,10 @@ export function apply(ctx: Ctx, cfg: { name: string }) {
     render(): string { return this.text + "!" },
   })
   ctx.emit("ts/ready", { name: cfg.name })
-  ctx.on("ts/ping", (p) => ctx.log("收到 ping:" + p.n))
+  ctx.on("ts/ping", (p) => {
+    ctx.log("收到 ping:" + p.n)
+    ctx.emit("ts/pong", { n: p.n + 1 })
+  })
   ctx.effect("ts-demo", () => ctx.log("清理: ts-demo"))
   ctx.waterfall("ts/chain", (x: number, next: (v: number) => number) => next(x + 1))
 }`
@@ -100,6 +103,11 @@ func main() {
 	// 事件监听:JS 侧 emit 在 apply 返回后由内核协程提交。
 	app.Root().On("ts/ready", func(_ context.Context, _ *kernel.Context, args []any) (any, error) {
 		fmt.Println("[go] 收到 ts/ready:", args)
+		return nil, nil
+	})
+	// 运行期 emit:JS 处理器里再次 emit 的事件也应到达 Go。
+	app.Root().On("ts/pong", func(_ context.Context, _ *kernel.Context, args []any) (any, error) {
+		fmt.Println("[go] 收到 ts/pong:", args)
 		return nil, nil
 	})
 

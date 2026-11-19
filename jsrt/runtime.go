@@ -143,6 +143,29 @@ type Runtime struct {
 	// inWaterfall 记录「宿主正在等本运行时的 waterfall 处理器」。
 	// 大于 0 时禁止再次调用本运行时,否则 worker 会在等待宿主响应 next 时死锁。
 	inWaterfall int
+	// inHost 记录「worker 正在回调宿主」。此时宿主要求本运行时执行回调,
+	// 会绕回正在忙碌的 worker 而死锁,所以必须快速失败。
+	inHost int
+}
+
+// enterHost/leaveHost 标记 worker 正在进入宿主回调。
+func (r *Runtime) enterHost() {
+	r.mu.Lock()
+	r.inHost++
+	r.mu.Unlock()
+}
+
+func (r *Runtime) leaveHost() {
+	r.mu.Lock()
+	r.inHost--
+	r.mu.Unlock()
+}
+
+// reentrant 报告「当前调用是否来自本运行时自己的宿主回调」。
+func (r *Runtime) reentrant() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.inHost > 0
 }
 
 // New 装配并加载 Artifact,返回可调用的运行时。
@@ -376,7 +399,11 @@ func (r *Runtime) nativeEmit(raw *moejs.Runtime) moejs.NativeFunc {
 			}
 			payload = v
 		}
-		if err := r.opts.Host.Emit(event, payload); err != nil {
+		// 宿主可能同步派发事件;若监听器又调回本运行时,靠 inHost 快速失败而不是死锁。
+		r.enterHost()
+		err = r.opts.Host.Emit(event, payload)
+		r.leaveHost()
+		if err != nil {
 			return engine.Undefined(), err
 		}
 		return engine.Undefined(), nil
@@ -579,6 +606,9 @@ func (r *Runtime) nativeEffect(raw *moejs.Runtime) moejs.NativeFunc {
 
 // invokeHandler 调用一个 ctx.on 注册的 JS 函数;可从任意 goroutine 调用。
 func (r *Runtime) invokeHandler(ctx context.Context, id uint64, payload any) (any, error) {
+	if r.reentrant() {
+		return nil, ErrReentrant
+	}
 	b, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("jsrt: 事件载荷无法序列化: %w", err)
@@ -588,6 +618,9 @@ func (r *Runtime) invokeHandler(ctx context.Context, id uint64, payload any) (an
 
 // invokeCallback 在 worker 上调用一个已登记的函数;payload 为逐个 JSON 编码的参数。
 func (r *Runtime) invokeCallback(ctx context.Context, id uint64, payload [][]byte) (any, error) {
+	if r.reentrant() {
+		return nil, ErrReentrant
+	}
 	res := make(chan callResult, 1)
 	if err := r.enqueue(ctx, func() { res <- r.invokeOnWorker(id, payload) }); err != nil {
 		return nil, err
@@ -691,6 +724,9 @@ func (r *Runtime) describeService(raw *moejs.Runtime, name string, v moejs.Value
 
 // invokeMethod 调用 JS 服务方法;可从任意 goroutine 调用。
 func (r *Runtime) invokeMethod(ctx context.Context, id uint64, payload [][]byte) (any, error) {
+	if r.reentrant() {
+		return nil, ErrReentrant
+	}
 	res := make(chan callResult, 1)
 	if err := r.enqueue(ctx, func() { res <- r.invokeMethodOnWorker(id, payload) }); err != nil {
 		return nil, err
@@ -791,7 +827,7 @@ type wfValue struct {
 // 每个运行时有自己的 worker,宿主负责把 next 调用串起来。
 func (r *Runtime) invokeWaterfall(ctx context.Context, id uint64, input any, next func(any) (any, error)) (any, error) {
 	r.mu.Lock()
-	if r.inWaterfall > 0 {
+	if r.inWaterfall > 0 || r.inHost > 0 {
 		r.mu.Unlock()
 		return nil, ErrReentrant
 	}

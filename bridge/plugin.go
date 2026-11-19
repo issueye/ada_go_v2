@@ -167,6 +167,7 @@ type Plugin struct {
 	mu   sync.Mutex
 	logs []string
 	rt   *jsrt.Runtime
+	kctx *kernel.Context // 运行期 emit 用;卸载时清空
 }
 
 // New 构造 JS 插件。它不装配运行时——装配发生在 Apply,失败时内核会把 fiber 置为 failed。
@@ -206,7 +207,7 @@ func (p *Plugin) Apply(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, 
 		Logf:     p.record,
 		Host: jsrt.Host{
 			Provide:   stage.provide,
-			Emit:      stage.emit,
+			Emit:      func(event string, payload any) error { return p.emitTo(stage, event, payload) },
 			On:        stage.on,
 			Effect:    stage.effect,
 			Waterfall: stage.waterfall,
@@ -268,6 +269,7 @@ func (p *Plugin) Apply(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, 
 
 	p.mu.Lock()
 	p.rt = rt
+	p.kctx = ctx
 	p.mu.Unlock()
 
 	ctx.Log().Info("JS 插件已装配",
@@ -277,6 +279,7 @@ func (p *Plugin) Apply(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, 
 		p.mu.Lock()
 		r := p.rt
 		p.rt = nil
+		p.kctx = nil
 		p.mu.Unlock()
 		if r == nil {
 			return nil
@@ -297,6 +300,24 @@ func (p *Plugin) Logs() []string {
 	out := make([]string, len(p.logs))
 	copy(out, p.logs)
 	return out
+}
+
+// emitTo 处理 ctx.emit:apply 期间进暂存队列;运行期直接派发。
+//
+// 为什么运行期可以直接派发:事件是广播,总线自带锁、每个监听器有独立超时;
+// 而 provide/on/effect/waterfall 会改服务表与监听器表,仍只允许在 apply 期间提交。
+func (p *Plugin) emitTo(stage *stager, event string, payload any) error {
+	if err := stage.emit(event, payload); err == nil {
+		return nil
+	}
+	p.mu.Lock()
+	ctx := p.kctx
+	p.mu.Unlock()
+	if ctx == nil {
+		return fmt.Errorf("ctx.emit: 插件已卸载,事件未派发")
+	}
+	ctx.EmitContext(context.Background(), event, payload)
+	return nil
 }
 
 func (p *Plugin) record(format string, args ...any) {

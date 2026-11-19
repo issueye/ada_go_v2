@@ -63,7 +63,7 @@ JS 侧 `ctx` 目前有六个能力:
 |---|---|---|
 | `ctx.log(...)` | JS → 宿主 | 立即写宿主日志(线程安全) |
 | `ctx.provide(name, value)` | JS → 内核 | 暂存;`apply` 返回后提交为 `kernel.Provide`。对象上的函数成员成为**服务方法** |
-| `ctx.emit(event, payload)` | JS → 内核 | 暂存;`apply` 返回后提交为 `EmitContext` |
+| `ctx.emit(event, payload)` | JS → 内核 | apply 期间暂存;运行期直接派发(广播) |
 | `ctx.on(event, handler)` | 内核 → JS | 暂存注册;提交为内核监听器,事件触发时把载荷投递到 worker 执行 JS 函数 |
 | `ctx.effect(label, cleanup)` | JS → 宿主 | 暂存;fiber 卸载时按逆序执行 JS 清理函数 |
 | `ctx.waterfall(event, handler)` | 双向 | 暂存注册;提交为内核 waterfall 中间件,JS 可用 `next` 同步继续下游 |
@@ -73,7 +73,10 @@ JS 侧 `ctx` 目前有六个能力:
 **提交语义**:
 - 顺序 = JS 调用顺序:先挂 `waterfall`/`on`,再 `provide`,最后 `emit`——否则 apply 里 emit 的事件打不到自己刚注册的处理器;
 - 提交发生在 `apply` 返回之后、仍在调用 `Apply` 的内核协程上;
-- `apply` 结束后再调用 `provide`/`emit`/`on`/`effect`/`waterfall` 会抛 JS 异常(没有提交点的调用必须报错,不能静默丢失)。
+- `apply` 结束后再调用 `provide`/`on`/`effect`/`waterfall` 会抛 JS 异常(没有提交点的调用必须报错,不能静默丢失)。
+
+**运行期写(只有广播)**:`ctx.emit` 在 apply 结束后仍然可用——事件是广播,总线自带锁、每个监听器有独立超时,不需要内核控制协程。其余四个能力会改服务表/监听器表/依赖图,仍只允许在 apply 期间提交。
+反过来,若运行期 `emit` 触发的监听器又调回**同一个运行时**,`inHost` 守卫会返回 `ErrReentrant`,避免「worker 等待宿主、宿主又等待 worker」的死锁。
 
 **清理语义**:
 - `ctx.effect` 的清理函数**由 bridge 的 Apply disposer 执行**,在关闭运行时之前、按登记逆序执行——与内核 effect 栈同语义;
@@ -115,6 +118,8 @@ out, err := svc.Call(ctx, "render")        // 方法调用转发到 JS worker
 | P7 门禁确定 | waterfall 的 `next` 往返是同步的,超时/中断会确定性阻断;不允许重复 `next` |
 | P8 数据面留在 Go | JS 只处理控制面/小对象;大对象留后续句柄化 |
 | 单写者(写方向) | JS 侧写请求一律经 stager,回到内核协程提交 |
+| 运行期写 | 只允许广播(`emit`);改服务表/监听器表/依赖图的操作仍限 apply 期间 |
+| 自回调防死锁 | `inHost` 守卫:worker 正在回调宿主时,宿主不得再要求同一运行时执行回调 |
 | 反向调用(读方向) | 内核 → worker → `CallFunction`;只读不写内核 |
 | 内核无知 | `kernel/` 不 import `compile`/`jsrt`/`bridge`(guard 的 `go list -deps` 强制) |
 
@@ -137,6 +142,7 @@ out, err := svc.Call(ctx, "render")        // 方法调用转发到 JS worker
 | 内核事件 → JS 回调 | ✅ | `jsrt.TestHostOnInvokesJSHandler`、`bridge.TestJSPluginRunsInKernel` |
 | Go 调用 JS 服务方法 | ✅ | `jsrt.TestServiceMethods`、`bridge.TestJSPluginRunsInKernel` |
 | JS effect 逆序清理 + 失败上报 | ✅ | `jsrt.TestHostEffect`、`bridge.TestJSEffectErrorSurfacesOnDispose` |
+| 运行期 emit(处理器里再 emit) | ✅ | `bridge.TestJSPluginRunsInKernel`、`jsrt.TestRuntimeEmitReentrantGuard` |
 | JS waterfall 改写/否决 + 重复 next + 嵌套防护 | ✅ | `jsrt.TestInvokeWaterfall`、`jsrt.TestWaterfallDoubleNextFails`、`jsrt.TestWaterfallReentrantFails`、`bridge.TestJSPluginRunsInKernel` |
 | ctx 能力未启用/参数非法时报错 | ✅ | `jsrt.TestHostCallbackErrorsSurfaceInJS`、`jsrt.TestHostOnRejectsNonFunction` |
 | CJS(`require`/`module.exports`) | ❌ | design §10 规定走离线 Bundle,M2 未做 |
@@ -145,7 +151,7 @@ out, err := svc.Call(ctx, "render")        // 方法调用转发到 JS worker
 
 ## 5. 已知边界与下一步
 
-1. **运行期提交队列缺失**:waterfall/回调里仍不能 `emit`/`provide`(会抛「只能在 apply 期间调用」)。要支持,需要在一次 JS 调用栈内收集写请求、回到内核协程按序提交,并避免「内核等 JS、JS 又等内核」的环。
+1. **运行期只有广播**:`ctx.emit` 可用,但 `provide`/`on`/`effect`/`waterfall` 在回调里仍会被拒绝——它们会改依赖图或注册表,必须回到内核控制协程。要支持,需要一个真正的内核命令队列(内核目前没有事件循环)。
 2. **`apply` 必须同步返回**:`async apply` 的 Promise 尚未 await;落地时用 `moejs.PromiseResult`。
 3. **同运行时不能嵌套 waterfall**:同一插件在同一事件上注册多个 waterfall 中间件会触发 `ErrReentrant`;需要「同一运行时串行排队」或把多个处理器合并成一次 JS 调用才能支持。
 4. **清理只到 bridge 一层**:JS effect 由 bridge 的 Apply disposer 执行,不进入内核 effect 栈,因此 `ada inspect` 看不到它们。

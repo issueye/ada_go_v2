@@ -53,7 +53,7 @@ export function apply(ctx: Ctx, cfg: { name: string }) {
     render() { return this.text + "!" },
   })
   ctx.emit("ts/ready", { name: cfg.name })
-  ctx.on("ts/ping", (p) => ctx.log("ping:" + p.n))
+  ctx.on("ts/ping", (p) => { ctx.log("ping:" + p.n); ctx.emit("ts/pong", { n: p.n + 1 }) })
   ctx.effect("first", () => ctx.log("cleanup:first"))
   ctx.effect("second", () => ctx.log("cleanup:second"))
   ctx.waterfall("ts/pipeline", (x, next) => next(x + 1))
@@ -93,6 +93,15 @@ export function apply(ctx: Ctx, cfg: { name: string }) {
 		t.Fatalf("消费者应先 pending,实际 %s", cf.State())
 	}
 
+	// 运行期 emit:JS 处理器里 emit 的事件也要能到 Go 监听器。
+	var pongPayload any
+	a.Root().On("ts/pong", func(_ context.Context, _ *kernel.Context, args []any) (any, error) {
+		if len(args) > 0 {
+			pongPayload = args[0]
+		}
+		return nil, nil
+	})
+
 	// 事件在根作用域监听:JS 侧 emit 的提交点是 apply 之后的内核协程。
 	var eventPayload any
 	a.Root().On("ts/ready", func(_ context.Context, _ *kernel.Context, args []any) (any, error) {
@@ -121,8 +130,11 @@ export function apply(ctx: Ctx, cfg: { name: string }) {
 	if eventPayload == nil {
 		t.Fatalf("JS 侧 emit 的事件没有派发")
 	}
-	// 反向回调:内核派发事件 → JS 处理器在 worker 上执行。
+	// 反向回调:内核派发事件 → JS 处理器在 worker 上执行,并在处理器里再次 emit。
 	a.Root().Emit("ts/ping", map[string]any{"n": 1})
+	if m, ok := pongPayload.(map[string]any); !ok || toInt(m["n"]) != 2 {
+		t.Fatalf("运行期 emit 的载荷不正确: %v", pongPayload)
+	}
 	logs := p.Logs()
 	if len(logs) != 2 || logs[0] != "hello, ada" || logs[1] != "ping:1" {
 		t.Fatalf("JS 日志不正确: %v", logs)
