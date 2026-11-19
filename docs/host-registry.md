@@ -34,7 +34,7 @@ host/registry/   从本地目录提供 repo.json / repo.sig.json / artifacts/*.z
 - `registry.TestAuth`:缺/正确 token;
 - `registry.TestResolveRejects`:绝对路径/`..` 拒绝(含 POSIX 风格)。
 
-## 5. 偏差与边界
+### 4.1 Serve 与 CLI\n\n- `registry.Serve(ctx, opts, ln)` 在给定 listener 上服务,ctx 取消时 `Shutdown` 并返回 nil;\n- `ada serve-repo -root <目录> -addr <地址> [-token <token>]`:监听并打印地址,SIGINT 优雅停止;\n- 测试 `TestServeGraceful` 用 `:0` 监听 + 请求 + 取消验证退出。\n\n## 5. 偏差与边界
 
 1. **只读**:没有上传/删除/发布/签名生成(签名由离线工具生成)。
 2. **无 TLS/无限流**:只适合内网或外层网关。
@@ -44,7 +44,7 @@ host/registry/   从本地目录提供 repo.json / repo.sig.json / artifacts/*.z
 
 ## 6. 下一步
 
-1. `ada serve-repo` 命令(监听端口 + 优雅关闭);
+1. ~~`ada serve-repo` 命令~~ 已实现;下一步是发布工具与鉴权 scope。
 2. 发布工具(生成索引/签名/zip);
 3. 鉴权 scope 与审计日志。
 

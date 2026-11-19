@@ -5,12 +5,16 @@
 package registry
 
 import (
+	"context"
 	"crypto/subtle"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Options 配置只读仓库服务。
@@ -48,6 +52,26 @@ func NewHandler(opts Options) (http.Handler, error) {
 type server struct {
 	root  string
 	token string
+}
+
+// Serve 在 ln 上提供仓库服务,ctx 取消时优雅关闭(返回 nil)。
+func Serve(ctx context.Context, opts Options, ln net.Listener) error {
+	h, err := NewHandler(opts)
+	if err != nil {
+		return err
+	}
+	srv := &http.Server{Handler: h}
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdownCtx)
+	}()
+	err = srv.Serve(ln)
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+	return err
 }
 
 func (s *server) auth(next http.Handler) http.Handler {

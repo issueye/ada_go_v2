@@ -1,11 +1,15 @@
 package registry_test
 
 import (
+	"context"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/adag/ada-go/v2/host/registry"
 )
@@ -71,5 +75,41 @@ func TestAuth(t *testing.T) {
 	h.ServeHTTP(rec, withAuth)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("正确 token 应 200,实际 %d", rec.Code)
+	}
+}
+
+// 3. Serve:监听 :0 + 请求 + ctx 取消优雅关闭。
+func TestServeGraceful(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "repo.json"), []byte(`{"entries":[]}`), 0o644); err != nil {
+		t.Fatalf("写索引失败: %v", err)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("监听失败: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- registry.Serve(ctx, registry.Options{Root: root}, ln) }()
+
+	resp, err := http.Get("http://" + ln.Addr().String() + "/repo.json")
+	if err != nil {
+		cancel()
+		t.Fatalf("请求失败: %v", err)
+	}
+	_, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		cancel()
+		t.Fatalf("状态码不正确: %d", resp.StatusCode)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("优雅关闭应返回 nil: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatalf("Serve 未在超时内退出")
 	}
 }
