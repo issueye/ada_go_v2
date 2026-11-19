@@ -59,6 +59,7 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 | [version.md](docs/version.md) | 版本与引擎约束:semver 解析与 engine/engines 校验 |
 | [host-cli.md](docs/host-cli.md) | M5 宿主适配器第一刀:host/cli 命令实现与测试 |
 | [host-server.md](docs/host-server.md) | 第二宿主适配器:host/server 只读 HTTP API |
+| [seam-net.md](docs/seam-net.md) | M5 网络能力:seam/net 与 provider/net-http |
 | [seam-session.md](docs/seam-session.md) | seam/session 与 session-memory |
 | [seam-fs.md](docs/seam-fs.md) | M5:seam/fs、fs-local 与 fs-sandbox |
 | [seam-shell.md](docs/seam-shell.md) | M5:seam/shell、shell-local 与 shell-guard |
@@ -82,7 +83,7 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 ## 当前状态:M1 内核 + M2 执行层 + M3 装配 + M4 编排 + M4.5 seam + M5 安全(fs/shell/sandbox/approval,三闸串联)
 
 ```powershell
-go test -race -count=1 -timeout 300s ./...   # 320 个用例:kernel 29 + schema 7 + compile 6 + jsrt 15 + bridge 3 + plugin 7 + preset 5 + assemble 21 + loader 5 + session 3 + sched 27 + quota 11 + flow 25 + expr 2 + bundle 12 + version 3 + caps 6 + install 24 + fs 12 + shell 16 + sandbox 5 + approval 10 + approval-cli 5 + caps-gate 4 + fs-redact 5 + fs-observe 5 + shell-observe 5 + shell-redact 5 + caps-static 1 + host/builtins 3 + host/cli 25 + host/server 8
+go test -race -count=1 -timeout 300s ./...   # 326 个用例:kernel 29 + schema 7 + compile 6 + jsrt 15 + bridge 3 + plugin 7 + preset 5 + assemble 21 + loader 5 + session 3 + sched 27 + quota 11 + flow 25 + expr 2 + bundle 12 + version 3 + caps 6 + install 24 + fs 12 + shell 16 + sandbox 5 + approval 10 + approval-cli 5 + caps-gate 4 + fs-redact 5 + fs-observe 5 + shell-observe 5 + shell-redact 5 + net-http 6 + caps-static 1 + host/builtins 3 + host/cli 25 + host/server 8
 go run ./cmd/ada-demo                        # 依赖门控 + 级联重载演示
 pwsh scripts/guard.ps1                       # 门禁:词汇/依赖/gofmt/build/vet/staticcheck/race/交叉编译/预算
 go run ./cmd/ada-ts-demo                     # M2:TS 插件编译→加载→提供服务/派发事件→内核消费
