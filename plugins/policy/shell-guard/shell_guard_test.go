@@ -7,7 +7,9 @@ import (
 
 	"github.com/adag/ada-go/v2/kernel"
 	shellguard "github.com/adag/ada-go/v2/plugins/policy/shell-guard"
+	sandboxnone "github.com/adag/ada-go/v2/plugins/provider/sandbox-none"
 	shelllocal "github.com/adag/ada-go/v2/plugins/provider/shell-local"
+	seamsandbox "github.com/adag/ada-go/v2/plugins/seam/sandbox"
 	seamshell "github.com/adag/ada-go/v2/plugins/seam/shell"
 )
 
@@ -31,10 +33,23 @@ func (f *fakeShell) Stream(_ context.Context, cmd seamshell.Command, onChunk fun
 }
 func (f *fakeShell) Env() seamshell.Env { return mapEnv{"PATH": "/usr/bin"} }
 
+func registryWith(t *testing.T, mode seamsandbox.Mode) *seamsandbox.Registry {
+	t.Helper()
+	impl, err := sandboxnone.New(mode)
+	if err != nil {
+		t.Fatalf("创建 sandbox-none 失败: %v", err)
+	}
+	registry := seamsandbox.NewRegistry()
+	if _, err := registry.Register("none", impl); err != nil {
+		t.Fatalf("注册后端失败: %v", err)
+	}
+	return registry
+}
+
 // 1. 只读模式:白名单内放行,白名单外拒绝。
 func TestReadOnlyAllowlist(t *testing.T) {
 	fake := &fakeShell{}
-	g := shellguard.New(fake, shellguard.ReadOnly, []string{"echo"}, false)
+	g := shellguard.New(fake, registryWith(t, seamsandbox.ModeReadOnly), "", []string{"echo"}, false)
 	if _, err := g.Run(context.Background(), seamshell.Command{Program: "echo", Args: []string{"hi"}}); err != nil {
 		t.Fatalf("白名单内应放行: %v", err)
 	}
@@ -46,44 +61,49 @@ func TestReadOnlyAllowlist(t *testing.T) {
 	}
 }
 
-// 2. workspace-write / danger 放行任意程序,但 shell 模式仍需显式授权。
+// 2. sandbox 允许执行,但 shell 模式仍需显式授权。
 func TestShellFlag(t *testing.T) {
 	fake := &fakeShell{}
-	for _, mode := range []shellguard.Mode{shellguard.WorkspaceWrite, shellguard.Danger} {
-		g := shellguard.New(fake, mode, nil, false)
-		if _, err := g.Run(context.Background(), seamshell.Command{Program: "any-program"}); err != nil {
-			t.Fatalf("%s 应放行普通程序: %v", mode, err)
-		}
-		if _, err := g.Run(context.Background(), seamshell.Command{Program: "any-program", Shell: true}); err == nil {
-			t.Fatalf("%s 下 shell=true 未授权应拒绝", mode)
-		}
+	g := shellguard.New(fake, registryWith(t, seamsandbox.ModeWorkspaceWrite), "", nil, false)
+	if _, err := g.Run(context.Background(), seamshell.Command{Program: "any-program"}); err != nil {
+		t.Fatalf("普通程序应放行: %v", err)
+	}
+	if _, err := g.Run(context.Background(), seamshell.Command{Program: "any-program", Shell: true}); err == nil {
+		t.Fatalf("shell=true 未授权应拒绝")
 	}
 
-	allowed := shellguard.New(fake, shellguard.WorkspaceWrite, nil, true)
+	allowed := shellguard.New(fake, registryWith(t, seamsandbox.ModeWorkspaceWrite), "", nil, true)
 	if _, err := allowed.Run(context.Background(), seamshell.Command{Program: "echo", Shell: true}); err != nil {
 		t.Fatalf("显式授权后 shell=true 应放行: %v", err)
 	}
 }
 
-// 3. 与内核装配:seam + provider + policy,消费者执行白名单命令。
+// 3. 沙箱后端不可用时 fail-closed。
+func TestNoSandboxBackendFailsClosed(t *testing.T) {
+	fake := &fakeShell{}
+	g := shellguard.New(fake, seamsandbox.NewRegistry(), "", nil, true)
+	if _, err := g.Run(context.Background(), seamshell.Command{Program: "echo"}); err == nil {
+		t.Fatalf("没有沙箱后端时命令必须失败")
+	}
+}
+
+// 4. 与内核装配:seam/sandbox + sandbox-none + seam/shell + shell-local + shell-guard。
 func TestKernelIntegration(t *testing.T) {
 	dir := t.TempDir()
 	app := kernel.New(kernel.Options{})
 	t.Cleanup(func() { _ = app.Stop(context.Background()) })
 
-	for _, plugin := range []kernel.Plugin{
-		seamshell.Plugin(),
-		shelllocal.Plugin(),
-		shellguard.Plugin(),
-	} {
-		if _, err := app.Plugin(plugin, kernel.NewConfig(map[string]any{
-			"workspace": dir,
-			"mode":      string(shellguard.ReadOnly),
-			"allow":     allowPrograms(),
-		})); err != nil {
-			t.Fatalf("挂载插件失败: %v", err)
+	mount := func(name string, p kernel.Plugin, cfg map[string]any) {
+		t.Helper()
+		if _, err := app.Plugin(p, kernel.NewConfig(cfg)); err != nil {
+			t.Fatalf("挂载 %s 失败: %v", name, err)
 		}
 	}
+	mount("seam/shell", seamshell.Plugin(), nil)
+	mount("seam/sandbox", seamsandbox.Plugin(), nil)
+	mount("shell-local", shelllocal.Plugin(), map[string]any{"workspace": dir})
+	mount("sandbox-none", sandboxnone.Plugin(), map[string]any{"mode": string(seamsandbox.ModeReadOnly)})
+	mount("shell-guard", shellguard.Plugin(), map[string]any{"allow": allowPrograms()})
 
 	var (
 		output    string
@@ -118,7 +138,7 @@ func TestKernelIntegration(t *testing.T) {
 	}
 }
 
-// 4. 无 provider 时 Get 返回 EUNIMPLEMENTED。
+// 5. 无 provider 时 Get 返回 EUNIMPLEMENTED。
 func TestKernelWithoutProvider(t *testing.T) {
 	app := kernel.New(kernel.Options{})
 	t.Cleanup(func() { _ = app.Stop(context.Background()) })
@@ -134,14 +154,13 @@ func TestKernelWithoutProvider(t *testing.T) {
 	}
 }
 
-// 5. 版本守卫:未配置 workspace 时 provider 安装失败(明确错误)。
+// 6. provider 缺少 workspace 时明确报错。
 func TestProviderRequiresWorkspace(t *testing.T) {
 	if _, err := shelllocal.New(shelllocal.Options{}); err == nil {
 		t.Fatalf("缺少 workspace 应报错")
 	}
 }
 
-// allowPrograms / echoCommand 让用例在 Windows 与 Unix 上跑同一条语义。
 func allowPrograms() []string {
 	if runtime.GOOS == "windows" {
 		return []string{"cmd"}

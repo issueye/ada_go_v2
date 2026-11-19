@@ -64,6 +64,13 @@ func (n *None) Resolve(_ context.Context, req seamsandbox.Request) (seamsandbox.
 			return deny(n.mode, false, "workspace-write: 拒绝网络访问"), nil
 		}
 	case seamsandbox.ModeDanger:
+		// 即使危险模式,插件目录仍受保护(安全契约 §1.3)。
+		if req.Op == seamsandbox.OpFSWrite || req.Op == seamsandbox.OpFSEdit {
+			p := string(req.Path)
+			if p == "/plugin" || strings.HasPrefix(p, "/plugin/") {
+				return deny(n.mode, false, fmt.Sprintf("danger-full-access: 插件目录受保护,拒绝写 %s", p)), nil
+			}
+		}
 		return allow(n.mode, fmt.Sprintf("danger-full-access: 放行 %s", req.Op)), nil
 	}
 	return deny(n.mode, false, fmt.Sprintf("未知操作 %q,按拒绝处理", req.Op)), nil

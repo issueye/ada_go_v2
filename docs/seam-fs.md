@@ -53,8 +53,8 @@ policy/fs-sandbox ──inject "fs"──▶ Chain.Decorate(沙箱包装,priorit
    与契约的「内容哈希」有偏差;足以检测常规编辑,但理论上可构造同前缀碰撞。
 3. **只有 `/workspace` 与 `/tmp`**:`/plugin/<id>`、`/user/...`、`/attachment/*` 未实现。
 4. **`Search` 未实现**:返回 `EUNIMPLEMENTED`。
-5. **沙箱模式来自配置,不来自会话事件**:`fs-sandbox` 读 `config.mode`;设计要求的
-   「模式变更写 session 事件、回放后判定一致」未做。
+5. **沙箱判定已接到 `sandbox.Resolve`**:`fs-sandbox` 每次操作先问 sandbox 后端(模式来自后端配置);设计要求的
+   「模式变更写 session 事件、回放后判定一致」仍未做。
 6. **没有 caps broker / 审批**:能力授权与审批属于 M5 剩余部分;当前只有装饰器沙箱。
 7. **Windows 特性未覆盖**:盘符/UNC/8.3 短名/ADS/保留名/大小写不敏感越界/路径长度。
 8. **没有 observation / redact 策略**:读后写表与密钥脱敏未实现。

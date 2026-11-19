@@ -43,7 +43,7 @@ plugins/policy/shell-guard/     策略:只读白名单、shell 模式默认拒�
    设计要求的「Facts 来自 sandbox」未满足。
 3. **没有事件**:`shell/start`、`shell/exited`、`shell/denied` 尚未发出(观测/审计缺口)。
 4. **没有 `shell-env` 策略**:provider 自身限制 env;独立策略文件未做。
-5. **没有 `shell-sandbox` 装饰器**:只有 `shell-guard`;程序级路径/jail 未与 sandbox 联动。
+5. **沙箱判定已接到 `sandbox.Resolve`**:`shell-guard` 先问 sandbox(操作/程序),再做 shell 门与白名单;程序级 jail 仍靠 OS 级后端(未实现)。
 6. **没有能力位/审批**:caps broker 与 approval 尚未实现;`allowShell` 是配置开关而非授权流程。
 7. **流式顺序**:stdout/stderr 由两个 reader 并发推送,`Seq` 只保证每路递增,不保证两路全序。
 8. **后台任务**:超过 30s 的命令被拒绝(未接 jobs seam)。

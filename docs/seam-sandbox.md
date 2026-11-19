@@ -42,8 +42,8 @@ plugins/provider/sandbox-none/  后端:policy-only(只在策略层限制,Enforce
 1. **没有 OS 级后端**:bwrap / landlock / seatbelt / Windows ACL 均未实现;
    当前只有 policy-only。
 2. **probe 失败 → fail-closed 的装配闸未实现**:没有可选后端,也没有 preset 装配期的探测拒绝。
-3. **没有与 fs/shell 装饰器联动**:`fs-sandbox`、`shell-guard` 仍读各自的 config mode,
-   没有调用 `sandbox.Resolve`;三闸(能力/沙箱/装饰器)尚未串成一条链。
+3. **三闸已串联**:`fs-sandbox`、`shell-guard` 现在在每次调用前调用 `sandbox.Resolve`,
+   后端不可用时 fail-closed;模式仍来自 sandbox 后端的 config,而不是 session 事件。
 4. **模式不来自 session 事件**:`Mode(ctx, sessionID)` 返回单模式,未接 session 变更与回放。
 5. **没有 `sandbox/request` / `sandbox/denied` 事件**:审计面缺口。
 6. **没有 approval / caps broker**:`Escalatable` 只是标记,没有升级流程。

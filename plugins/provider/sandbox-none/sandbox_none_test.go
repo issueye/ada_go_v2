@@ -26,7 +26,8 @@ func TestResolveMatrix(t *testing.T) {
 		{"工作区写工作区", seamsandbox.ModeWorkspaceWrite, seamsandbox.Request{Op: seamsandbox.OpFSWrite, Path: "/workspace/a"}, true, false},
 		{"工作区写tmp", seamsandbox.ModeWorkspaceWrite, seamsandbox.Request{Op: seamsandbox.OpFSWrite, Path: "/tmp/a"}, true, false},
 		{"工作区写插件目录", seamsandbox.ModeWorkspaceWrite, seamsandbox.Request{Op: seamsandbox.OpFSWrite, Path: "/plugin/x/a"}, false, true},
-		{"危险模式写任意", seamsandbox.ModeDanger, seamsandbox.Request{Op: seamsandbox.OpFSWrite, Path: "/plugin/x/a"}, true, false},
+		{"危险模式写工作区", seamsandbox.ModeDanger, seamsandbox.Request{Op: seamsandbox.OpFSWrite, Path: "/workspace/a"}, true, false},
+		{"危险模式写插件目录", seamsandbox.ModeDanger, seamsandbox.Request{Op: seamsandbox.OpFSWrite, Path: "/plugin/x/a"}, false, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

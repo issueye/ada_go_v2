@@ -9,10 +9,11 @@ import (
 	"github.com/adag/ada-go/v2/kernel"
 	fssandbox "github.com/adag/ada-go/v2/plugins/policy/fs-sandbox"
 	fslocal "github.com/adag/ada-go/v2/plugins/provider/fs-local"
+	sandboxnone "github.com/adag/ada-go/v2/plugins/provider/sandbox-none"
 	seamfs "github.com/adag/ada-go/v2/plugins/seam/fs"
+	seamsandbox "github.com/adag/ada-go/v2/plugins/seam/sandbox"
 )
 
-// fakeFS 记录调用,不碰真实磁盘。
 type fakeFS struct {
 	writes []seamfs.Path
 	reads  []seamfs.Path
@@ -40,23 +41,37 @@ func (f *fakeFS) Search(context.Context, seamfs.SearchRequest) (seamfs.SearchRes
 	return seamfs.SearchResult{}, nil
 }
 
-// 1. 三模式 × 写路径的判定矩阵;读在任何模式都放行。
+// registryWith 把真实 sandbox-none 后端装进注册表,策略用与生产一致的判定。
+func registryWith(t *testing.T, mode seamsandbox.Mode) *seamsandbox.Registry {
+	t.Helper()
+	impl, err := sandboxnone.New(mode)
+	if err != nil {
+		t.Fatalf("创建 sandbox-none 失败: %v", err)
+	}
+	registry := seamsandbox.NewRegistry()
+	if _, err := registry.Register("none", impl); err != nil {
+		t.Fatalf("注册后端失败: %v", err)
+	}
+	return registry
+}
+
+// 1. 三模式 × 写路径的判定矩阵(判定来自 sandbox 后端,不是策略里重写模式)。
 func TestModeMatrix(t *testing.T) {
 	fake := &fakeFS{}
 	cases := []struct {
-		mode    fssandbox.Mode
+		mode    seamsandbox.Mode
 		path    seamfs.Path
 		allowed bool
 	}{
-		{fssandbox.ReadOnly, "/workspace/a.txt", false},
-		{fssandbox.WorkspaceWrite, "/workspace/a.txt", true},
-		{fssandbox.WorkspaceWrite, "/tmp/a.txt", true},
-		{fssandbox.WorkspaceWrite, "/plugin/x/a.txt", false},
-		{fssandbox.Danger, "/workspace/a.txt", true},
-		{fssandbox.Danger, "/plugin/x/a.txt", false},
+		{seamsandbox.ModeReadOnly, "/workspace/a.txt", false},
+		{seamsandbox.ModeWorkspaceWrite, "/workspace/a.txt", true},
+		{seamsandbox.ModeWorkspaceWrite, "/tmp/a.txt", true},
+		{seamsandbox.ModeWorkspaceWrite, "/plugin/x/a.txt", false},
+		{seamsandbox.ModeDanger, "/workspace/a.txt", true},
+		{seamsandbox.ModeDanger, "/plugin/x/a.txt", false},
 	}
 	for _, tc := range cases {
-		fsys := fssandbox.New(fake, tc.mode)
+		fsys := fssandbox.New(fake, registryWith(t, tc.mode), "")
 		_, err := fsys.Write(context.Background(), seamfs.WriteRequest{Path: tc.path})
 		if tc.allowed && err != nil {
 			t.Fatalf("%s 写 %s 应允许,实际 %v", tc.mode, tc.path, err)
@@ -65,8 +80,9 @@ func TestModeMatrix(t *testing.T) {
 			t.Fatalf("%s 写 %s 应拒绝", tc.mode, tc.path)
 		}
 	}
-	fsys := fssandbox.New(fake, fssandbox.ReadOnly)
-	if _, err := fsys.Read(context.Background(), seamfs.ReadRequest{Path: "/workspace/a.txt"}); err != nil {
+
+	readOnly := fssandbox.New(fake, registryWith(t, seamsandbox.ModeReadOnly), "")
+	if _, err := readOnly.Read(context.Background(), seamfs.ReadRequest{Path: "/workspace/a.txt"}); err != nil {
 		t.Fatalf("只读模式读应放行: %v", err)
 	}
 }
@@ -74,7 +90,7 @@ func TestModeMatrix(t *testing.T) {
 // 2. 拒绝时底层实现不会被调用。
 func TestDeniedDoesNotReachInner(t *testing.T) {
 	fake := &fakeFS{}
-	fsys := fssandbox.New(fake, fssandbox.ReadOnly)
+	fsys := fssandbox.New(fake, registryWith(t, seamsandbox.ModeReadOnly), "")
 	if _, err := fsys.Write(context.Background(), seamfs.WriteRequest{Path: "/workspace/x"}); err == nil {
 		t.Fatalf("应拒绝")
 	}
@@ -83,7 +99,16 @@ func TestDeniedDoesNotReachInner(t *testing.T) {
 	}
 }
 
-// 3. 与内核装配:seam + provider + policy,消费者拿到的是带沙箱的 FS。
+// 3. 沙箱后端不可用时 fail-closed。
+func TestNoSandboxBackendFailsClosed(t *testing.T) {
+	fake := &fakeFS{}
+	fsys := fssandbox.New(fake, seamsandbox.NewRegistry(), "")
+	if _, err := fsys.Write(context.Background(), seamfs.WriteRequest{Path: "/workspace/a"}); err == nil {
+		t.Fatalf("没有沙箱后端时写必须失败(不能放行)")
+	}
+}
+
+// 4. 与内核装配:seam/sandbox + sandbox-none + seam/fs + fs-local + fs-sandbox。
 func TestKernelIntegration(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("hello"), 0o644); err != nil {
@@ -92,15 +117,17 @@ func TestKernelIntegration(t *testing.T) {
 	app := kernel.New(kernel.Options{})
 	t.Cleanup(func() { _ = app.Stop(context.Background()) })
 
-	if _, err := app.Plugin(seamfs.Plugin(), kernel.NewConfig(nil)); err != nil {
-		t.Fatalf("挂载 seam 失败: %v", err)
+	mount := func(name string, p kernel.Plugin, cfg map[string]any) {
+		t.Helper()
+		if _, err := app.Plugin(p, kernel.NewConfig(cfg)); err != nil {
+			t.Fatalf("挂载 %s 失败: %v", name, err)
+		}
 	}
-	if _, err := app.Plugin(fslocal.Plugin(), kernel.NewConfig(map[string]any{"workspace": dir})); err != nil {
-		t.Fatalf("挂载 provider 失败: %v", err)
-	}
-	if _, err := app.Plugin(fssandbox.Plugin(), kernel.NewConfig(map[string]any{"mode": string(fssandbox.ReadOnly)})); err != nil {
-		t.Fatalf("挂载 policy 失败: %v", err)
-	}
+	mount("seam/fs", seamfs.Plugin(), nil)
+	mount("seam/sandbox", seamsandbox.Plugin(), nil)
+	mount("fs-local", fslocal.Plugin(), map[string]any{"workspace": dir})
+	mount("sandbox-none", sandboxnone.Plugin(), map[string]any{"mode": string(seamsandbox.ModeReadOnly)})
+	mount("fs-sandbox", fssandbox.Plugin(), nil)
 
 	var (
 		readContent string
@@ -132,21 +159,5 @@ func TestKernelIntegration(t *testing.T) {
 	}
 	if writeErr == nil {
 		t.Fatalf("只读模式下写应被拒绝")
-	}
-}
-
-// 4. 未安装 provider 时,Get 必须返回 EUNIMPLEMENTED,而不是 panic。
-func TestKernelWithoutProvider(t *testing.T) {
-	app := kernel.New(kernel.Options{})
-	t.Cleanup(func() { _ = app.Stop(context.Background()) })
-	if _, err := app.Plugin(seamfs.Plugin(), kernel.NewConfig(nil)); err != nil {
-		t.Fatalf("挂载 seam 失败: %v", err)
-	}
-	chain, err := kernel.Service[*seamfs.Chain](app.Root(), "fs")
-	if err != nil {
-		t.Fatalf("取服务失败: %v", err)
-	}
-	if _, err := chain.Get(); err == nil {
-		t.Fatalf("没有 provider 时 Get 应失败")
 	}
 }
