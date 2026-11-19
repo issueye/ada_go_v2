@@ -31,6 +31,8 @@ type Options struct {
 	RateLimit int
 	// Now 可注入时钟(测试用);nil 表示 time.Now。
 	Now func() time.Time
+	// AllowOrigin 非空时启用 CORS;空表示关闭。
+	AllowOrigin string
 }
 
 // NewHandler 构造仓库 handler。
@@ -55,21 +57,22 @@ func NewHandler(opts Options) (http.Handler, error) {
 	if now == nil {
 		now = time.Now
 	}
-	s := &server{root: root, token: opts.Token, rateLimit: opts.RateLimit, now: now}
+	s := &server{root: root, token: opts.Token, rateLimit: opts.RateLimit, now: now, allowOrigin: opts.AllowOrigin}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/repo.json", s.handleRepoFile("repo.json"))
 	mux.HandleFunc("/repo.sig.json", s.handleRepoFile("repo.sig.json"))
 	mux.HandleFunc("/artifacts/", s.handleArtifact)
 	mux.HandleFunc("/", s.handleIndex)
-	return s.rateLimitMiddleware(s.auth(mux)), nil
+	return s.corsMiddleware(s.rateLimitMiddleware(s.auth(mux))), nil
 }
 
 type server struct {
 	root  string
 	token string
 
-	rateLimit int
-	now       func() time.Time
+	rateLimit   int
+	now         func() time.Time
+	allowOrigin string
 
 	rateMu      sync.Mutex
 	windowStart time.Time
@@ -101,6 +104,24 @@ func Serve(ctx context.Context, opts Options, ln net.Listener) error {
 		return nil
 	}
 	return err
+}
+
+// corsMiddleware 在 AllowOrigin 非空时设置 CORS 头并处理预检。
+func (s *server) corsMiddleware(next http.Handler) http.Handler {
+	if s.allowOrigin == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", s.allowOrigin)
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization")
+			w.Header().Set("Access-Control-Max-Age", "600")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // rateLimitMiddleware 是固定窗口限流:每 1 秒最多 RateLimit 个请求。

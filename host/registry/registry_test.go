@@ -226,3 +226,25 @@ func TestRateLimit(t *testing.T) {
 		t.Fatalf("窗口复位后应 200,实际 %d", rec.Code)
 	}
 }
+
+// 6. CORS:GET 带允许源,OPTIONS 预检 204。
+func TestCORS(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "repo.json"), []byte(`{"entries":[]}`), 0o644); err != nil {
+		t.Fatalf("写索引失败: %v", err)
+	}
+	h, err := registry.NewHandler(registry.Options{Root: root, AllowOrigin: "https://app.example"})
+	if err != nil {
+		t.Fatalf("构造失败: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/repo.json", nil))
+	if rec.Code != http.StatusOK || rec.Header().Get("Access-Control-Allow-Origin") != "https://app.example" {
+		t.Fatalf("GET CORS 头不正确: %d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodOptions, "/repo.json", nil))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("预检应 204,实际 %d", rec.Code)
+	}
+}

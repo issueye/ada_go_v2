@@ -23,7 +23,7 @@ host/server/   只读 HTTP API:plan / caps / list
 
 - 非 GET → **405**;
 - 绝对路径、`..` 逃逸、符号链接指向根外 → **400**;
-- `Options.Token` 非空时要求 `Authorization: Bearer <token>`(常量时间比较);空 Token 表示不鉴权,此时只应绑定 localhost 或由外层网关保护。\n- `Options.RateLimit` > 0 时固定窗口限流(每秒),超限返回 429 + `Retry-After: 1`;`Options.Now` 可注入时钟。\n- `Options.CertFile/KeyFile` 成对提供时 `Serve` 使用 TLS(`ServeTLS`);只给一个会报错。
+- `Options.Token` 非空时要求 `Authorization: Bearer <token>`(常量时间比较);空 Token 表示不鉴权,此时只应绑定 localhost 或由外层网关保护。\n- `Options.RateLimit` > 0 时固定窗口限流(每秒),超限返回 429 + `Retry-After: 1`;`Options.Now` 可注入时钟。\n- `Options.CertFile/KeyFile` 成对提供时 `Serve` 使用 TLS(`ServeTLS`);只给一个会报错。\n- `Options.AllowOrigin` 非空时启用 CORS(响应带 `Access-Control-Allow-Origin`,OPTIONS 预检 204)。
 
 ## 3. 内置插件与 inspect\n\n`/api/inspect` 使用共享的 `host/builtins` 注册表(与 host/cli 同一份内置 Go 插件),并在挂载前 `ApplyAutoGrants`。\n它**会执行插件副作用**(打开文件、注册服务、启动 goroutine),因此只适合本地开发/诊断,文档明确不应暴露到公网。\n\n## 4. 安全约束
 
@@ -34,13 +34,13 @@ host/server/   只读 HTTP API:plan / caps / list
 
 `host/server.Test*` 用 `httptest` 直接打 handler:
 
-- plan 顺序、caps 授权、路径逃逸 400、POST 405、list 索引、根路由、inspect 内置栈快照、verify 插件、Token 认证、限流、Serve 优雅退出、TLS 服务;
+- plan 顺序、caps 授权、路径逃逸 400、POST 405、list 索引、根路由、inspect 内置栈快照、verify 插件、Token 认证、限流、Serve 优雅退出、TLS 服务、CORS;
 - 不启动真实端口,不依赖网络。
 
 ## 6. 偏差与边界
 
 1. **基本只读**:`/api/inspect` 会临时挂载(有副作用)后立即停止;没有长期 app 生命周期与审批/执行接口。
-2. **有 Token/限流/TLS(可选)**:证书文件由调用方提供;没有签发/轮换/ACME;固定窗口限流仍是单实例语义。
+2. **有 Token/限流/TLS/CORS(可选)**:证书文件由调用方提供;没有签发/轮换/ACME;限流仍是单实例语义;CORS 只设置允许源,不做 Origin 白名单匹配。
 3. **root 内任意目录可读**:没有按插件/用户的能力过滤。
 4. **没有分页/流式**:结果一次性 JSON;大插件集另说。
 5. **没有 CORS/限流**。

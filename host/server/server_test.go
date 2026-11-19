@@ -373,3 +373,21 @@ func TestServeTLS(t *testing.T) {
 		t.Fatalf("Serve 未在超时内退出")
 	}
 }
+
+// 14. CORS:GET 带允许源,OPTIONS 预检 204。
+func TestCORS(t *testing.T) {
+	h, err := server.NewHandler(server.Options{Root: "../../examples", AllowOrigin: "https://app.example"})
+	if err != nil {
+		t.Fatalf("构造失败: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/plan?path=plugins", nil))
+	if rec.Code != http.StatusOK || rec.Header().Get("Access-Control-Allow-Origin") != "https://app.example" {
+		t.Fatalf("GET CORS 头不正确: %d %q", rec.Code, rec.Header().Get("Access-Control-Allow-Origin"))
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodOptions, "/api/plan", nil))
+	if rec.Code != http.StatusNoContent || !strings.Contains(rec.Header().Get("Access-Control-Allow-Methods"), "GET") {
+		t.Fatalf("预检不正确: %d", rec.Code)
+	}
+}

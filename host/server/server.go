@@ -41,6 +41,8 @@ type Options struct {
 	// CertFile/KeyFile 成对出现时 Serve 使用 TLS;只出现一个报错。
 	CertFile string
 	KeyFile  string
+	// AllowOrigin 非空时启用 CORS(Access-Control-Allow-Origin);空表示关闭。
+	AllowOrigin string
 }
 
 // Serve 在 ln 上提供只读 HTTP API,ctx 取消时优雅关闭(返回 nil)。
@@ -76,8 +78,9 @@ type Server struct {
 	token string
 	mux   *http.ServeMux
 
-	rateLimit int
-	now       func() time.Time
+	rateLimit   int
+	now         func() time.Time
+	allowOrigin string
 
 	rateMu      sync.Mutex
 	windowStart time.Time
@@ -106,14 +109,32 @@ func NewHandler(opts Options) (http.Handler, error) {
 	if now == nil {
 		now = time.Now
 	}
-	s := &Server{root: root, token: opts.Token, mux: http.NewServeMux(), rateLimit: opts.RateLimit, now: now}
+	s := &Server{root: root, token: opts.Token, mux: http.NewServeMux(), rateLimit: opts.RateLimit, now: now, allowOrigin: opts.AllowOrigin}
 	s.mux.HandleFunc("/api/plan", s.handlePlan)
 	s.mux.HandleFunc("/api/inspect", s.handleInspect)
 	s.mux.HandleFunc("/api/verify", s.handleVerify)
 	s.mux.HandleFunc("/api/caps", s.handleCaps)
 	s.mux.HandleFunc("/api/list", s.handleList)
 	s.mux.HandleFunc("/", s.handleIndex)
-	return s.rateLimitMiddleware(s.authenticate(s.mux)), nil
+	return s.corsMiddleware(s.rateLimitMiddleware(s.authenticate(s.mux))), nil
+}
+
+// corsMiddleware 在 AllowOrigin 非空时设置 CORS 头并处理预检。
+func (s *Server) corsMiddleware(next http.Handler) http.Handler {
+	if s.allowOrigin == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", s.allowOrigin)
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization")
+			w.Header().Set("Access-Control-Max-Age", "600")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // rateLimitMiddleware 是固定窗口限流:每 1 秒最多 RateLimit 个请求。

@@ -20,7 +20,7 @@ host/registry/   从本地目录提供 repo.json / repo.sig.json / artifacts/*.z
 | GET | `/` | 路由清单 |
 
 - 非 GET → 405;文件不存在 → 404;路径逃逸/绝对路径/反斜杠 → 400;
-- `Options.Token` 非空时要求 `Authorization: Bearer <token>`(常量时间比较)。\n- `Options.RateLimit` > 0 时固定窗口限流(每秒),超限 429 + `Retry-After`;`Options.Now` 可注入。
+- `Options.Token` 非空时要求 `Authorization: Bearer <token>`(常量时间比较)。\n- `Options.RateLimit` > 0 时固定窗口限流(每秒),超限 429 + `Retry-After`;`Options.Now` 可注入。\n- `Options.AllowOrigin` 非空时启用 CORS(OPTIONS 预检 204)。
 
 ## 3. 与客户端配对
 
@@ -37,7 +37,7 @@ host/registry/   从本地目录提供 repo.json / repo.sig.json / artifacts/*.z
 ### 4.1 Serve 与 CLI\n\n- `registry.Serve(ctx, opts, ln)` 在给定 listener 上服务,ctx 取消时 `Shutdown` 并返回 nil;\n- `ada serve-repo -root <目录> -addr <地址> [-token] [-rate-limit N] [-cert 证书 -key 私钥]`:监听并打印地址,SIGINT 优雅停止,可 TLS;\n- 测试 `TestServeGraceful` 用 `:0` 监听 + 请求 + 取消验证退出。\n\n## 5. 偏差与边界
 
 1. **只读**:没有上传/删除/发布/签名生成(签名由离线工具生成)。
-2. **TLS/限流可选**:`CertFile/KeyFile` 成对时 `Serve` 走 `ServeTLS`;`RateLimit` 为单实例固定窗口;没有签发/轮换。
+2. **TLS/限流/CORS 可选**:`CertFile/KeyFile` 成对时走 `ServeTLS`;`RateLimit` 为单实例固定窗口;CORS 只设置允许源。
 3. **无目录索引**:不列出 artifacts;客户端必须知道文件名。
 4. **路径限制是词法 + 符号链接解析**:服务端启动时解析 root 一次,运行中新增符号链接可能绕过(未做连接级校验)。
 5. **没有缓存/范围请求**(`http.ServeFile` 自身支持 Range)。
