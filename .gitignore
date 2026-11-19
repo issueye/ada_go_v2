@@ -15,3 +15,6 @@ Thumbs.db
 # Go 工作区文件（若将来需要多模块开发）
 go.work
 go.work.sum
+
+# 本机基准基线(机器相关,按需生成)
+/bench-baseline.txt

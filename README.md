@@ -67,7 +67,7 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 ## 当前状态:M1 已落地(2026-11-19 修复轮)
 
 ```powershell
-go test -race -count=1 -timeout 120s ./...   # 内核 20 个用例 + schema 7 个用例
+go test -race -count=1 -timeout 120s ./...   # 内核 21 个用例 + schema 7 个用例
 go run ./cmd/ada-demo                        # 依赖门控 + 级联重载演示
 pwsh scripts/guard.ps1                       # 门禁:词汇/依赖/gofmt/build/vet/staticcheck/race/交叉编译/预算
 pwsh scripts/bench.ps1                       # 性能预算:≤20 μs/次、50 插件冷启动 ≤150 ms

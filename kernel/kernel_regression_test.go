@@ -3,6 +3,7 @@ package kernel_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -244,7 +245,22 @@ func TestTwentyPluginTopology(t *testing.T) {
 	}
 }
 
-// 10. Stop 之后事件总线封口,不再派发;注册表也清空。
+// 10. pending 的错误必须点名「在等哪个服务」,否则只能靠猜。
+func TestPendingErrorNamesMissingService(t *testing.T) {
+	a := newApp(t)
+	f := mustPlugin(t, a, kernel.Func("needs-missing", noopApply).WithInject("missing-svc"))
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	err := f.Ready(ctx)
+	if !kernel.IsCode(err, kernel.CodePending) {
+		t.Fatalf("应返回 EPENDING,实际 %v", err)
+	}
+	if !strings.Contains(err.Error(), "missing-svc") {
+		t.Fatalf("pending 错误应点名缺失的服务,实际 %v", err)
+	}
+}
+
+// 11. Stop 之后事件总线封口,不再派发;注册表也清空。
 func TestStopSealsEventsAndRegistry(t *testing.T) {
 	a := newApp(t)
 	hits := 0

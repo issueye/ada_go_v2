@@ -135,6 +135,11 @@ func (f *Fiber) Ready(ctx context.Context) error {
 		case <-ch:
 		case <-ctx.Done():
 			if st == Pending {
+				// 返回存储的 pending 原因(含缺失的服务名),而不是一句泛泛的
+				// 「仍在等待依赖」——诊断时最需要知道的就是「在等谁」。
+				if err != nil {
+					return err
+				}
 				return Fail(CodePending, "插件 %s 仍在等待依赖", f.plugin.Name())
 			}
 			return ctx.Err()

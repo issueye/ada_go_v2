@@ -1,13 +1,14 @@
 # 基准预算门禁(AGENTS.md §6.3)。
 #
 # 用法:
-#   pwsh scripts/bench.ps1                   # 只校验绝对预算(CI 用,跨机器稳定)
-#   pwsh scripts/bench.ps1 -Baseline x.txt   # 额外做 ±15% 回归比对(同机对比用)
+#   pwsh scripts/bench.ps1                          # 只校验绝对预算(CI 用,跨机器稳定)
+#   pwsh scripts/bench.ps1 -WriteBaseline b.txt     # 记录本机基线
+#   pwsh scripts/bench.ps1 -Baseline b.txt          # 同机 ±15% 回归比对
 #
 # 为什么不把 ±15% 设为 CI 默认:基准随机器与 CPU 频率波动,
 # 跨机器的固定基线会把「换了台快机器」误报成回归。基线文件只在同机比较时有意义。
 
-param([string]$Baseline = "")
+param([string]$Baseline = "", [string]$WriteBaseline = "")
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
@@ -49,6 +50,14 @@ foreach ($name in $budget.Keys) {
     $status = if ($ok) { "OK" } else { "超预算" }
     Write-Host ("{0,-32} {1,12:N0} ns/op  预算 {2,12:N0}  {3}" -f $name, $ns, $max, $status)
     if (-not $ok) { $fail = 1 }
+}
+
+if ($WriteBaseline -ne "") {
+    $rows = foreach ($name in $budget.Keys) {
+        if ($measured.ContainsKey($name)) { "$name $($measured[$name])" }
+    }
+    $rows | Set-Content -Encoding utf8 $WriteBaseline
+    Write-Host "`n基线已写入: $WriteBaseline(换机器后重新生成)"
 }
 
 if ($Baseline -ne "" -and (Test-Path $Baseline)) {
