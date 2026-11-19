@@ -23,6 +23,9 @@ type Options struct {
 	Root string
 	// Token 非空时要求 Authorization: Bearer <Token>。
 	Token string
+	// CertFile/KeyFile 成对出现时 Serve 使用 TLS;只出现一个报错。
+	CertFile string
+	KeyFile  string
 }
 
 // NewHandler 构造仓库 handler。
@@ -60,6 +63,9 @@ func Serve(ctx context.Context, opts Options, ln net.Listener) error {
 	if err != nil {
 		return err
 	}
+	if (opts.CertFile == "") != (opts.KeyFile == "") {
+		return fmt.Errorf("host/registry: CertFile 与 KeyFile 必须成对提供")
+	}
 	srv := &http.Server{Handler: h}
 	go func() {
 		<-ctx.Done()
@@ -67,7 +73,11 @@ func Serve(ctx context.Context, opts Options, ln net.Listener) error {
 		defer cancel()
 		_ = srv.Shutdown(shutdownCtx)
 	}()
-	err = srv.Serve(ln)
+	if opts.CertFile != "" {
+		err = srv.ServeTLS(ln, opts.CertFile, opts.KeyFile)
+	} else {
+		err = srv.Serve(ln)
+	}
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
