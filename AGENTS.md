@@ -33,6 +33,7 @@
 | 文档 | 作用 |
 |---|---|
 | [plugin-kernel-design.md](docs/plugin-kernel-design.md) | 主设计：内核、执行层、编排、安全、宿主、里程碑 |
+| [milestone-status.md](docs/milestone-status.md) | M4/M5 验收矩阵与证据(含未完成/例外) |
 | [seam-api.md](docs/seam-api.md) | 首批 seam 契约：llm / tools / session / prompts |
 | [seam-api-security.md](docs/seam-api-security.md) | 安全 seam 契约：sandbox / fs / shell |
 | [kernel-api.md](docs/kernel-api.md) | M1 冻结的内核 API 与已知边界 |
