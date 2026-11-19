@@ -2,7 +2,7 @@
 
 > 给在本仓库工作的 AI 代理与人类协作者。**动代码之前先读这一份**；它与设计文档冲突时，以本文件的红线为准，并立刻提 issue 修正文档。
 
-**当前阶段:M1 内核、M2 执行层、M3 装配、M4 编排(`sched`/`quota`/`flow`)、M4.5 seam、M5 安全(`fs`/`fs-local`/`fs-sandbox`、`shell`/`shell-local`/`shell-guard`、`sandbox`/`sandbox-none`,且 fs/shell 策略已调用 sandbox.Resolve)已落地**,M5 剩余审批/签名/宿主/OS 级沙箱。本文件始终生效:先用它约束设计,再用它约束实现。
+**当前阶段:M1 内核、M2 执行层、M3 装配、M4 编排(`sched`/`quota`/`flow`)、M4.5 seam、M5 安全(`fs`/`fs-local`/`fs-sandbox`、`shell`/`shell-local`/`shell-guard`、`sandbox`/`sandbox-none`,且 fs/shell 策略已调用 sandbox.Resolve、可升级拒绝走 approval)已落地**,M5 剩余 caps/签名/宿主/OS 级沙箱。本文件始终生效:先用它约束设计,再用它约束实现。
 
 ---
 
@@ -45,6 +45,7 @@
 | [seam-fs.md](docs/seam-fs.md) | M5 安全第一刀:seam/fs、fs-local 实现与 fs-sandbox 策略 |
 | [seam-shell.md](docs/seam-shell.md) | M5 安全第二刀:seam/shell、shell-local 实现与 shell-guard 策略 |
 | [seam-sandbox.md](docs/seam-sandbox.md) | M5 安全第三刀:seam/sandbox 与 sandbox-none(policy-only) |
+| [seam-approval.md](docs/seam-approval.md) | M5 安全第四刀:seam/approval、approval-deny 与 fs 升级审批 |
 
 ---
 

@@ -10,6 +10,7 @@ import (
 	fssandbox "github.com/adag/ada-go/v2/plugins/policy/fs-sandbox"
 	fslocal "github.com/adag/ada-go/v2/plugins/provider/fs-local"
 	sandboxnone "github.com/adag/ada-go/v2/plugins/provider/sandbox-none"
+	seamapproval "github.com/adag/ada-go/v2/plugins/seam/approval"
 	seamfs "github.com/adag/ada-go/v2/plugins/seam/fs"
 	seamsandbox "github.com/adag/ada-go/v2/plugins/seam/sandbox"
 )
@@ -71,7 +72,7 @@ func TestModeMatrix(t *testing.T) {
 		{seamsandbox.ModeDanger, "/plugin/x/a.txt", false},
 	}
 	for _, tc := range cases {
-		fsys := fssandbox.New(fake, registryWith(t, tc.mode), "")
+		fsys := fssandbox.New(fake, registryWith(t, tc.mode), "", nil, "")
 		_, err := fsys.Write(context.Background(), seamfs.WriteRequest{Path: tc.path})
 		if tc.allowed && err != nil {
 			t.Fatalf("%s 写 %s 应允许,实际 %v", tc.mode, tc.path, err)
@@ -81,7 +82,7 @@ func TestModeMatrix(t *testing.T) {
 		}
 	}
 
-	readOnly := fssandbox.New(fake, registryWith(t, seamsandbox.ModeReadOnly), "")
+	readOnly := fssandbox.New(fake, registryWith(t, seamsandbox.ModeReadOnly), "", nil, "")
 	if _, err := readOnly.Read(context.Background(), seamfs.ReadRequest{Path: "/workspace/a.txt"}); err != nil {
 		t.Fatalf("只读模式读应放行: %v", err)
 	}
@@ -90,7 +91,7 @@ func TestModeMatrix(t *testing.T) {
 // 2. 拒绝时底层实现不会被调用。
 func TestDeniedDoesNotReachInner(t *testing.T) {
 	fake := &fakeFS{}
-	fsys := fssandbox.New(fake, registryWith(t, seamsandbox.ModeReadOnly), "")
+	fsys := fssandbox.New(fake, registryWith(t, seamsandbox.ModeReadOnly), "", nil, "")
 	if _, err := fsys.Write(context.Background(), seamfs.WriteRequest{Path: "/workspace/x"}); err == nil {
 		t.Fatalf("应拒绝")
 	}
@@ -102,7 +103,7 @@ func TestDeniedDoesNotReachInner(t *testing.T) {
 // 3. 沙箱后端不可用时 fail-closed。
 func TestNoSandboxBackendFailsClosed(t *testing.T) {
 	fake := &fakeFS{}
-	fsys := fssandbox.New(fake, seamsandbox.NewRegistry(), "")
+	fsys := fssandbox.New(fake, seamsandbox.NewRegistry(), "", nil, "")
 	if _, err := fsys.Write(context.Background(), seamfs.WriteRequest{Path: "/workspace/a"}); err == nil {
 		t.Fatalf("没有沙箱后端时写必须失败(不能放行)")
 	}
@@ -160,4 +161,54 @@ func TestKernelIntegration(t *testing.T) {
 	if writeErr == nil {
 		t.Fatalf("只读模式下写应被拒绝")
 	}
+}
+
+// 5. 可升级的拒绝 → 审批允许则放行,审批拒绝/缺失则仍然拒绝(fail-closed)。
+func TestApprovalEscalation(t *testing.T) {
+	allowReg := seamapproval.NewRegistry()
+	if _, err := allowReg.Register(allowApprover{}); err != nil {
+		t.Fatalf("注册审批人失败: %v", err)
+	}
+	fake := &fakeFS{}
+	fsys := fssandbox.New(fake, registryWith(t, seamsandbox.ModeReadOnly), "", allowReg, "")
+	if _, err := fsys.Write(context.Background(), seamfs.WriteRequest{Path: "/workspace/a"}); err != nil {
+		t.Fatalf("审批允许后写应放行: %v", err)
+	}
+	if len(fake.writes) != 1 {
+		t.Fatalf("审批允许后应真正写入,实际 %d", len(fake.writes))
+	}
+
+	denyReg := seamapproval.NewRegistry()
+	if _, err := denyReg.Register(denyApprover{}); err != nil {
+		t.Fatalf("注册审批人失败: %v", err)
+	}
+	fake = &fakeFS{}
+	denied := fssandbox.New(fake, registryWith(t, seamsandbox.ModeReadOnly), "", denyReg, "")
+	if _, err := denied.Write(context.Background(), seamfs.WriteRequest{Path: "/workspace/a"}); err == nil {
+		t.Fatalf("审批拒绝后写必须失败")
+	}
+	if len(fake.writes) != 0 {
+		t.Fatalf("审批拒绝后不应触底写入")
+	}
+
+	// 没有审批服务:可升级的拒绝也必须 fail-closed。
+	fake = &fakeFS{}
+	noApproval := fssandbox.New(fake, registryWith(t, seamsandbox.ModeReadOnly), "", nil, "")
+	if _, err := noApproval.Write(context.Background(), seamfs.WriteRequest{Path: "/workspace/a"}); err == nil {
+		t.Fatalf("没有审批服务时必须拒绝")
+	}
+}
+
+type allowApprover struct{}
+
+func (allowApprover) Name() string { return "allow" }
+func (allowApprover) Approve(context.Context, seamapproval.Request) (seamapproval.Decision, error) {
+	return seamapproval.Decision{Allow: true, Reason: "允许本次升级", Approver: "allow"}, nil
+}
+
+type denyApprover struct{}
+
+func (denyApprover) Name() string { return "deny" }
+func (denyApprover) Approve(context.Context, seamapproval.Request) (seamapproval.Decision, error) {
+	return seamapproval.Decision{Allow: false, Reason: "审批人拒绝", Approver: "deny"}, nil
 }

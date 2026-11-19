@@ -55,7 +55,7 @@ policy/fs-sandbox ──inject "fs"──▶ Chain.Decorate(沙箱包装,priorit
 4. **`Search` 未实现**:返回 `EUNIMPLEMENTED`。
 5. **沙箱判定已接到 `sandbox.Resolve`**:`fs-sandbox` 每次操作先问 sandbox 后端(模式来自后端配置);设计要求的
    「模式变更写 session 事件、回放后判定一致」仍未做。
-6. **没有 caps broker / 审批**:能力授权与审批属于 M5 剩余部分;当前只有装饰器沙箱。
+6. **审批已接入可升级拒绝**:`fs-sandbox` 在 sandbox 判定 `Escalatable` 时调用 `seam/approval`(默认审批人拒绝);caps broker 仍未实现。
 7. **Windows 特性未覆盖**:盘符/UNC/8.3 短名/ADS/保留名/大小写不敏感越界/路径长度。
 8. **没有 observation / redact 策略**:读后写表与密钥脱敏未实现。
 

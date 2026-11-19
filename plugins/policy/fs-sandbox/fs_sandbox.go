@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/adag/ada-go/v2/kernel"
+	seamapproval "github.com/adag/ada-go/v2/plugins/seam/approval"
 	seamfs "github.com/adag/ada-go/v2/plugins/seam/fs"
 	seamsandbox "github.com/adag/ada-go/v2/plugins/seam/sandbox"
 )
@@ -21,14 +22,17 @@ const PolicyName = "fs-sandbox"
 const Priority = 100
 
 // New 构造装饰器。registry 与 backend 懒取:装配顺序不影响正确性。
-func New(inner seamfs.FS, registry *seamsandbox.Registry, backend string) seamfs.FS {
-	return &sandbox{inner: inner, registry: registry, backend: backend}
+// approval 为 nil 表示没有审批服务:可升级的拒绝一律按拒绝处理(fail-closed)。
+func New(inner seamfs.FS, registry *seamsandbox.Registry, backend string, approvalRegistry *seamapproval.Registry, approvalBackend string) seamfs.FS {
+	return &sandbox{inner: inner, registry: registry, backend: backend, approval: approvalRegistry, approvalBackend: approvalBackend}
 }
 
 type sandbox struct {
-	inner    seamfs.FS
-	registry *seamsandbox.Registry
-	backend  string
+	inner           seamfs.FS
+	registry        *seamsandbox.Registry
+	backend         string
+	approval        *seamapproval.Registry
+	approvalBackend string
 }
 
 func (s *sandbox) judge(ctx context.Context, op seamsandbox.Op, p seamfs.Path, write bool) error {
@@ -43,14 +47,29 @@ func (s *sandbox) judge(ctx context.Context, op seamsandbox.Op, p seamfs.Path, w
 	if err != nil {
 		return err
 	}
-	if !decision.Allow {
-		reason := strings.Join(decision.Reasons, "; ")
-		if reason == "" {
-			reason = "被沙箱拒绝"
-		}
-		return seamfs.Denied("sandbox", reason)
+	if decision.Allow {
+		return nil
 	}
-	return nil
+	reason := strings.Join(decision.Reasons, "; ")
+	if reason == "" {
+		reason = "被沙箱拒绝"
+	}
+	// 可升级的拒绝:问审批;没有审批服务/审批人报错/拒绝 → 仍然拒绝(fail-closed)。
+	if decision.Escalatable && s.approval != nil {
+		approver, err := s.approval.Get(s.approvalBackend)
+		if err != nil {
+			return seamfs.Denied("approval", "没有可用的审批人: "+err.Error())
+		}
+		dec, err := approver.Approve(ctx, seamapproval.Request{Source: "fs", Op: string(op), Target: string(p), Reason: reason})
+		if err != nil {
+			return seamfs.Denied("approval", "审批失败: "+err.Error())
+		}
+		if dec.Allow {
+			return nil
+		}
+		return seamfs.Denied("approval", dec.Reason)
+	}
+	return seamfs.Denied("sandbox", reason)
 }
 
 func (s *sandbox) Stat(ctx context.Context, p seamfs.Path) (seamfs.FileInfo, error) {
@@ -107,8 +126,14 @@ func Plugin() kernel.Plugin {
 			return nil, err
 		}
 		backend := cfg.String("backend")
+		var approvalRegistry *seamapproval.Registry
+		if v, ok := ctx.TryService("approval"); ok {
+			if reg, ok := v.(*seamapproval.Registry); ok {
+				approvalRegistry = reg
+			}
+		}
 		return chain.Decorate(func(inner seamfs.FS) seamfs.FS {
-			return New(inner, registry, backend)
+			return New(inner, registry, backend, approvalRegistry, cfg.String("approvalBackend"))
 		}, Priority)
-	}).WithInject("fs", "sandbox")
+	}).WithInject("fs", "sandbox").WithOptional("approval")
 }
