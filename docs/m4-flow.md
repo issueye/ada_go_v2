@@ -1,7 +1,7 @@
 # M4 流水线(flow)
 
 > 配套 [plugin-kernel-design.md](plugin-kernel-design.md) §12.2(3)「流水线」与 §12.4「受限表达式求值」。
-> 本页记录**已实现**的声明式子集与已知边界;parallel / fanout / forEach / subflow / Compensate 尚未实现。
+> 本页记录**已实现**的声明式子集与已知边界;`parallel`(abort/collect)、`forEach`(并发上限)与 `Compensate`(逆序)已落地;`fanout` / `subflow` 尚未实现。
 
 ## 1. 范围
 
@@ -33,18 +33,31 @@ type Flow struct {
 }
 
 type Step struct {
-    ID         string   `json:"id"`
-    Use        *UseStep `json:"use,omitempty"`
-    Event      *EventStep `json:"event,omitempty"`
-    Abort      string   `json:"abort,omitempty"`
-    When       string   `json:"when,omitempty"`
-    Retry      *Retry   `json:"retry,omitempty"`
-    Timeout    Duration `json:"timeout,omitempty"`
-    Checkpoint bool     `json:"checkpoint,omitempty"`
+    ID         string        `json:"id"`
+    Use        *UseStep      `json:"use,omitempty"`
+    Event      *EventStep    `json:"event,omitempty"`
+    Parallel   *ParallelStep `json:"parallel,omitempty"`
+    Abort      string        `json:"abort,omitempty"`
+    When       string        `json:"when,omitempty"`
+    Retry      *Retry        `json:"retry,omitempty"`
+    Timeout    Duration      `json:"timeout,omitempty"`
+    Checkpoint bool          `json:"checkpoint,omitempty"`
+}
+
+type ParallelStep struct {
+    Branches []Step `json:"branches"`
+    Mode     string `json:"mode,omitempty"` // abort(默认) | collect
+}
+
+type ForEachStep struct {
+    Over        string `json:"over"`        // "$.path",必须是数组
+    As          string `json:"as,omitempty"` // 每项注入值表的变量名,默认 item
+    Step        Step   `json:"step"`         // 模板步骤(不能再是 forEach)
+    Concurrency int    `json:"concurrency,omitempty"` // 0 = 4,上限 32
 }
 ```
 
-- `use` / `event` / `abort` **三者互斥**;`when` 是真值门。
+- `use` / `event` / `parallel` / `abort` **四者互斥**;`when` 是真值门。
 - `use.args` 里的字符串 `"$.step.field"` 会解析成上一步的结果(递归解析 map/数组)。
 - `Duration` 在 JSON 里写 `"500ms"`、`"2s"`;写错在解析期报错。
 - **未知字段一律报错**(流线是数据契约,拼错的字段不能被静默忽略)。
@@ -64,6 +77,21 @@ type Step struct {
 | 编译期 | 语法错误在 `Validate`/`Run` 开始前暴露 |
 
 ## 4. 执行语义
+
+`parallel` 步骤:分支**并发**执行;
+- `mode=abort`(默认):任一分支失败 → 取消其余分支,流线失败;
+- `mode=collect`:等待全部分支,失败的错误记入父步骤结果 `{ok:false, errors:[...]}`,流线继续;
+- 分支结果按分支 id 合并;**父值优先不被覆盖**;父步骤结果固定为 `{ok, errors}`;
+- 分支内可以再写 `when`/`retry`/`timeout`;`checkpoint` 只支持在父步骤上。
+
+`forEach` 步骤:
+- `over` 必须是 `$.path` 且解析为数组;`as` 把当前项注入值表(默认 `item`);
+- 模板步骤逐项执行,按 `concurrency` 节流(默认 4,上限 32);任一项失败 → 取消其余并让流线失败;
+- 结果按索引收集到父步骤 `{ok:true, results:[...]}`。
+
+`Compensate`:
+- 主链任一步失败后,**逆序**执行补偿步骤(尽力而为);补偿失败记入 `__compensateErrors`;
+- 补偿步骤不进入 `Completed`;同样支持 `when`/`retry`/`timeout`。
 
 | 能力 | 语义 |
 |---|---|
@@ -110,13 +138,22 @@ type Runtime interface {
 | checkpoint / resume | `flow.TestCheckpointResume` |
 | OnFailure 步骤 | `flow.TestOnFailureSteps` |
 | 声明式 JSON 解析与校验 | `flow.TestParseFlowJSON` |
+| 并行分支结果合并 + 后续引用 | `flow.TestParallelBranches` |
+| collect 模式错误收集、abort 模式失败 | `flow.TestParallelCollect`、`flow.TestParallelAbort` |
+| 分支真的并发 | `flow.TestParallelConcurrent` |
+| 声明式 parallel 解析/校验 | `flow.TestParseParallel` |
+| forEach 结果收集与后续引用 | `flow.TestForEachResults` |
+| forEach 并发上限 | `flow.TestForEachConcurrency` |
+| forEach 失败点名索引 | `flow.TestForEachError` |
+| 声明式 forEach 解析/校验 | `flow.TestParseForEach` |
+| 补偿逆序执行 | `flow.TestCompensateReverse` |
 | 与内核集成(服务 + waterfall) | `flow.TestKernelRuntimeIntegration` |
 
 ## 7. 已知边界与下一步
 
-1. **没有并行**:`parallel` / `fanout` / `forEach` / `join` 未实现;当前严格顺序。
+1. **fanout / subflow 未实现**:已实现 parallel(abort/collect)、forEach(并发上限)、Compensate;分支/项内 `checkpoint` 不支持;值表是浅拷贝,分支共享的 map 值不可并发改写。
 2. **没有子流水线**:`subflow` 与 trace 共享未实现。
-3. **没有补偿链**:`Compensate` 字段保留但未执行。
+3. **补偿已实现**:逆序、尽力而为;没有「补偿成功后回滚状态」的语义,也不保证重试全部补偿步骤。
 4. **参数模板只有 `$.path`**:不支持在 args 里写表达式;需要时先做求值器扩展。
 5. **检查点只有内存实现**:`MemoryStore` 供测试;落 `ctx.store` 需要 store seam(M4.5/M6)。
 6. **没有 flow 服务插件**:目前由宿主/插件在代码里调用 `flow.Run`;还没有 `flow` 服务与清单入口。

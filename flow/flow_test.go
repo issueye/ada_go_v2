@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -351,4 +352,324 @@ func (calcService) Invoke(_ context.Context, method string, args map[string]any)
 	}
 	n, _ := args["n"].(float64)
 	return n * 2, nil
+}
+
+// 10. 并行分支:结果合并,父步骤记录 ok/errors。
+func TestParallelBranches(t *testing.T) {
+	rt := newFakeRT()
+	rt.callFn = func(_ context.Context, _ string, method string, args map[string]any) (any, error) {
+		switch method {
+		case "a":
+			return float64(1), nil
+		case "b":
+			return float64(2), nil
+		case "sum":
+			x, _ := args["x"].(float64)
+			y, _ := args["y"].(float64)
+			return x + y, nil
+		}
+		return nil, nil
+	}
+	f := flow.New("parallel").Add(
+		flow.Step{ID: "p", Parallel: &flow.ParallelStep{Branches: []flow.Step{
+			{ID: "a", Use: &flow.UseStep{Service: "svc", Method: "a"}},
+			{ID: "b", Use: &flow.UseStep{Service: "svc", Method: "b"}},
+		}}},
+		flow.Step{ID: "after", Use: &flow.UseStep{Service: "svc", Method: "sum", Args: map[string]any{"x": "$.a", "y": "$.b"}}},
+	)
+	res, err := f.Run(context.Background(), rt, flow.Options{})
+	if err != nil {
+		t.Fatalf("并行运行失败: %v", err)
+	}
+	if res.Values["a"] != float64(1) || res.Values["b"] != float64(2) {
+		t.Fatalf("分支结果未合并: %v", res.Values)
+	}
+	if res.Values["after"] != float64(3) {
+		t.Fatalf("后续步骤应能引用分支结果: %v", res.Values["after"])
+	}
+	parent, ok := res.Values["p"].(map[string]any)
+	if !ok || parent["ok"] != true {
+		t.Fatalf("父步骤结果不正确: %v", res.Values["p"])
+	}
+}
+
+// 11. collect 模式:分支失败不终止流线,错误记入父步骤。
+func TestParallelCollect(t *testing.T) {
+	rt := newFakeRT()
+	rt.callFn = func(_ context.Context, _ string, method string, _ map[string]any) (any, error) {
+		switch method {
+		case "bad":
+			return nil, errors.New("分支失败")
+		case "good":
+			return float64(7), nil
+		case "after":
+			return float64(8), nil
+		}
+		return nil, nil
+	}
+	f := flow.New("collect").Add(
+		flow.Step{ID: "p", Parallel: &flow.ParallelStep{Mode: "collect", Branches: []flow.Step{
+			{ID: "bad", Use: &flow.UseStep{Service: "svc", Method: "bad"}},
+			{ID: "good", Use: &flow.UseStep{Service: "svc", Method: "good"}},
+		}}},
+		flow.Step{ID: "after", Use: &flow.UseStep{Service: "svc", Method: "after"}},
+	)
+	res, err := f.Run(context.Background(), rt, flow.Options{})
+	if err != nil {
+		t.Fatalf("collect 模式不应让流线失败: %v", err)
+	}
+	parent := res.Values["p"].(map[string]any)
+	if parent["ok"] != false {
+		t.Fatalf("父步骤应记录失败: %v", parent)
+	}
+	if errs, _ := parent["errors"].([]string); len(errs) != 1 {
+		t.Fatalf("应记录 1 个分支错误,实际 %v", parent["errors"])
+	}
+	if res.Values["good"] != float64(7) || res.Values["after"] != float64(8) {
+		t.Fatalf("成功分支结果/后续步骤不正确: %v", res.Values)
+	}
+}
+
+// 12. abort 模式(默认):任一分支失败 → 流线失败。
+func TestParallelAbort(t *testing.T) {
+	rt := newFakeRT()
+	rt.callFn = func(_ context.Context, _ string, method string, _ map[string]any) (any, error) {
+		if method == "bad" {
+			return nil, errors.New("分支失败")
+		}
+		return float64(1), nil
+	}
+	f := flow.New("abort").Add(flow.Step{ID: "p", Parallel: &flow.ParallelStep{Branches: []flow.Step{
+		{ID: "bad", Use: &flow.UseStep{Service: "svc", Method: "bad"}},
+		{ID: "ok", Use: &flow.UseStep{Service: "svc", Method: "ok"}},
+	}}})
+	if _, err := f.Run(context.Background(), rt, flow.Options{}); err == nil || !strings.Contains(err.Error(), "并行分支") {
+		t.Fatalf("abort 模式应失败,实际 %v", err)
+	}
+}
+
+// 13. 分支真的并发:两个分支都启动后才放行。
+func TestParallelConcurrent(t *testing.T) {
+	rt := newFakeRT()
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	rt.callFn = func(_ context.Context, _ string, method string, _ map[string]any) (any, error) {
+		started <- method
+		<-release
+		return float64(1), nil
+	}
+	f := flow.New("concurrent").Add(flow.Step{ID: "p", Parallel: &flow.ParallelStep{Branches: []flow.Step{
+		{ID: "a", Use: &flow.UseStep{Service: "svc", Method: "a"}},
+		{ID: "b", Use: &flow.UseStep{Service: "svc", Method: "b"}},
+	}}})
+
+	done := make(chan error, 1)
+	go func() { _, err := f.Run(context.Background(), rt, flow.Options{}); done <- err }()
+	for i := 0; i < 2; i++ {
+		select {
+		case <-started:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("分支没有并发启动")
+		}
+	}
+	close(release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("并发运行失败: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("并发运行超时")
+	}
+}
+
+// 14. 声明式 parallel 的解析与校验。
+func TestParseParallel(t *testing.T) {
+	valid := []byte(`{"flow":"p","steps":[
+	  {"id":"p","parallel":{"mode":"collect","branches":[
+	    {"id":"a","use":{"service":"s","method":"m"}},
+	    {"id":"b","event":{"name":"e"}}
+	  ]}}
+	]}`)
+	if _, err := flow.Parse(valid); err != nil {
+		t.Fatalf("合法 parallel 解析失败: %v", err)
+	}
+	bad := map[string]string{
+		"空分支":  `{"flow":"p","steps":[{"id":"p","parallel":{"branches":[]}}]}`,
+		"坏模式":  `{"flow":"p","steps":[{"id":"p","parallel":{"mode":"wait","branches":[{"id":"a","abort":"x"}]}}]}`,
+		"分支重名": `{"flow":"p","steps":[{"id":"p","parallel":{"branches":[{"id":"p","abort":"x"}]}}]}`,
+		"无动作":  `{"flow":"p","steps":[{"id":"p"}]}`,
+	}
+	for name, raw := range bad {
+		if _, err := flow.Parse([]byte(raw)); err == nil {
+			t.Fatalf("%s: 应拒绝", name)
+		}
+	}
+}
+
+// 15. forEach:逐项执行并把结果按索引收集。
+func TestForEachResults(t *testing.T) {
+	rt := newFakeRT()
+	rt.callFn = func(_ context.Context, _ string, method string, args map[string]any) (any, error) {
+		switch method {
+		case "seed":
+			return []any{float64(1), float64(2), float64(3)}, nil
+		case "echo":
+			return args["v"], nil
+		}
+		return nil, nil
+	}
+	each := &flow.ForEachStep{Over: "$.items", As: "v",
+		Step: flow.Step{ID: "one", Use: &flow.UseStep{Service: "svc", Method: "echo", Args: map[string]any{"v": "$.v"}}},
+	}
+	f := flow.New("each").Add(
+		flow.Step{ID: "items", Use: &flow.UseStep{Service: "svc", Method: "seed"}},
+		flow.Step{ID: "e", ForEach: each},
+	)
+	res, err := f.Run(context.Background(), rt, flow.Options{})
+	if err != nil {
+		t.Fatalf("forEach 运行失败: %v", err)
+	}
+	parent := res.Values["e"].(map[string]any)
+	results := parent["results"].([]any)
+	if len(results) != 3 || results[0] != float64(1) || results[2] != float64(3) {
+		t.Fatalf("forEach 结果不正确: %v", results)
+	}
+	if parent["ok"] != true {
+		t.Fatalf("forEach 应成功: %v", parent)
+	}
+}
+
+// 16. forEach 并发上限:同一时刻不超过 Concurrency。
+func TestForEachConcurrency(t *testing.T) {
+	rt := newFakeRT()
+	var active, max int32
+	gate := make(chan struct{})
+	started := make(chan int, 8)
+	rt.callFn = func(_ context.Context, _ string, method string, _ map[string]any) (any, error) {
+		if method != "work" {
+			return []any{float64(1), float64(2), float64(3), float64(4)}, nil
+		}
+		cur := atomic.AddInt32(&active, 1)
+		for {
+			old := atomic.LoadInt32(&max)
+			if cur <= old || atomic.CompareAndSwapInt32(&max, old, cur) {
+				break
+			}
+		}
+		started <- 1
+		<-gate
+		atomic.AddInt32(&active, -1)
+		return float64(1), nil
+	}
+	each := &flow.ForEachStep{Over: "$.items", Concurrency: 2,
+		Step: flow.Step{ID: "one", Use: &flow.UseStep{Service: "svc", Method: "work"}},
+	}
+	f := flow.New("conc").Add(
+		flow.Step{ID: "items", Use: &flow.UseStep{Service: "svc", Method: "seed"}},
+		flow.Step{ID: "e", ForEach: each},
+	)
+	done := make(chan error, 1)
+	go func() { _, err := f.Run(context.Background(), rt, flow.Options{}); done <- err }()
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-started:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("并发分支没有启动")
+		}
+	}
+	select {
+	case <-started:
+		t.Fatalf("并发上限为 2,不应有第 3 个任务启动")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(gate)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("forEach 运行失败: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("forEach 运行超时")
+	}
+	if got := atomic.LoadInt32(&max); got > 2 {
+		t.Fatalf("并发上限被突破: %d", got)
+	}
+}
+
+// 17. forEach 失败:错误点名第几项。
+func TestForEachError(t *testing.T) {
+	rt := newFakeRT()
+	rt.callFn = func(_ context.Context, _ string, method string, args map[string]any) (any, error) {
+		if method == "seed" {
+			return []any{float64(1), float64(2), float64(3)}, nil
+		}
+		if args["v"] == float64(2) {
+			return nil, errors.New("第 2 项坏了")
+		}
+		return args["v"], nil
+	}
+	each := &flow.ForEachStep{Over: "$.items", As: "v",
+		Step: flow.Step{ID: "one", Use: &flow.UseStep{Service: "svc", Method: "echo", Args: map[string]any{"v": "$.v"}}},
+	}
+	f := flow.New("fail").Add(
+		flow.Step{ID: "items", Use: &flow.UseStep{Service: "svc", Method: "seed"}},
+		flow.Step{ID: "e", ForEach: each},
+	)
+	_, err := f.Run(context.Background(), rt, flow.Options{})
+	if err == nil || !strings.Contains(err.Error(), "第 1 项") {
+		t.Fatalf("forEach 失败应点名索引,实际 %v", err)
+	}
+}
+
+// 18. 声明式 forEach 解析与校验。
+func TestParseForEach(t *testing.T) {
+	valid := []byte(`{"flow":"e","steps":[
+	  {"id":"items","use":{"service":"s","method":"m"}},
+	  {"id":"e","forEach":{"over":"$.items","as":"v","concurrency":2,
+	    "step":{"id":"one","use":{"service":"s","method":"m","args":{"v":"$.v"}}}}}
+	]}`)
+	if _, err := flow.Parse(valid); err != nil {
+		t.Fatalf("合法 forEach 解析失败: %v", err)
+	}
+	bad := map[string]string{
+		"over 非路径": `{"flow":"e","steps":[{"id":"e","forEach":{"over":"items","step":{"id":"one","abort":"x"}}}]}`,
+		"并发超限":     `{"flow":"e","steps":[{"id":"e","forEach":{"over":"$.items","concurrency":33,"step":{"id":"one","abort":"x"}}}]}`,
+		"模板缺 id":   `{"flow":"e","steps":[{"id":"e","forEach":{"over":"$.items","step":{"abort":"x"}}}]}`,
+		"嵌套":       `{"flow":"e","steps":[{"id":"e","forEach":{"over":"$.items","step":{"id":"one","forEach":{"over":"$.x","step":{"id":"z","abort":"x"}}}}}]}`,
+	}
+	for name, raw := range bad {
+		if _, err := flow.Parse([]byte(raw)); err == nil {
+			t.Fatalf("%s: 应拒绝", name)
+		}
+	}
+}
+
+// 19. Compensate:失败后按逆序执行补偿步骤。
+func TestCompensateReverse(t *testing.T) {
+	rt := newFakeRT()
+	var calls []string
+	rt.callFn = func(_ context.Context, _ string, method string, _ map[string]any) (any, error) {
+		calls = append(calls, method)
+		if method == "bad" {
+			return nil, errors.New("失败")
+		}
+		return float64(1), nil
+	}
+	f := flow.New("compensate").Add(
+		flow.Step{ID: "bad", Use: &flow.UseStep{Service: "svc", Method: "bad"}},
+	)
+	f.Compensate = []flow.Step{
+		{ID: "c1", Use: &flow.UseStep{Service: "svc", Method: "comp1"}},
+		{ID: "c2", Use: &flow.UseStep{Service: "svc", Method: "comp2"}},
+	}
+	_, err := f.Run(context.Background(), rt, flow.Options{})
+	if err == nil {
+		t.Fatalf("主链应失败")
+	}
+	want := "bad,comp2,comp1"
+	if got := strings.Join(calls, ","); got != want {
+		t.Fatalf("补偿顺序不正确: 期望 %s,实际 %s", want, got)
+	}
 }
