@@ -8,9 +8,10 @@
 ```
 plugins/seam/net/            契约:Request/Response/Client/Chain(只类型与链)
 plugins/provider/net-http/   实现:基于 net/http 的一次抓取
+plugins/policy/net-guard/    策略:principal + net.fetch.<host> + 私网段拒绝
 ```
 
-策略(host 允许表、审批、脱敏)尚未实现;`caps-gate` 目前只覆盖 fs/shell。
+策略已有 `net-guard`:按 `net.fetch.<host>`(可用 `net.fetch` 通配)向 Broker 授权,默认拒绝私有/本地地址;审批与脱敏未实现。
 
 ## 2. 契约要点
 
@@ -32,7 +33,7 @@ plugins/provider/net-http/   实现:基于 net/http 的一次抓取
 
 ## 4. 偏差与边界
 
-1. **没有策略**:host 允许表、审批、caps 强制(`net.fetch.<host>`)、脱敏都没有;`net-http` 本身可访问任意 http(s) 地址。
+1. **策略只有 `net-guard`**:caps 强制与私网拒绝已有;审批(访问未知 host 升级)与响应脱敏未实现;`net-http` 本身仍可访问任意 http(s),不装 net-guard 就没有门禁。
 2. **没有请求体大小上限**:`Request.Body` 由调用方控制;provider 不限制。
 3. **响应体全量读入内存**(到上限为止),没有流式接口。
 4. **没有代理/证书/HTTP2 配置**;用默认 Transport。
@@ -50,6 +51,8 @@ plugins/provider/net-http/   实现:基于 net/http 的一次抓取
 | 超时失败 | `nethttp.TestTimeout` |
 | 非法 scheme 拒绝 | `nethttp.TestBadScheme` |
 | 内核集成(seam + provider + consumer) | `nethttp.TestKernelIntegration` |
+| net-guard:host/通配授权、未授权/无身份、私网拒绝 | `netguard.TestAllowed`、`TestDenied`、`TestPrivateDenied` |
+| net-guard 使用注入的 caps 服务 | `netguard.TestServiceBroker` |
 
 ## 6. 下一步
 
