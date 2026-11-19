@@ -13,6 +13,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/adag/ada-go/v2/assemble"
 	"github.com/adag/ada-go/v2/caps"
@@ -30,6 +32,10 @@ type Options struct {
 	Root string
 	// Token 非空时,所有路由要求 Authorization: Bearer <Token>。
 	Token string
+	// RateLimit 是每窗口(1 秒)允许的请求数;0 表示不限。
+	RateLimit int
+	// Now 可注入时钟(测试用);nil 表示 time.Now。
+	Now func() time.Time
 }
 
 // Server 是只读 HTTP 适配器。
@@ -37,6 +43,13 @@ type Server struct {
 	root  string
 	token string
 	mux   *http.ServeMux
+
+	rateLimit int
+	now       func() time.Time
+
+	rateMu      sync.Mutex
+	windowStart time.Time
+	windowCount int
 }
 
 // NewHandler 构造 HTTP handler;根目录必须存在。
@@ -54,14 +67,45 @@ func NewHandler(opts Options) (http.Handler, error) {
 	if info, err := os.Stat(root); err != nil || !info.IsDir() {
 		return nil, fmt.Errorf("host/server: 根目录不是目录: %s", root)
 	}
-	s := &Server{root: root, token: opts.Token, mux: http.NewServeMux()}
+	if opts.RateLimit < 0 {
+		return nil, fmt.Errorf("host/server: RateLimit 不能为负")
+	}
+	now := opts.Now
+	if now == nil {
+		now = time.Now
+	}
+	s := &Server{root: root, token: opts.Token, mux: http.NewServeMux(), rateLimit: opts.RateLimit, now: now}
 	s.mux.HandleFunc("/api/plan", s.handlePlan)
 	s.mux.HandleFunc("/api/inspect", s.handleInspect)
 	s.mux.HandleFunc("/api/verify", s.handleVerify)
 	s.mux.HandleFunc("/api/caps", s.handleCaps)
 	s.mux.HandleFunc("/api/list", s.handleList)
 	s.mux.HandleFunc("/", s.handleIndex)
-	return s.authenticate(s.mux), nil
+	return s.rateLimitMiddleware(s.authenticate(s.mux)), nil
+}
+
+// rateLimitMiddleware 是固定窗口限流:每 1 秒最多 RateLimit 个请求。
+func (s *Server) rateLimitMiddleware(next http.Handler) http.Handler {
+	if s.rateLimit <= 0 {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.rateMu.Lock()
+		now := s.now()
+		if s.windowStart.IsZero() || now.Sub(s.windowStart) >= time.Second {
+			s.windowStart = now
+			s.windowCount = 0
+		}
+		s.windowCount++
+		over := s.windowCount > s.rateLimit
+		s.rateMu.Unlock()
+		if over {
+			w.Header().Set("Retry-After", "1")
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "请求过于频繁"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // authenticate 在 Token 非空时校验 Bearer 令牌(常量时间比较);空 Token 表示不鉴权。

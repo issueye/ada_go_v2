@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/adag/ada-go/v2/host/server"
 	"github.com/adag/ada-go/v2/install"
@@ -232,5 +233,36 @@ func TestVerify(t *testing.T) {
 	rec = get(t, h, "/api/verify?path=nope")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("未知路径应 400,实际 %d", rec.Code)
+	}
+}
+
+// 11. 固定窗口限流:超限 429,窗口后复位。
+func TestRateLimit(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	h, err := server.NewHandler(server.Options{
+		Root: "../../examples", RateLimit: 2,
+		Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("构造失败: %v", err)
+	}
+	get := func() *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+		return rec
+	}
+	if rec := get(); rec.Code != http.StatusOK {
+		t.Fatalf("第 1 次应 200,实际 %d", rec.Code)
+	}
+	if rec := get(); rec.Code != http.StatusOK {
+		t.Fatalf("第 2 次应 200,实际 %d", rec.Code)
+	}
+	rec := get()
+	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") != "1" {
+		t.Fatalf("第 3 次应 429+Retry-After,实际 %d", rec.Code)
+	}
+	now = now.Add(time.Second)
+	if rec := get(); rec.Code != http.StatusOK {
+		t.Fatalf("窗口复位后应 200,实际 %d", rec.Code)
 	}
 }
