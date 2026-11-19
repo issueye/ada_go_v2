@@ -1,0 +1,17 @@
+# 构建产物与本地工具输出
+*.test
+*.exe
+*.out
+c
+cover
+/bench.txt
+
+# 编辑器与系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Go 工作区文件（若将来需要多模块开发）
+go.work
+go.work.sum
