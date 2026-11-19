@@ -75,7 +75,7 @@ RealClock / FakeClock ──▶ Scheduler
 
 - 补跑发生在任务启动时(停机/重启后),之后按 cron 正常触发;
 - `SetLastRun` 同时释放租约;成功与失败都推进 lastRun(避免失败后无限重跑);
-- `MemoryJobStore` 是测试与最小宿主实现;持久化 store 由宿主提供。
+- `MemoryJobStore`(测试/最小宿主)与 `FileJobStore`(JSON 文件 + 原子写)两种实现;文件存储跨实例共享状态,但只有**进程内互斥**,不是分布式锁。
 
 ## 6. 测试矩阵
 
@@ -96,13 +96,15 @@ RealClock / FakeClock ──▶ Scheduler
 | 非法参数/非法 cron 报错 | `sched.TestInvalidRegistrations` |
 | jobs 补跑策略(skip/once/all)与首次运行 | `sched.TestJobCatchUpOnce`、`TestJobCatchUpAll`、`TestJobCatchUpSkip`、`TestJobFirstRunWaitsNext` |
 | 租约占用/释放、非法声明 | `sched.TestJobLeaseBlocks`、`TestMemoryJobStoreLease`、`TestJobValidation` |
+| FileJobStore:跨实例可见/原子写/损坏报错/空存储 | `sched.TestFileJobStoreLeaseAcrossInstances`、`TestFileJobStoreAtomicWrite`、`TestFileJobStoreCorrupted`、`TestFileJobStoreFresh` |
+| 两个调度器共享 store:同一触发点只执行一次 | `sched.TestJobsSharedStoreRunsOnce` |
 
 ## 7. 已知边界与下一步
 
 1. **`flow` 已做顺序/并发子集**:use/event/parallel/forEach/compensate/when/retry/timeout/checkpoint/resume 已落地(见 [m4-flow.md](m4-flow.md));fanout/subflow 未做。
 2. **激活与闲置回收未做**:§12.3 的 `onService/onCron/...` 延迟激活、`idleTTL` 回收需要 kernel 侧调度挂钩。
 3. **配额只做了速率与并发**:`MaxCPUTime`/`MaxMemory` 需要计量,全局 governor 与跨插件总并发上限未做。
-4. **jobs 已做补跑与租约**:`skip/once/all` + `MemoryJobStore`;没有持久化 store 与跨进程分布式锁(租约是单机语义)。
+4. **jobs 已做补跑/租约/文件存储**:`skip/once/all` + `MemoryJobStore`/`FileJobStore`;文件存储是原子写但**不是跨进程分布式锁**,多进程同时写同一文件仍可能互相覆盖。
 5. **时区**:cron 用传入 `time.Location` 计算;`Asia/Shanghai` 这类 IANA 时区由宿主的 `Clock.Now()` 负责。
 6. 与内核的接线未做:目前 `sched` 只能由宿主/插件在代码里使用,还没有作为服务暴露。
 

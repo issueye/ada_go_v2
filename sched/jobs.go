@@ -147,6 +147,10 @@ func (s *Scheduler) runJob(ctx context.Context, id string, handler func(context.
 
 // runJobAt 先抢租约再执行;成功/失败都推进 lastRun(避免失败后无限重跑)。
 func (s *Scheduler) runJobAt(ctx context.Context, id string, handler func(context.Context) error, store JobStore, at time.Time) {
+	// 已经跑过这个触发点(另一个实例刚写过 lastRun)→ 跳过,避免同一周期重复执行。
+	if last, ok, err := store.LastRun(ctx, id); err == nil && ok && !last.Before(at) {
+		return
+	}
 	now := s.clock.Now()
 	ok, err := store.AcquireLease(ctx, id, now, JobLease)
 	if err != nil {
