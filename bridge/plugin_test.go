@@ -2,6 +2,7 @@ package bridge_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/adag/ada-go/v2/bridge"
@@ -29,6 +30,7 @@ type Ctx = {
   provide: (n: string, v: unknown) => void
   emit: (e: string, p: unknown) => void
   on: (e: string, h: (p: any) => void) => void
+  effect: (l: string, f: () => void) => void
 }
 export function apply(ctx: Ctx, cfg: { name: string }) {
   ctx.log(greet(cfg.name))
@@ -39,6 +41,8 @@ export function apply(ctx: Ctx, cfg: { name: string }) {
   })
   ctx.emit("ts/ready", { name: cfg.name })
   ctx.on("ts/ping", (p) => ctx.log("ping:" + p.n))
+  ctx.effect("first", () => ctx.log("cleanup:first"))
+  ctx.effect("second", () => ctx.log("cleanup:second"))
 }`,
 		"util.ts": `export function greet(name: string): string { return "hello, " + name }`,
 	})
@@ -112,8 +116,41 @@ export function apply(ctx: Ctx, cfg: { name: string }) {
 	if err := f.Dispose(context.Background()); err != nil {
 		t.Fatalf("卸载失败: %v", err)
 	}
+	// effect 逆序执行:后登记的 "second" 先清理。
+	logs = p.Logs()
+	if len(logs) != 4 || logs[2] != "cleanup:second" || logs[3] != "cleanup:first" {
+		t.Fatalf("清理顺序不正确: %v", logs)
+	}
 	if f.State() != kernel.Disposed {
 		t.Fatalf("卸载后应为 disposed,实际 %s", f.State())
+	}
+}
+
+// 2. 模块没有 apply 导出时,fiber 必须 failed,而不是静默「成功」。
+// 1b. effect 清理抛错必须上报到 fiber 卸载结果,不能静默吞掉。
+func TestJSEffectErrorSurfacesOnDispose(t *testing.T) {
+	art := buildArtifact(t, map[string]string{
+		"plugin.ts": `type Ctx = { effect: (l: string, f: () => void) => void }
+export function apply(ctx: Ctx): void {
+  ctx.effect("boom", () => { throw new Error("cleanup failed") })
+}`,
+	})
+	p, err := bridge.New(bridge.Options{Name: "bad-cleanup", Artifact: art})
+	if err != nil {
+		t.Fatalf("构造插件失败: %v", err)
+	}
+	a := kernel.New(kernel.Options{})
+	t.Cleanup(func() { _ = a.Stop(context.Background()) })
+
+	f, err := a.Plugin(p, kernel.NewConfig(nil))
+	if err != nil {
+		t.Fatalf("挂载失败: %v", err)
+	}
+	if f.State() != kernel.Active {
+		t.Fatalf("JS 插件应 active,实际 %s", f.State())
+	}
+	if err := f.Dispose(context.Background()); err == nil || !strings.Contains(err.Error(), "cleanup failed") {
+		t.Fatalf("清理失败应上报,实际 %v", err)
 	}
 }
 

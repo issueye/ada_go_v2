@@ -23,6 +23,7 @@ type Ctx = {
   provide: (name: string, value: unknown) => void
   emit: (event: string, payload: unknown) => void
   on: (event: string, handler: (payload: any) => void) => void
+  effect: (label: string, cleanup: () => void) => void
 }
 export function apply(ctx: Ctx, cfg: { name: string }) {
   ctx.log(format(cfg.name))
@@ -33,6 +34,7 @@ export function apply(ctx: Ctx, cfg: { name: string }) {
   })
   ctx.emit("ts/ready", { name: cfg.name })
   ctx.on("ts/ping", (p) => ctx.log("收到 ping:" + p.n))
+  ctx.effect("ts-demo", () => ctx.log("清理: ts-demo"))
 }`
 
 const utilTS = `export function format(name: string): string { return "你好," + name }`

@@ -12,6 +12,7 @@ package bridge
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -49,6 +50,11 @@ type onReq struct {
 	invoke func(ctx context.Context, payload any) (any, error)
 }
 
+type effectReq struct {
+	label   string
+	dispose func(ctx context.Context) error
+}
+
 // stager 收集 JS 侧 ctx.provide / ctx.emit 的请求,等回到内核协程再提交。
 //
 // 为什么必须暂存而不是「加锁直接写」:加锁只能消除数据竞争,消除不了语义竞争——
@@ -57,6 +63,7 @@ type stager struct {
 	mu       sync.Mutex
 	closed   bool
 	ons      []onReq
+	effects  []effectReq
 	provides []provideReq
 	emits    []emitReq
 }
@@ -68,6 +75,16 @@ func (s *stager) on(event string, invoke func(ctx context.Context, payload any) 
 		return fmt.Errorf("ctx.on 只能在 apply 期间调用")
 	}
 	s.ons = append(s.ons, onReq{event: event, invoke: invoke})
+	return nil
+}
+
+func (s *stager) effect(label string, dispose func(ctx context.Context) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return fmt.Errorf("ctx.effect 只能在 apply 期间调用")
+	}
+	s.effects = append(s.effects, effectReq{label: label, dispose: dispose})
 	return nil
 }
 
@@ -93,17 +110,38 @@ func (s *stager) emit(event string, payload any) error {
 
 // drain 关闭入口并取出暂存请求。之后 JS 再调用会被拒绝:
 // 没有提交点的调用必须报错,而不是静默丢失。
-func (s *stager) drain() ([]onReq, []provideReq, []emitReq) {
+func (s *stager) drain() ([]onReq, []effectReq, []provideReq, []emitReq) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closed = true
-	return s.ons, s.provides, s.emits
+	return s.ons, s.effects, s.provides, s.emits
 }
 
 func (s *stager) close() {
 	s.mu.Lock()
 	s.closed = true
 	s.mu.Unlock()
+}
+
+// pendingEffects 复制已登记的清理函数,用于装配失败时的兜底回收。
+func (s *stager) pendingEffects() []effectReq {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]effectReq, len(s.effects))
+	copy(out, s.effects)
+	return out
+}
+
+// runEffects 按逆序执行 JS 登记的清理函数(与内核 effect 栈同语义:
+// 后创建的资源可能依赖先创建的,必须先回收)。
+func runEffects(plugin string, effects []effectReq, ctx context.Context) []error {
+	var errs []error
+	for i := len(effects) - 1; i >= 0; i-- {
+		if err := effects[i].dispose(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("bridge: 插件 %s 的 effect %q 清理失败: %w", plugin, effects[i].label, err))
+		}
+	}
+	return errs
 }
 
 // Plugin 是 kernel.Plugin 的 JS 实现。
@@ -154,6 +192,7 @@ func (p *Plugin) Apply(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, 
 			Provide: stage.provide,
 			Emit:    stage.emit,
 			On:      stage.on,
+			Effect:  stage.effect,
 		},
 	})
 	if err != nil {
@@ -164,11 +203,13 @@ func (p *Plugin) Apply(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, 
 	res, err := rt.CallWithHost(actx, "apply", cfg.Raw())
 	if err != nil {
 		stage.close()
+		// apply 失败前登记的 effect 也要清理:它们可能已经建了外部资源。
+		runEffects(p.opts.Name, stage.pendingEffects(), context.Background())
 		_ = rt.Close(context.Background())
 		return nil, kernel.Wrap(kernel.CodeInvalid, err, "JS 插件 %s 的 apply 失败", p.opts.Name)
 	}
 
-	ons, provides, emits := stage.drain()
+	ons, effects, provides, emits := stage.drain()
 
 	// 提交顺序 = JS 调用顺序语义:先挂监听器,再注册服务,最后派发事件。
 	// 反过来会让 JS 在 apply 里 emit 的事件打不到自己刚注册的处理器。
@@ -191,6 +232,7 @@ func (p *Plugin) Apply(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, 
 	}
 	for _, req := range provides {
 		if _, perr := ctx.Provide(req.name, req.value); perr != nil {
+			runEffects(p.opts.Name, effects, context.Background())
 			_ = rt.Close(context.Background())
 			return nil, kernel.Wrap(kernel.CodeInvalid, perr, "JS 插件 %s 提供服务 %q 失败", p.opts.Name, req.name)
 		}
@@ -204,7 +246,8 @@ func (p *Plugin) Apply(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, 
 	p.mu.Unlock()
 
 	ctx.Log().Info("JS 插件已装配",
-		"exports", rt.Exports(), "ons", len(ons), "provides", len(provides), "emits", len(emits), "result", res)
+		"exports", rt.Exports(), "ons", len(ons), "effects", len(effects),
+		"provides", len(provides), "emits", len(emits), "result", res)
 	return func(dctx context.Context) error {
 		p.mu.Lock()
 		r := p.rt
@@ -213,7 +256,12 @@ func (p *Plugin) Apply(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, 
 		if r == nil {
 			return nil
 		}
-		return r.Close(dctx)
+		// JS 的清理必须先于运行时关闭,否则清理函数已经无处可跑。
+		errs := runEffects(p.opts.Name, effects, dctx)
+		if cerr := r.Close(dctx); cerr != nil {
+			errs = append(errs, cerr)
+		}
+		return errors.Join(errs...)
 	}, nil
 }
 

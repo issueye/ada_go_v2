@@ -76,7 +76,7 @@ pwsh scripts/bench.ps1                       # 性能预算:≤20 μs/次、50 �
 ```
 
 已完成:`kernel/`(Context / Fiber / Service / Effect / Event / Config / Schema)、`kernel/schema`、`cmd/ada-demo`、`cmd/ada-ts-demo`、`compile/`(esbuild)、`jsrt/`(moejs)、`bridge/`、`scripts/guard.ps1`、`scripts/bench.ps1`、`docs/kernel-api.md`、`docs/m2-execution.md`、`docs/adr/0001`、`docs/adr/0002`。
-未开始:`assemble/`(M3 装配)、`plugins/seam/*`(M4.5)、`host/*`(M5);M2 剩余:`ctx.effect`、waterfall 型回调、运行期提交队列、`async apply`、CJS/OOM 用例。
+未开始:`assemble/`(M3 装配)、`plugins/seam/*`(M4.5)、`host/*`(M5);M2 剩余:waterfall 型回调、运行期提交队列、`async apply`、CJS/OOM 用例。
 
 本轮修复了 M1 评审中复现的缺陷(waterfall 超时幽灵执行、兄弟插件被误拆、failed 不可复活、卸载错误被吞、fiber 注册表泄漏、Intercept 合并反向、Stop 后仍派发、schema 静默放行),每条都有回归用例;清单见 [kernel-api.md §6](docs/kernel-api.md)。
 
