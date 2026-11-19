@@ -75,6 +75,8 @@ type Options struct {
 	RequireSignature bool
 	MaxFiles         int
 	MaxBytes         int64
+	// KeepPrevious 让 Upgrade 保留旧版本目录与索引条目,作为回滚点。
+	KeepPrevious bool
 }
 
 // Info 是校验/安装结果。
@@ -345,10 +347,77 @@ func Upgrade(src, destRoot string, opts Options) (*Info, error) {
 	if err != nil {
 		return nil, err
 	}
+	if opts.KeepPrevious {
+		return info, nil
+	}
 	if err := cleanupOlderVersions(destRoot, info); err != nil {
 		return info, fmt.Errorf("install: 新版本已安装,但清理旧版本失败: %w", err)
 	}
 	return info, nil
+}
+
+// Rollback 删除当前最新版本,索引回退到次新版本;没有旧版本时报错。
+//
+// 前提:升级时使用了 KeepPrevious(否则旧目录已被清理,无从回滚)。
+func Rollback(destRoot, id string) (string, error) {
+	if id == "" {
+		return "", fmt.Errorf("install: 插件 id 不能为空")
+	}
+	entries, err := List(destRoot)
+	if err != nil {
+		return "", err
+	}
+	var versions []IndexEntry
+	for _, e := range entries {
+		if e.ID == id {
+			versions = append(versions, e)
+		}
+	}
+	if len(versions) < 2 {
+		return "", fmt.Errorf("install: 插件 %q 没有可回滚的旧版本", id)
+	}
+	// 按版本升序;最新是最后一个,回滚目标为次新。
+	sort.Slice(versions, func(i, j int) bool {
+		cmp, err := compareVersionStrings(versions[i].Version, versions[j].Version)
+		return err == nil && cmp < 0
+	})
+	target := versions[len(versions)-2]
+	if _, err := os.Stat(target.Dir); err != nil {
+		return "", fmt.Errorf("install: 回滚目标目录不存在: %s", target.Dir)
+	}
+
+	rootAbs, err := filepath.Abs(destRoot)
+	if err != nil {
+		return "", fmt.Errorf("install: 解析安装根目录失败: %w", err)
+	}
+	kept := entries[:0]
+	for _, e := range entries {
+		if e.ID == id {
+			cmp, err := compareVersionStrings(e.Version, target.Version)
+			if err != nil {
+				return "", err
+			}
+			if cmp > 0 {
+				dirAbs, err := filepath.Abs(e.Dir)
+				if err != nil {
+					return "", fmt.Errorf("install: 解析版本目录失败: %w", err)
+				}
+				rel, err := filepath.Rel(rootAbs, dirAbs)
+				if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+					return "", fmt.Errorf("install: 索引里的目录不在安装根之下,拒绝删除: %s", e.Dir)
+				}
+				if err := os.RemoveAll(dirAbs); err != nil {
+					return "", fmt.Errorf("install: 删除版本 %s 失败: %w", e.Dir, err)
+				}
+				continue
+			}
+		}
+		kept = append(kept, e)
+	}
+	if err := writeIndex(destRoot, kept); err != nil {
+		return "", err
+	}
+	return target.Version, nil
 }
 
 func compareVersionStrings(a, b string) (int, error) {

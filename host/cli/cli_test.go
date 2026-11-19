@@ -249,3 +249,50 @@ func TestUpgrade(t *testing.T) {
 		t.Fatalf("list 应只显示最新版本:\n%s", out)
 	}
 }
+
+// 17. upgrade -keep 后 rollback:回到旧版本并清理新版本。
+func TestRollback(t *testing.T) {
+	dest := t.TempDir()
+	for _, ver := range []string{"0.1.0", "0.2.0"} {
+		src := t.TempDir()
+		if err := os.WriteFile(filepath.Join(src, "plugin.json"),
+			[]byte(`{"id":"rb-demo","version":"`+ver+`","kind":"go"}`), 0o644); err != nil {
+			t.Fatalf("写清单失败: %v", err)
+		}
+		args := []string{"install", src, "-dest", dest}
+		if ver == "0.2.0" {
+			args = []string{"upgrade", src, "-dest", dest, "-keep"}
+		}
+		if code, _, errOut := run(args...); code != 0 {
+			t.Fatalf("%s 失败: code=%d err=%s", ver, code, errOut)
+		}
+	}
+	code, out, errOut := run("rollback", "rb-demo", "-dest", dest)
+	if code != 0 || !strings.Contains(out, "已回滚: rb-demo → 0.1.0") {
+		t.Fatalf("回滚输出不正确: code=%d err=%s out=%s", code, errOut, out)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "rb-demo@0.2.0")); err == nil {
+		t.Fatalf("新版本目录应被删除")
+	}
+	code, out, _ = run("list", "-dest", dest)
+	if code != 0 || !strings.Contains(out, "rb-demo@0.1.0") || strings.Contains(out, "0.2.0") {
+		t.Fatalf("回滚后 list 应只显示 0.1.0:\n%s", out)
+	}
+}
+
+// 18. rollback:没有旧版本 → 退出码 1。
+func TestRollbackNoPrevious(t *testing.T) {
+	dest := t.TempDir()
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "plugin.json"),
+		[]byte(`{"id":"rb-demo","version":"0.1.0","kind":"go"}`), 0o644); err != nil {
+		t.Fatalf("写清单失败: %v", err)
+	}
+	if code, _, errOut := run("install", src, "-dest", dest); code != 0 {
+		t.Fatalf("安装失败: code=%d err=%s", code, errOut)
+	}
+	code, _, errOut := run("rollback", "rb-demo", "-dest", dest)
+	if code != 1 || !strings.Contains(errOut, "回滚失败") {
+		t.Fatalf("单版本回滚应返回 1: code=%d err=%s", code, errOut)
+	}
+}

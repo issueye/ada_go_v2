@@ -46,6 +46,8 @@ func Run(args []string, out, errOut io.Writer) int {
 		return cmdUninstall(args[1:], out, errOut)
 	case "upgrade":
 		return cmdUpgrade(args[1:], out, errOut)
+	case "rollback":
+		return cmdRollback(args[1:], out, errOut)
 	default:
 		usage(errOut)
 		return 2
@@ -61,7 +63,8 @@ func usage(w io.Writer) {
   ada install <插件目录> -dest <安装根> [-keys 密钥文件] [-require-signature] [-yes]
   ada list    -dest <安装根>
   ada uninstall <插件 id> -dest <安装根>
-  ada upgrade <插件目录> -dest <安装根> [-keys 密钥文件] [-require-signature] [-yes]
+  ada upgrade <插件目录> -dest <安装根> [-keys 密钥文件] [-require-signature] [-yes] [-keep]
+  ada rollback <插件 id> -dest <安装根>
 
 退出码:0=成功,1=计划不可执行/装配或校验失败,2=用法错误。
 `)
@@ -486,7 +489,7 @@ func consent(info *install.Info, yes bool, out, errOut io.Writer) bool {
 }
 
 func cmdUpgrade(args []string, out, errOut io.Writer) int {
-	dir, dest, keysPath, require, yes, bad := parseInstallArgs(args)
+	dir, dest, keysPath, require, yes, keep, bad := parseInstallArgs(args)
 	if bad != "" {
 		fmt.Fprintln(errOut, bad)
 		usage(errOut)
@@ -505,12 +508,52 @@ func cmdUpgrade(args []string, out, errOut io.Writer) int {
 	if !consent(preview, yes, out, errOut) {
 		return 2
 	}
-	info, err := install.Upgrade(dir, dest, install.Options{Keys: keys, RequireSignature: require})
+	info, err := install.Upgrade(dir, dest, install.Options{Keys: keys, RequireSignature: require, KeepPrevious: keep})
 	if err != nil {
 		fmt.Fprintln(errOut, "升级失败:", err)
 		return 1
 	}
 	fmt.Fprintf(out, "已升级: %s@%s → %s\n", info.ID, info.Version, info.Dir)
+	return 0
+}
+
+func cmdRollback(args []string, out, errOut io.Writer) int {
+	id := ""
+	dest := ""
+	for i := 0; i < len(args); i++ {
+		switch a := args[i]; {
+		case a == "-dest":
+			if i+1 >= len(args) {
+				fmt.Fprintln(errOut, "-dest 缺少目录参数")
+				usage(errOut)
+				return 2
+			}
+			dest = args[i+1]
+			i++
+		case strings.HasPrefix(a, "-"):
+			fmt.Fprintln(errOut, "未知参数 "+a)
+			usage(errOut)
+			return 2
+		default:
+			if id != "" {
+				fmt.Fprintln(errOut, "多余的参数 "+a)
+				usage(errOut)
+				return 2
+			}
+			id = a
+		}
+	}
+	if id == "" || dest == "" {
+		fmt.Fprintln(errOut, "需要插件 id 与 -dest 安装根目录")
+		usage(errOut)
+		return 2
+	}
+	version, err := install.Rollback(dest, id)
+	if err != nil {
+		fmt.Fprintln(errOut, "回滚失败:", err)
+		return 1
+	}
+	fmt.Fprintf(out, "已回滚: %s → %s\n", id, version)
 	return 0
 }
 
@@ -562,18 +605,18 @@ func cmdList(args []string, out, errOut io.Writer) int {
 	return 0
 }
 
-func parseInstallArgs(args []string) (dir, dest, keys string, require, yes bool, bad string) {
+func parseInstallArgs(args []string) (dir, dest, keys string, require, yes, keep bool, bad string) {
 	for i := 0; i < len(args); i++ {
 		switch a := args[i]; {
 		case a == "-dest":
 			if i+1 >= len(args) {
-				return "", "", "", false, false, "-dest 缺少目录参数"
+				return "", "", "", false, false, false, "-dest 缺少目录参数"
 			}
 			dest = args[i+1]
 			i++
 		case a == "-keys":
 			if i+1 >= len(args) {
-				return "", "", "", false, false, "-keys 缺少文件参数"
+				return "", "", "", false, false, false, "-keys 缺少文件参数"
 			}
 			keys = args[i+1]
 			i++
@@ -581,26 +624,28 @@ func parseInstallArgs(args []string) (dir, dest, keys string, require, yes bool,
 			require = true
 		case a == "-yes":
 			yes = true
+		case a == "-keep":
+			keep = true
 		case strings.HasPrefix(a, "-"):
-			return "", "", "", false, false, "未知参数 " + a
+			return "", "", "", false, false, false, "未知参数 " + a
 		default:
 			if dir != "" {
-				return "", "", "", false, false, "多余的参数 " + a
+				return "", "", "", false, false, false, "多余的参数 " + a
 			}
 			dir = a
 		}
 	}
 	if dir == "" {
-		return "", "", "", false, false, "需要给出插件目录"
+		return "", "", "", false, false, false, "需要给出插件目录"
 	}
 	if dest == "" {
-		return "", "", "", false, false, "缺少 -dest 安装根目录"
+		return "", "", "", false, false, false, "缺少 -dest 安装根目录"
 	}
-	return dir, dest, keys, require, yes, ""
+	return dir, dest, keys, require, yes, keep, ""
 }
 
 func cmdInstall(args []string, out, errOut io.Writer) int {
-	dir, dest, keysPath, require, yes, bad := parseInstallArgs(args)
+	dir, dest, keysPath, require, yes, keep, bad := parseInstallArgs(args)
 	if bad != "" {
 		fmt.Fprintln(errOut, bad)
 		usage(errOut)
@@ -615,6 +660,10 @@ func cmdInstall(args []string, out, errOut io.Writer) int {
 	if err != nil {
 		fmt.Fprintln(errOut, "校验失败:", err)
 		return 1
+	}
+	if keep {
+		fmt.Fprintln(errOut, "-keep 只用于 upgrade")
+		return 2
 	}
 	if !consent(preview, yes, out, errOut) {
 		return 2

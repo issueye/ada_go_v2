@@ -368,3 +368,75 @@ func TestUpgradeRejects(t *testing.T) {
 		t.Fatalf("降级应拒绝,实际 %v", err)
 	}
 }
+
+func upgradeVersionWith(t *testing.T, dest, version string, opts install.Options) (*install.Info, error) {
+	t.Helper()
+	src := t.TempDir()
+	manifest := `{"id":"rb-demo","version":"` + version + `","kind":"go"}`
+	if err := os.WriteFile(filepath.Join(src, "plugin.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("写清单失败: %v", err)
+	}
+	return install.Upgrade(src, dest, opts)
+}
+
+func installRollbackVersion(t *testing.T, dest, version string) {
+	t.Helper()
+	src := t.TempDir()
+	manifest := `{"id":"rb-demo","version":"` + version + `","kind":"go"}`
+	if err := os.WriteFile(filepath.Join(src, "plugin.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("写清单失败: %v", err)
+	}
+	if _, err := install.Install(src, dest, install.Options{}); err != nil {
+		t.Fatalf("安装 %s 失败: %v", version, err)
+	}
+}
+
+// 17. KeepPrevious:升级保留旧版本与索引条目。
+func TestUpgradeKeepPrevious(t *testing.T) {
+	dest := t.TempDir()
+	installRollbackVersion(t, dest, "0.1.0")
+	if _, err := upgradeVersionWith(t, dest, "0.2.0", install.Options{KeepPrevious: true}); err != nil {
+		t.Fatalf("升级失败: %v", err)
+	}
+	entries, err := install.List(dest)
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("KeepPrevious 应保留两个版本: %v %+v", err, entries)
+	}
+	for _, ver := range []string{"0.1.0", "0.2.0"} {
+		if _, err := os.Stat(filepath.Join(dest, "rb-demo@"+ver)); err != nil {
+			t.Fatalf("版本目录应存在: %s %v", ver, err)
+		}
+	}
+}
+
+// 18. Rollback:删除最新版本,索引回退到次新。
+func TestRollback(t *testing.T) {
+	dest := t.TempDir()
+	installRollbackVersion(t, dest, "0.1.0")
+	if _, err := upgradeVersionWith(t, dest, "0.2.0", install.Options{KeepPrevious: true}); err != nil {
+		t.Fatalf("升级失败: %v", err)
+	}
+	version, err := install.Rollback(dest, "rb-demo")
+	if err != nil {
+		t.Fatalf("回滚失败: %v", err)
+	}
+	if version != "0.1.0" {
+		t.Fatalf("应回滚到 0.1.0,实际 %s", version)
+	}
+	entries, err := install.List(dest)
+	if err != nil || len(entries) != 1 || entries[0].Version != "0.1.0" {
+		t.Fatalf("回滚后索引应只剩 0.1.0: %v %+v", err, entries)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "rb-demo@0.2.0")); err == nil {
+		t.Fatalf("最新版本目录应被删除")
+	}
+}
+
+// 19. Rollback:没有旧版本时报错。
+func TestRollbackNoPrevious(t *testing.T) {
+	dest := t.TempDir()
+	installRollbackVersion(t, dest, "0.1.0")
+	if _, err := install.Rollback(dest, "rb-demo"); err == nil || !strings.Contains(err.Error(), "没有可回滚") {
+		t.Fatalf("单版本应拒绝回滚,实际 %v", err)
+	}
+}
