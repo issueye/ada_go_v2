@@ -18,6 +18,9 @@ import (
 	seamshell "github.com/adag/ada-go/v2/plugins/seam/shell"
 )
 
+// EventApprovalDecided 是 fs/shell 策略发出的审批结果事件(seam 暂未导出常量)。
+const EventApprovalDecided = "approval/decided"
+
 // PolicyName 是插件 id。
 const PolicyName = "audit-log"
 
@@ -90,7 +93,7 @@ func Plugin() kernel.Plugin {
 
 		for _, name := range []string{
 			seamfs.EventObserve, seamshell.EventObserve,
-			seamnet.EventObserve, seamapproval.EventRequested,
+			seamnet.EventObserve, seamapproval.EventRequested, EventApprovalDecided,
 		} {
 			eventName := name
 			ctx.On(eventName, func(_ context.Context, _ *kernel.Context, args []any) (any, error) {

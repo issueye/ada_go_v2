@@ -18,6 +18,7 @@ plugins/policy/audit-log/   把观察/审批事件追加为 JSONL 文件
 | `shell/observe` | `policy/shell-observe` |
 | `net/observe` | `policy/net-observe` |
 | `approval/requested` | `seam/approval` 插件 |
+| `approval/decided` | fs/shell 策略(审批结果) |
 
 ## 3. 配置与格式
 
@@ -40,6 +41,7 @@ plugins/policy/audit-log/   把观察/审批事件追加为 JSONL 文件
 - `auditlog.TestWrites`:单事件写成一行、payload 完整;
 - `auditlog.TestAppendsMultiple`:三类事件追加三行;
 - `auditlog.TestMissingPath`:缺 `path` 插件失败;
+- `auditlog.TestApprovalDecided`:`approval/decided` 落盘;
 - `auditlog.TestRotation`:小阈值触发轮转、keep 保留正确;
 - `auditlog.TestRotationInvalid`:负 maxBytes 失败。
 

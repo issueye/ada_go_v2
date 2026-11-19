@@ -124,3 +124,21 @@ func TestRotationInvalid(t *testing.T) {
 		t.Fatalf("负 maxBytes 应失败")
 	}
 }
+
+// 6. approval/decided 也落盘。
+func TestApprovalDecided(t *testing.T) {
+	path := t.TempDir() + "/audit.jsonl"
+	app := kernel.New(kernel.Options{})
+	t.Cleanup(func() { _ = app.Stop(context.Background()) })
+	if _, err := app.Plugin(auditlog.Plugin(), kernel.NewConfig(map[string]any{"path": path})); err != nil {
+		t.Fatalf("挂载失败: %v", err)
+	}
+	app.Root().Emit(auditlog.EventApprovalDecided, map[string]any{"allow": true, "target": "echo"})
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("读审计文件失败: %v", err)
+	}
+	if !strings.Contains(string(data), auditlog.EventApprovalDecided) {
+		t.Fatalf("缺少 approval/decided 记录: %s", data)
+	}
+}
