@@ -24,10 +24,39 @@ type fileJobDoc struct {
 }
 
 // FileJobStore 把任务状态存放在一个 JSON 文件里。
+//
+// 跨进程安全:用 <path>.lock 的 O_CREATE|O_EXCL 锁文件包住「读-改-写」,
+// 过期锁(超过 JobLease 的 mtime)会被回收。它不是完美的分布式锁,但能挡住
+// 最常见的并发抢租约竞态。
 type FileJobStore struct {
 	path string
 
 	mu sync.Mutex
+}
+
+// lockPath 返回锁文件路径。
+func (s *FileJobStore) lockPath() string { return s.path + ".lock" }
+
+// tryLock 尝试获取跨进程锁;成功后返回 release。
+func (s *FileJobStore) tryLock() (func() error, bool, error) {
+	for attempt := 0; attempt < 3; attempt++ {
+		f, err := os.OpenFile(s.lockPath(), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		if err == nil {
+			fmt.Fprintf(f, "pid=%d time=%d", os.Getpid(), time.Now().UnixNano())
+			_ = f.Close()
+			return func() error { return os.Remove(s.lockPath()) }, true, nil
+		}
+		if !os.IsExist(err) {
+			return nil, false, fmt.Errorf("sched: 获取 job 锁失败: %w", err)
+		}
+		info, statErr := os.Stat(s.lockPath())
+		if statErr == nil && time.Since(info.ModTime()) > JobLease {
+			_ = os.Remove(s.lockPath()) // 过期锁
+			continue
+		}
+		return nil, false, nil
+	}
+	return nil, false, nil
 }
 
 // NewFileJobStore 创建文件存储;父目录不存在时创建。
@@ -57,6 +86,14 @@ func (s *FileJobStore) LastRun(_ context.Context, id string) (time.Time, bool, e
 func (s *FileJobStore) SetLastRun(_ context.Context, id string, at time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	release, ok, err := s.tryLock()
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("sched: job 存储锁被其它进程持有,无法写入 lastRun")
+	}
+	defer release()
 	doc, err := s.load()
 	if err != nil {
 		return err
@@ -65,10 +102,18 @@ func (s *FileJobStore) SetLastRun(_ context.Context, id string, at time.Time) er
 	return s.save(doc)
 }
 
-// AcquireLease 尝试获取租约(读-改-写都在同一把进程内互斥锁里)。
+// AcquireLease 尝试获取租约(进程内互斥 + 跨进程锁文件)。
 func (s *FileJobStore) AcquireLease(_ context.Context, id string, now time.Time, ttl time.Duration) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	release, locked, err := s.tryLock()
+	if err != nil {
+		return false, err
+	}
+	if !locked {
+		return false, nil
+	}
+	defer release()
 	doc, err := s.load()
 	if err != nil {
 		return false, err

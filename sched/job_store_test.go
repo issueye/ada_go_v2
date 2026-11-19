@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -133,4 +134,85 @@ func TestJobsSharedStoreRunsOnce(t *testing.T) {
 	if got := atomic.LoadInt32(&runs); got != 2 {
 		t.Fatalf("下一分钟应只再执行一次,总次数 %d", got)
 	}
+}
+
+// 6. 跨进程锁:两个 store 实例并发抢同一租约,只有 1 个成功。
+func TestFileJobStoreCrossProcessLock(t *testing.T) {
+	_, path := newFileStore(t)
+	a, err := sched.NewFileJobStore(path)
+	if err != nil {
+		t.Fatalf("创建 A 失败: %v", err)
+	}
+	b, err := sched.NewFileJobStore(path)
+	if err != nil {
+		t.Fatalf("创建 B 失败: %v", err)
+	}
+	now := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+
+	var (
+		wg      sync.WaitGroup
+		succeed atomic.Int32
+		start   = make(chan struct{})
+	)
+	try := func(s *sched.FileJobStore) {
+		defer wg.Done()
+		<-start
+		if ok, err := s.AcquireLease(context.Background(), "job", now, time.Minute); err == nil && ok {
+			succeed.Add(1)
+		}
+	}
+	wg.Add(2)
+	go try(a)
+	go try(b)
+	close(start)
+	wg.Wait()
+	if got := succeed.Load(); got != 1 {
+		t.Fatalf("并发抢租约应只有 1 个成功,实际 %d", got)
+	}
+
+	// 释放租约后另一个实例可以抢到。
+	if err := a.SetLastRun(context.Background(), "job", now); err != nil {
+		t.Fatalf("释放租约失败: %v", err)
+	}
+	if ok, err := b.AcquireLease(context.Background(), "job", now, time.Minute); err != nil || !ok {
+		t.Fatalf("释放后应可抢到: ok=%v err=%v", ok, err)
+	}
+}
+
+// 7. 过期锁(超过 JobLease)会被回收;锁文件在释放后不存在。
+func TestFileJobStoreStaleLock(t *testing.T) {
+	store, path := newFileStore(t)
+	lock := path + ".lock"
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("建目录失败: %v", err)
+	}
+	if err := os.WriteFile(lock, []byte("stale"), 0o644); err != nil {
+		t.Fatalf("写锁失败: %v", err)
+	}
+	old := time.Now().Add(-2 * sched.JobLease)
+	if err := os.Chtimes(lock, old, old); err != nil {
+		t.Fatalf("改锁时间失败: %v", err)
+	}
+	if ok, err := store.AcquireLease(context.Background(), "job", time.Now(), time.Minute); err != nil || !ok {
+		t.Fatalf("过期锁应被回收: ok=%v err=%v", ok, err)
+	}
+	if _, err := os.Stat(lock); err == nil {
+		t.Fatalf("释放后锁文件不应存在")
+	}
+}
+
+// 8. 锁被其它进程持有时,SetLastRun 明确报错而不是静默覆盖。
+func TestFileJobStoreSetLastRunLockConflict(t *testing.T) {
+	store, path := newFileStore(t)
+	lock := path + ".lock"
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("建目录失败: %v", err)
+	}
+	if err := os.WriteFile(lock, []byte("held"), 0o644); err != nil {
+		t.Fatalf("写锁失败: %v", err)
+	}
+	if err := store.SetLastRun(context.Background(), "job", time.Now()); err == nil || !strings.Contains(err.Error(), "锁") {
+		t.Fatalf("锁被持有应报错,实际 %v", err)
+	}
+	_ = os.Remove(lock)
 }
