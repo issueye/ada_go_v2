@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/adag/ada-go/v2/caps"
 	"github.com/adag/ada-go/v2/kernel"
 	seamapproval "github.com/adag/ada-go/v2/plugins/seam/approval"
 	seamsandbox "github.com/adag/ada-go/v2/plugins/seam/sandbox"
@@ -23,6 +24,11 @@ const Priority = 100
 
 // New 构造装饰器。approval 为 nil 表示没有审批服务:shell 门/白名单拒绝一律不放行。
 func New(inner seamshell.Shell, registry *seamsandbox.Registry, backend string, allow []string, allowShell bool, approvalRegistry *seamapproval.Registry, approvalBackend string, emit func(string, any)) seamshell.Shell {
+	return NewWithCaps(inner, registry, backend, allow, allowShell, approvalRegistry, approvalBackend, emit, nil)
+}
+
+// NewWithCaps 额外注入 caps.Broker:非 nil 时每条命令要求 principal + exec 能力。
+func NewWithCaps(inner seamshell.Shell, registry *seamsandbox.Registry, backend string, allow []string, allowShell bool, approvalRegistry *seamapproval.Registry, approvalBackend string, emit func(string, any), broker *caps.Broker) seamshell.Shell {
 	allowed := make(map[string]bool, len(allow))
 	for _, p := range allow {
 		allowed[p] = true
@@ -31,6 +37,7 @@ func New(inner seamshell.Shell, registry *seamsandbox.Registry, backend string, 
 		inner: inner, registry: registry, backend: backend,
 		allow: allowed, allowShell: allowShell,
 		approval: approvalRegistry, approvalBackend: approvalBackend, emit: emit,
+		broker: broker,
 	}
 }
 
@@ -40,6 +47,7 @@ type guard struct {
 	backend    string
 	allow      map[string]bool
 	allowShell bool
+	broker     *caps.Broker
 
 	approval        *seamapproval.Registry
 	approvalBackend string
@@ -82,6 +90,16 @@ func (g *guard) check(ctx context.Context, cmd seamshell.Command) error {
 			reason = "被沙箱拒绝"
 		}
 		return seamshell.Denied("sandbox", reason)
+	}
+
+	if g.broker != nil {
+		id, ok := kernel.Principal(ctx)
+		if !ok {
+			return seamshell.Denied("cap", "缺少调用者身份:请使用 ctx.Context()")
+		}
+		if err := g.broker.Authorize(ctx, id, "exec", cmd.Program); err != nil {
+			return seamshell.Denied("cap", err.Error())
+		}
 	}
 
 	gateReason := ""
@@ -134,6 +152,10 @@ func Plugin() kernel.Plugin {
 			return nil, err
 		}
 		backend := cfg.String("backend")
+		var broker *caps.Broker
+		if v, ok := ctx.TryService("caps"); ok {
+			broker, _ = v.(*caps.Broker)
+		}
 		var approvalRegistry *seamapproval.Registry
 		if v, ok := ctx.TryService("approval"); ok {
 			if reg, ok := v.(*seamapproval.Registry); ok {
@@ -141,9 +163,9 @@ func Plugin() kernel.Plugin {
 			}
 		}
 		return chain.Decorate(func(inner seamshell.Shell) seamshell.Shell {
-			return New(inner, registry, backend, cfg.Strings("allow"), cfg.Bool("allowShell"),
+			return NewWithCaps(inner, registry, backend, cfg.Strings("allow"), cfg.Bool("allowShell"),
 				approvalRegistry, cfg.String("approvalBackend"),
-				func(name string, payload any) { ctx.EmitContext(context.Background(), name, payload) })
+				func(name string, payload any) { ctx.EmitContext(context.Background(), name, payload) }, broker)
 		}, Priority)
-	}).WithInject("shell", "sandbox").WithOptional("approval")
+	}).WithOptional("caps").WithInject("shell", "sandbox").WithOptional("approval")
 }

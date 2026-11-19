@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/adag/ada-go/v2/caps"
 	"github.com/adag/ada-go/v2/kernel"
 	shellguard "github.com/adag/ada-go/v2/plugins/policy/shell-guard"
 	sandboxnone "github.com/adag/ada-go/v2/plugins/provider/sandbox-none"
@@ -217,4 +218,28 @@ type denyApprover struct{}
 func (denyApprover) Name() string { return "deny" }
 func (denyApprover) Approve(context.Context, seamapproval.Request) (seamapproval.Decision, error) {
 	return seamapproval.Decision{Allow: false, Reason: "审批人拒绝", Approver: "deny"}, nil
+}
+
+// 6. 注入 caps Broker 时要求 principal + exec 能力。
+func TestCapsEnforcement(t *testing.T) {
+	broker := caps.NewBroker(nil)
+	if err := broker.Grant("p1", "exec"); err != nil {
+		t.Fatalf("授予失败: %v", err)
+	}
+	fake := &fakeShell{}
+	g := shellguard.NewWithCaps(fake, registryWith(t, seamsandbox.ModeWorkspaceWrite), "", nil, false, nil, "", nil, broker)
+
+	auth := kernel.WithPrincipal(context.Background(), "p1")
+	if _, err := g.Run(auth, seamshell.Command{Program: "echo"}); err != nil {
+		t.Fatalf("已授权应放行: %v", err)
+	}
+	if _, err := g.Run(kernel.WithPrincipal(context.Background(), "p2"), seamshell.Command{Program: "echo"}); err == nil {
+		t.Fatalf("未授权应拒绝")
+	}
+	if _, err := g.Run(context.Background(), seamshell.Command{Program: "echo"}); err == nil {
+		t.Fatalf("无身份应拒绝")
+	}
+	if len(fake.runs) != 1 {
+		t.Fatalf("被拒绝的命令不应触底,实际 %d", len(fake.runs))
+	}
 }
