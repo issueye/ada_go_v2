@@ -18,16 +18,18 @@ host/desktop/   内核快照 → 视图模型(View)→ Renderer
 | `View` | 只读视图:FiberRow / ServiceRow / EffectRow / Events |
 | `New(app, renderer)` | app 与 renderer 都不能为 nil |
 | `Refresh()` | `app.Inspect()` → View → Render;返回本轮视图 |
+| `Subscribe(events)` | 在根上下文监听事件,事件到达时 Refresh;返回 Dispose 取消订阅 |
 
 ## 3. 测试
 
 - `desktop.TestRefresh`:挂载提供服务的插件后刷新,断言 fibers/services/effects 映射与渲染器调用次数(两次刷新);
+- `desktop.TestSubscribe`:订阅 `fs/observe` → Emit 触发重绘 → Dispose 后不再触发;
 - `desktop.TestNewValidation`:nil app/renderer 明确报错。
 
 ## 4. 偏差与边界
 
 1. **没有真实窗口**:没有 mygo/菜单/托盘/主线程;Renderer 只是接口。
-2. **没有事件驱动刷新**:`Refresh` 由宿主显式调用;没有订阅内核事件自动重绘。
+2. **事件驱动刷新是可选订阅**:`Subscribe` 由宿主选择事件;重绘发生在事件派发回调里,渲染器必须快速返回。
 3. **只读视图**:不能从 View 触发插件操作(命令/审批入口留空)。
 4. **没有生命周期托管**:不负责 app 的启动/停止。
 5. **快照是一次性的**:并发装配期间刷新可能看到中间状态(与 `Inspect` 语义一致)。

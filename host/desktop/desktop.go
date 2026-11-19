@@ -4,7 +4,9 @@
 package desktop
 
 import (
+	"context"
 	"errors"
+	"sync"
 
 	"github.com/adag/ada-go/v2/kernel"
 )
@@ -59,6 +61,42 @@ func New(app *kernel.App, renderer Renderer) (*Host, error) {
 		return nil, errors.New("desktop: renderer 不能为 nil")
 	}
 	return &Host{app: app, renderer: renderer}, nil
+}
+
+// Subscribe 在根上下文上监听事件,事件到达时 Refresh 并重绘。
+//
+// 注意:重绘发生在事件派发回调里,渲染器应快速返回;返回的 Dispose 取消订阅。
+func (h *Host) Subscribe(events []string) (kernel.Dispose, error) {
+	if len(events) == 0 {
+		return nil, errors.New("desktop: events 不能为空")
+	}
+	var mu sync.Mutex
+	var disposers []kernel.Dispose
+	for _, name := range events {
+		if name == "" {
+			for _, d := range disposers {
+				_ = d(context.Background())
+			}
+			return nil, errors.New("desktop: 事件名不能为空")
+		}
+		eventName := name
+		d := h.app.Root().On(eventName, func(_ context.Context, _ *kernel.Context, _ []any) (any, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			_, _ = h.Refresh()
+			return nil, nil
+		})
+		disposers = append(disposers, d)
+	}
+	return func(ctx context.Context) error {
+		var errs []error
+		for i := len(disposers) - 1; i >= 0; i-- {
+			if err := disposers[i](ctx); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		return errors.Join(errs...)
+	}, nil
 }
 
 // Refresh 把 app.Inspect() 映射成 View 并交给渲染器;返回映射出的视图。

@@ -6,6 +6,7 @@ import (
 
 	"github.com/adag/ada-go/v2/host/desktop"
 	"github.com/adag/ada-go/v2/kernel"
+	seamfs "github.com/adag/ada-go/v2/plugins/seam/fs"
 )
 
 type fakeRenderer struct {
@@ -75,5 +76,35 @@ func TestNewValidation(t *testing.T) {
 	t.Cleanup(func() { _ = app.Stop(context.Background()) })
 	if _, err := desktop.New(app, nil); err == nil {
 		t.Fatalf("nil renderer 应报错")
+	}
+}
+
+// 3. 订阅事件触发重绘;Dispose 后取消。
+func TestSubscribe(t *testing.T) {
+	app := kernel.New(kernel.Options{})
+	t.Cleanup(func() { _ = app.Stop(context.Background()) })
+	mountDemo(t, app)
+	r := &fakeRenderer{}
+	h, err := desktop.New(app, r)
+	if err != nil {
+		t.Fatalf("构造失败: %v", err)
+	}
+	if _, err := h.Subscribe(nil); err == nil {
+		t.Fatalf("空事件集应报错")
+	}
+	dispose, err := h.Subscribe([]string{seamfs.EventObserve})
+	if err != nil {
+		t.Fatalf("订阅失败: %v", err)
+	}
+	app.Root().Emit(seamfs.EventObserve, map[string]any{"op": "read"})
+	if len(r.views) != 1 {
+		t.Fatalf("事件应触发一次重绘,实际 %d", len(r.views))
+	}
+	if err := dispose(context.Background()); err != nil {
+		t.Fatalf("取消订阅失败: %v", err)
+	}
+	app.Root().Emit(seamfs.EventObserve, map[string]any{"op": "read"})
+	if len(r.views) != 1 {
+		t.Fatalf("取消后不应再重绘,实际 %d", len(r.views))
 	}
 }
