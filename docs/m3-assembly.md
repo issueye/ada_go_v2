@@ -1,29 +1,31 @@
-# M3 装配层(第一刀)
+# M3 装配层
 
-> 配套 [plugin-kernel-design.md](plugin-kernel-design.md) §9.2(清单 v2)与 §12.1(装配编排)。
-> 本页描述**已实现**的部分与**已知边界**;install / 签名 / capability / preset 都不在这一刀里。
+> 配套 [plugin-kernel-design.md](plugin-kernel-design.md) §9.2(清单 v2)、§12.1(装配编排)与 §12.4(组合)。
+> 本页描述**已实现**的部分与**已知边界**;install / 签名 / capability / profile 都不在这一刀里。
 
 ## 1. 范围
 
-M3 要回答的是「装哪些插件、按什么顺序、装不上怎么办」。第一刀交付四个东西:
+M3 要回答的是「装哪些插件、按什么顺序、参数怎么覆盖、装不上怎么办」。当前交付:
 
 ```
+preset.json ──preset.Load──▶ 多目录 + disabled + config patch
+                                   │
 plugin.json ──plugin.LoadDir──▶ []*Manifest(校验过的清单)
-                                     │
-                                     ▼
+                                   │
+                                   ▼
                          assemble.Plan ──▶ Report(顺序/问题/警告)
-                                     │
-                                     ▼
+                                   │
+                                   ▼
               loader.Lookup ◀── kind ──▶ go: 宿主注册表 / ts: 编译或 Artifact
-                                     │
-                                     ▼
+                                   │
+                                   ▼
                          assemble.Up ──▶ 挂载 + 失败整体回滚
-                                     │
-                                     ▼
+                                   │
+                                   ▼
                     ada plan / ada up ──▶ 人可读 / JSON 报告 / 真挂载
 ```
 
-**不在这一刀里**:插件安装与更新、签名校验、capability 授权、preset/bundle/profile 的 patch 合并、`ada inspect`。
+**不在这一刀里**:插件安装与更新、签名校验、capability 授权、bundle/profile 的多级 patch、`ada inspect`。
 
 ## 2. 清单(`plugin/`)
 
@@ -75,7 +77,36 @@ func (r *Report) OK() bool
 func (r *Report) Err() error // *assemble.Error,码 EASSEMBLEPLAN
 ```
 
-## 4. 装载(`loader.Lookup`)
+## 4. 组合(`preset/`)
+
+preset 是**数据不是代码**(AGENTS §2.2 的组合数据类):产品差异靠换 preset 表达,不允许 `if product == ...`。
+
+```json
+{
+  "name": "base",
+  "plugins": ["../plugins", "../plugins-ts"],
+  "disable": ["presenter"],
+  "patch": {
+    "hello-ts": { "name": "preset" }
+  }
+}
+```
+
+| 字段 | 语义 |
+|---|---|
+| `name` | kebab-case,用于报告 |
+| `plugins` | 插件目录列表;相对路径按 **preset 文件所在目录**解析 |
+| `disable` | 置为 disabled(计划告警并排除) |
+| `patch` | 每个插件的 config **深合并**覆盖;对象递归、其余值直接替换 |
+
+约束与语义:
+
+- patch **只能覆盖 `config`**:id/kind/inject/provide 属于插件身份与依赖图,不是参数,不能被 preset 改;
+- `disable`/`patch` 指向不存在的插件 → **报错**(静默忽略会让作者以为配置生效了);
+- 同一 id 出现在多个目录 → 展开时报错;
+- 深合并的理由:patch 只写「与默认不同的那个键」,强制整体替换会逼作者复制全部默认值,默认值一改就漂移。
+
+## 5. 装载(`loader.Lookup`)
 
 按 `kind` 选路,把清单变成可挂载的 `kernel.Plugin`:
 
@@ -87,7 +118,7 @@ func (r *Report) Err() error // *assemble.Error,码 EASSEMBLEPLAN
 
 装载层不做依赖排序(那是 `assemble.Plan`),也不做事务与回滚(那是 `assemble.Up`);它返回的函数类型与 `assemble.Lookup` 一致,所以装配层不需要知道 `compile`/`bridge` 的存在。
 
-## 5. 装配(`assemble.Up`)
+## 6. 装配(`assemble.Up`)
 
 ```go
 up, err := assemble.Up(app, manifests, plan, lookup)
@@ -98,18 +129,28 @@ up, err := assemble.Up(app, manifests, plan, lookup)
 - 失败返回 `*assemble.UpError`:插件名、原因、回滚数量与回滚错误(码 `EASSEMBLEUP`);
 - 计划本身不通过时直接拒绝执行(不会「装一半再报错」)。
 
-## 6. CLI: `ada plan` / `ada up`
+## 7. CLI: `ada plan` / `ada up`
 
 ```powershell
-go run ./cmd/ada plan examples/plugins       # 纯 Go 清单:顺序 + 可选依赖告警
-go run ./cmd/ada plan examples/plugins -json # 机器可读报告
-go run ./cmd/ada up examples/plugins-ts      # 真的挂载 TS 插件,打印 fiber/服务后停止
+go run ./cmd/ada plan examples/plugins                 # 纯目录:顺序 + 可选依赖告警
+go run ./cmd/ada plan --preset examples/presets/base.preset.json
+go run ./cmd/ada plan --preset examples/presets/base.preset.json -json
+go run ./cmd/ada up   --preset examples/presets/ts-only.preset.json
 ```
 
-`ada up` 的实际输出:
+`--preset` 的实际输出:
 
 ```
-  [js] hello-ts 装配完成,name=ada
+清单(4): greeter@0.1.0(go), presenter@0.1.0(go), upper@0.1.0(go), hello-ts@0.1.0(ts)
+顺序: greeter → hello-ts → upper
+警告: 插件 presenter 已被 disabled,计划中排除
+结果: 可装配
+```
+
+`ada up --preset ...` 会真的挂载、打印 fiber/服务,再停止触发清理:
+
+```
+  [js] hello-ts 装配完成,name=preset
 装配完成: hello-ts
   fiber   hello-ts     active
   service ts.hello     provider=hello-ts#1 dependents=0
@@ -119,39 +160,39 @@ go run ./cmd/ada up examples/plugins-ts      # 真的挂载 TS 插件,打印 fib
 
 退出码:`0` 成功 / `1` 不可装配或装配失败 / `2` 用法错误。
 
-## 7. 测试矩阵
+## 8. 测试矩阵
 
 | 场景 | 用例 |
 |---|---|
-| 清单解析与字段校验 | `plugin.TestParseValidManifest`、`plugin.TestValidateRules` |
-| 未知字段拒绝 | `plugin.TestRejectsUnknownField` |
-| 目录扫描 / 单插件目录 / 空目录 | `plugin.TestLoadDir` |
+| 清单解析与字段校验 / 未知字段 / 目录扫描 | `plugin.TestParseValidManifest`、`plugin.TestValidateRules`、`plugin.TestRejectsUnknownField`、`plugin.TestLoadDir` |
 | 拓扑顺序 + 可选依赖告警 | `assemble.TestPlanOrderIsDeterministic` |
 | 缺提供者 / 重复提供者 / 成环 / 级联阻断 / disabled / 重复 id | `assemble.TestPlan*` |
 | 按序挂载并真的提供服务 | `assemble.TestUpMountsInPlanOrder` |
-| 失败逆序回滚 | `assemble.TestUpRollsBackOnFailure` |
-| 坏计划拒绝执行 / 缺 Lookup | `assemble.TestUpRejectsBadPlan`、`assemble.TestUpWithoutLookup` |
+| 失败逆序回滚 / 坏计划拒绝 / 缺 Lookup | `assemble.TestUpRollsBackOnFailure`、`assemble.TestUpRejectsBadPlan`、`assemble.TestUpWithoutLookup` |
+| preset:展开 + disabled + config 深合并 | `preset.TestLoadExpandAppliesDisableAndPatch` |
+| preset:相对路径按文件目录解析 | `preset.TestRelativeToPresetDir` |
+| preset:未知 disable/patch 目标报错 | `preset.TestUnknownTargetsFail` |
+| preset:自身校验 / 跨目录重复 id | `preset.TestPresetValidation`、`preset.TestDuplicateIDAcrossDirs` |
 | go 插件按注册表装载(含缺注册报错) | `loader.TestGoLookup` |
-| ts 源码模式装载并挂载 | `loader.TestTSSourceLookup` |
-| ts Artifact 模式装载并挂载 | `loader.TestTSArtifactLookup` |
-| 清单信息不足/未知 kind | `loader.TestTSLookupErrors` |
-| 源码扫描跳过 node_modules 与隐藏目录 | `loader.TestCollectSources` |
+| ts 源码/Artifact 模式装载并挂载 | `loader.TestTSSourceLookup`、`loader.TestTSArtifactLookup` |
+| 清单信息不足/未知 kind / 扫描排除规则 | `loader.TestTSLookupErrors`、`loader.TestCollectSources` |
 
-## 8. 已知边界与下一步
+## 9. 已知边界与下一步
 
 1. **install / 签名 / capability** 未做(M5):`ada plan/up` 只读本地目录。
-2. **版本约束缺失**:`inject` 只按服务名匹配,没有「期望 provider ≥ v2」;内核对 `MinVersion` 已有支持,plan 还没用上。
-3. **preset / bundle / patch** 未做(M4):当前一个目录就是一份计划。
+2. **bundle / profile 未做**:当前 preset 是单层;设计 §12.4 的多级 patch 与 profile 继承还没实现。
+3. **版本约束缺失**:`inject` 只按服务名匹配,没有「期望 provider ≥ v2」;内核对 `MinVersion` 已有支持,plan 还没用上。
 4. **`ada inspect`** 未做:目前只能看到 `ada up` 打印的即时快照。
-5. **Go 插件无法从 CLI 动态加载**:Go 插件必须编译进宿主,CLI 只对 ts 插件完整可用;这符合「Go 优先、JS 用于第三方」的方向,但宿主需要自己提供注册表。
-6. **多提供者的隔离槽**:`Isolate` 语义还没进入清单(`isolate: { shell: true }`)。
-7. **热重载/增量编译**未做:每次 `ada up` 都是全量编译;S8 的 0.66 ms 数据说明代价可接受,但还没有接。
+5. **Go 插件无法从 CLI 动态加载**:Go 插件必须编译进宿主,CLI 只对 ts 插件完整可用。
+6. **隔离槽**:`Isolate` 语义还没进入清单(`isolate: { shell: true }`)。
+7. **热重载/增量编译**未做:每次 `ada up` 都是全量编译。
 
-## 9. 验证命令
+## 10. 验证命令
 
 ```powershell
-go test -race -count=1 ./...                 # 含 plugin / assemble / loader
+go test -race -count=1 ./...                 # 含 plugin / assemble / loader / preset
 go run ./cmd/ada plan examples/plugins       # 人可读计划
+go run ./cmd/ada plan --preset examples/presets/base.preset.json
 go run ./cmd/ada up examples/plugins-ts      # 真的挂载 TS 插件
 pwsh scripts/guard.ps1                       # 红线门禁
 ```

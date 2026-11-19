@@ -1,0 +1,10 @@
+{
+  "name": "base",
+  "plugins": ["../plugins", "../plugins-ts"],
+  "disable": ["presenter"],
+  "patch": {
+    "hello-ts": {
+      "name": "preset"
+    }
+  }
+}

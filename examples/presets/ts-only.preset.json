@@ -1,0 +1,9 @@
+{
+  "name": "ts-only",
+  "plugins": ["../plugins-ts"],
+  "patch": {
+    "hello-ts": {
+      "name": "preset"
+    }
+  }
+}

@@ -1,9 +1,10 @@
 // 命令 ada 是 M3 的装配工具。
 //
-//	ada plan <目录>   读清单、算依赖图、输出顺序与问题(不挂载)
-//	ada up   <目录>   真的挂载一遍(Go 插件需宿主注册;TS 插件现场编译),打印结果后停止
+//	ada plan <目录>              读清单、算依赖图、输出顺序与问题(不挂载)
+//	ada plan --preset <文件>      按 preset(多目录 + disabled + config patch)算计划
+//	ada up   <目录|--preset ...>  真的挂载一遍(Go 插件需宿主注册;TS 插件现场编译),打印后停止
 //
-// install / 签名 / capability 属于 M5;inspect 与 preset 尚未实现。
+// install / 签名 / capability 属于 M5;inspect 尚未实现。
 package main
 
 import (
@@ -18,6 +19,7 @@ import (
 	"github.com/adag/ada-go/v2/kernel"
 	"github.com/adag/ada-go/v2/loader"
 	"github.com/adag/ada-go/v2/plugin"
+	"github.com/adag/ada-go/v2/preset"
 )
 
 func main() {
@@ -38,56 +40,83 @@ func main() {
 
 func usage() {
 	fmt.Fprint(os.Stderr, `用法:
-  ada plan <插件目录> [-json]   读清单→依赖图→装配顺序与问题(不挂载)
-  ada up   <插件目录>           挂载全部插件,打印 fiber/服务后停止
+  ada plan <插件目录> [-json]          读清单→依赖图→装配顺序与问题(不挂载)
+  ada plan --preset <文件> [-json]     按 preset 装配(多目录 + disabled + config patch)
+  ada up   <插件目录|--preset 文件>     挂载全部插件,打印 fiber/服务后停止
 
 退出码:0=成功,1=计划不可执行或装配失败,2=用法错误。
 `)
 }
 
-func parseDir(args []string) (dir string, jsonOut bool) {
-	for _, a := range args {
-		if a == "-json" {
-			jsonOut = true
-			continue
-		}
-		if dir == "" {
-			dir = a
-		}
-	}
-	return dir, jsonOut
+type target struct {
+	dir    string
+	preset string
+	json   bool
+	bad    string
 }
 
-func loadAndPlan(dir string) ([]*plugin.Manifest, *assemble.Report, error) {
-	manifests, err := plugin.LoadDir(dir)
-	if err != nil {
-		return nil, nil, err
+func parseTarget(args []string) target {
+	var t target
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "-json":
+			t.json = true
+		case a == "--preset" || a == "-preset":
+			if i+1 >= len(args) {
+				t.bad = "--preset 缺少文件参数"
+				return t
+			}
+			t.preset = args[i+1]
+			i++
+		case strings.HasPrefix(a, "-"):
+			t.bad = "未知参数 " + a
+			return t
+		default:
+			if t.dir == "" {
+				t.dir = a
+			} else {
+				t.bad = "多余的参数 " + a
+				return t
+			}
+		}
 	}
-	return manifests, assemble.Plan(manifests), nil
+	if t.dir != "" && t.preset != "" {
+		t.bad = "目录与 --preset 不能同时给出"
+	}
+	return t
 }
 
-func printProblems(report *assemble.Report) {
-	for _, w := range report.Warnings {
-		fmt.Println("警告:", w)
-	}
-	for _, p := range report.Problems {
-		fmt.Println("问题:", p.String())
+func loadTarget(t target) ([]*plugin.Manifest, error) {
+	switch {
+	case t.preset != "":
+		p, err := preset.Load(t.preset)
+		if err != nil {
+			return nil, err
+		}
+		return p.Expand()
+	case t.dir != "":
+		return plugin.LoadDir(t.dir)
+	default:
+		return nil, fmt.Errorf("需要给出插件目录或 --preset 文件")
 	}
 }
 
 func cmdPlan(args []string) int {
-	dir, jsonOut := parseDir(args)
-	if dir == "" {
+	t := parseTarget(args)
+	if t.bad != "" {
+		fmt.Fprintln(os.Stderr, t.bad)
 		usage()
 		return 2
 	}
-	manifests, report, err := loadAndPlan(dir)
+	manifests, err := loadTarget(t)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "加载清单失败:", err)
+		fmt.Fprintln(os.Stderr, "加载失败:", err)
 		return 1
 	}
+	report := assemble.Plan(manifests)
 
-	if jsonOut {
+	if t.json {
 		payload := struct {
 			OK       bool               `json:"ok"`
 			Plugins  []string           `json:"plugins"`
@@ -120,7 +149,12 @@ func cmdPlan(args []string) int {
 		order = "(空)"
 	}
 	fmt.Println("顺序:", order)
-	printProblems(report)
+	for _, w := range report.Warnings {
+		fmt.Println("警告:", w)
+	}
+	for _, p := range report.Problems {
+		fmt.Println("问题:", p.String())
+	}
 	if !report.OK() {
 		fmt.Println("结果: 不可装配")
 		return 1
@@ -130,18 +164,25 @@ func cmdPlan(args []string) int {
 }
 
 func cmdUp(args []string) int {
-	dir, _ := parseDir(args)
-	if dir == "" {
+	t := parseTarget(args)
+	if t.bad != "" {
+		fmt.Fprintln(os.Stderr, t.bad)
 		usage()
 		return 2
 	}
-	manifests, report, err := loadAndPlan(dir)
+	manifests, err := loadTarget(t)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "加载清单失败:", err)
+		fmt.Fprintln(os.Stderr, "加载失败:", err)
 		return 1
 	}
+	report := assemble.Plan(manifests)
 	if !report.OK() {
-		printProblems(report)
+		for _, w := range report.Warnings {
+			fmt.Println("警告:", w)
+		}
+		for _, p := range report.Problems {
+			fmt.Println("问题:", p.String())
+		}
 		fmt.Println("结果: 不可装配")
 		return 1
 	}

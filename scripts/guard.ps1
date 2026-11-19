@@ -34,11 +34,11 @@ if ($hits) {
 
 # 3. 内核不得依赖执行层 / 宿主 / 插件。
 $deps = go list -deps ./kernel 2>&1
-$bad = $deps | Where-Object { $_ -match 'ada-go/v2/(jsrt|compile|assemble|plugin|bridge|host|plugins)' }
+$bad = $deps | Where-Object { $_ -match 'ada-go/v2/(jsrt|compile|assemble|plugin|preset|loader|bridge|host|plugins)' }
 if ($bad) {
-    Fail "kernel 依赖不含 jsrt/compile/assemble/plugin/bridge/host/plugins" $bad
+    Fail "kernel 依赖不含 jsrt/compile/assemble/plugin/preset/loader/bridge/host/plugins" $bad
 } else {
-    Pass "kernel 依赖不含 jsrt/compile/assemble/plugin/bridge/host/plugins"
+    Pass "kernel 依赖不含 jsrt/compile/assemble/plugin/preset/loader/bridge/host/plugins"
 }
 
 # 4. 格式:未格式化的文件不进主干(评审不该花在空格上)。
