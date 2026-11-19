@@ -44,6 +44,11 @@ type emitReq struct {
 	payload any
 }
 
+type onReq struct {
+	event  string
+	invoke func(ctx context.Context, payload any) (any, error)
+}
+
 // stager 收集 JS 侧 ctx.provide / ctx.emit 的请求,等回到内核协程再提交。
 //
 // 为什么必须暂存而不是「加锁直接写」:加锁只能消除数据竞争,消除不了语义竞争——
@@ -51,8 +56,19 @@ type emitReq struct {
 type stager struct {
 	mu       sync.Mutex
 	closed   bool
+	ons      []onReq
 	provides []provideReq
 	emits    []emitReq
+}
+
+func (s *stager) on(event string, invoke func(ctx context.Context, payload any) (any, error)) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return fmt.Errorf("ctx.on 只能在 apply 期间调用")
+	}
+	s.ons = append(s.ons, onReq{event: event, invoke: invoke})
+	return nil
 }
 
 func (s *stager) provide(name string, value any) error {
@@ -77,11 +93,11 @@ func (s *stager) emit(event string, payload any) error {
 
 // drain 关闭入口并取出暂存请求。之后 JS 再调用会被拒绝:
 // 没有提交点的调用必须报错,而不是静默丢失。
-func (s *stager) drain() ([]provideReq, []emitReq) {
+func (s *stager) drain() ([]onReq, []provideReq, []emitReq) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closed = true
-	return s.provides, s.emits
+	return s.ons, s.provides, s.emits
 }
 
 func (s *stager) close() {
@@ -137,6 +153,7 @@ func (p *Plugin) Apply(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, 
 		Host: jsrt.Host{
 			Provide: stage.provide,
 			Emit:    stage.emit,
+			On:      stage.on,
 		},
 	})
 	if err != nil {
@@ -151,14 +168,33 @@ func (p *Plugin) Apply(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, 
 		return nil, kernel.Wrap(kernel.CodeInvalid, err, "JS 插件 %s 的 apply 失败", p.opts.Name)
 	}
 
-	provides, emits := stage.drain()
+	ons, provides, emits := stage.drain()
+
+	// 提交顺序 = JS 调用顺序语义:先挂监听器,再注册服务,最后派发事件。
+	// 反过来会让 JS 在 apply 里 emit 的事件打不到自己刚注册的处理器。
+	for _, req := range ons {
+		req := req
+		ctx.On(req.event, func(lctx context.Context, _ *kernel.Context, args []any) (any, error) {
+			var payload any
+			switch len(args) {
+			case 0:
+			case 1:
+				payload = args[0]
+			default:
+				payload = args
+			}
+			if _, err := req.invoke(lctx, payload); err != nil {
+				return nil, err
+			}
+			return nil, nil
+		})
+	}
 	for _, req := range provides {
 		if _, perr := ctx.Provide(req.name, req.value); perr != nil {
 			_ = rt.Close(context.Background())
 			return nil, kernel.Wrap(kernel.CodeInvalid, perr, "JS 插件 %s 提供服务 %q 失败", p.opts.Name, req.name)
 		}
 	}
-	// 提交点的顺序 = JS 调用顺序:先注册服务,再派发事件。
 	for _, req := range emits {
 		ctx.EmitContext(actx, req.event, req.payload)
 	}
@@ -168,7 +204,7 @@ func (p *Plugin) Apply(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, 
 	p.mu.Unlock()
 
 	ctx.Log().Info("JS 插件已装配",
-		"exports", rt.Exports(), "provides", len(provides), "emits", len(emits), "result", res)
+		"exports", rt.Exports(), "ons", len(ons), "provides", len(provides), "emits", len(emits), "result", res)
 	return func(dctx context.Context) error {
 		p.mu.Lock()
 		r := p.rt

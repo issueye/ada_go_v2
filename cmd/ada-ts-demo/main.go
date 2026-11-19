@@ -21,11 +21,13 @@ type Ctx = {
   log: (m: string) => void
   provide: (name: string, value: unknown) => void
   emit: (event: string, payload: unknown) => void
+  on: (event: string, handler: (payload: any) => void) => void
 }
 export function apply(ctx: Ctx, cfg: { name: string }) {
   ctx.log(format(cfg.name))
   ctx.provide("ts.greeting", { text: format(cfg.name), level: Level.High })
   ctx.emit("ts/ready", { name: cfg.name })
+  ctx.on("ts/ping", (p) => ctx.log("收到 ping:" + p.n))
 }`
 
 const utilTS = `export function format(name: string): string { return "你好," + name }`
@@ -82,6 +84,10 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Println("fiber 状态:", fiber.State())
+
+	// 反向回调:内核派发事件,JS 处理器在自己的 goroutine 上执行。
+	app.Root().Emit("ts/ping", map[string]any{"n": 1})
+
 	fmt.Println("Go 消费者拿到的服务值:", seen)
 	if fiber.State() != kernel.Active {
 		os.Exit(1)

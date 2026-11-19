@@ -1,26 +1,26 @@
-# M2 执行层(第一刀 + ctx 桥)
+# M2 执行层(第一刀 + 双向 ctx 桥)
 
 > 配套 [plugin-kernel-design.md](plugin-kernel-design.md) §10–§11 与 [ADR 0002](adr/0002-execution-layer-deps.md)。
 > 本页描述**已实现**的部分与**已知边界**;未实现的部分明确列在 §5,不假装存在。
 
 ## 1. 范围
 
-M2 的目标是「TS 插件在进程内跑起来,且不需要 Node」。当前已打通:
+M2 的目标是「TS 插件在进程内跑起来,且不需要 Node」。当前已打通**双向**:
 
 ```
 TS 源文件 ──compile.Build──▶ Artifact(每个文件的 JS,纯数据)
                                    │
                                    ▼
                     jsrt.New ──▶ moejs Runtime(每实例一个 goroutine)
-                                   │  CallWithHost(apply, cfg)
-                                   ▼
-   apply(ctx, cfg) ──ctx.provide/emit──▶ stager ──返回内核协程──▶ 服务表 / 事件总线
                                    │
-                                   ▼
-                    bridge.Plugin ──▶ kernel 插件(fiber active/failed)
+        ┌──────────────────────────┴──────────────────────────┐
+        │ JS → 内核(暂存,回到内核协程提交)                  │ 内核 → JS(投递到 worker)
+        ▼                                                      ▼
+ apply(ctx, cfg)                                      ctx.on(event, handler)
+   ctx.provide / ctx.emit ──▶ stager ──▶ 服务表/事件总线   内核事件 ──▶ CallFunction
 ```
 
-**不在这一刀里**:装配(assemble)、插件清单与安装、权限/能力、反向回调(`ctx.on` / `ctx.effect` / 服务方法)、`async apply`、池化、sourcemap 反查、预算/熔断。
+**不在这一刀里**:装配(assemble)、插件清单与安装、权限/能力、`ctx.effect`、由 JS 实现的**服务方法**、`async apply`、池化、sourcemap 反查、预算/熔断。
 
 ## 2. 三个包
 
@@ -44,30 +44,36 @@ TS 源文件 ──compile.Build──▶ Artifact(每个文件的 JS,纯数据)
 | `New(ctx, Options)` | 编译 Artifact → `moejs.Link` → `Load`;每实例一个 worker goroutine |
 | `Call(ctx, export, args...)` | 参数/返回值只走 JSON |
 | `CallWithHost(ctx, export, args...)` | 在参数最前插入 `ctx` 对象,供 `apply(ctx, cfg)` 使用 |
-| `Options.Host` | `ctx.provide` / `ctx.emit` 的落地回调(在 worker goroutine 上执行) |
+| `Options.Host` | `provide` / `emit` / `on` 的落地回调 |
 | `Close(ctx)` | 停止 worker;可重复调用 |
 | `ErrClosed` / `ErrBroken` | 关闭后调用 / 中断后未在宽限期内收尾 |
 
-并发模型:Runtime 只在 worker goroutine 上使用,只有 `Interrupt`/`ClearInterrupt` 跨协程——这是 moejs 的硬约束(C1),包内用 `mu` 保护 `raw` 指针。
+并发模型:Runtime 只在 worker goroutine 上使用,只有 `Interrupt`/`ClearInterrupt` 跨协程——这是 moejs 的硬约束(C1),包内用 `mu` 保护 `raw` 指针。`ctx.on` 注册的 JS 函数保存在 worker 独占的 `handlers` 表里,调用时经 `CallFunction` 在 worker 上执行。
 
 ### 2.3 `bridge`
 
 `bridge.Plugin` 实现 `kernel.Plugin`,入口约定与 AGENTS §6.2 一致:**`apply(ctx, config)`**。
 
-JS 侧的 `ctx` 目前只有三个能力:
+JS 侧 `ctx` 目前有四个能力:
 
-| 能力 | 行为 |
-|---|---|
-| `ctx.log(...)` | 立即写宿主日志(线程安全) |
-| `ctx.provide(name, value)` | 暂存;`apply` 返回后由内核协程提交为 `kernel.Provide` |
-| `ctx.emit(event, payload)` | 暂存;`apply` 返回后由内核协程提交为 `EmitContext` |
+| 能力 | 方向 | 行为 |
+|---|---|---|
+| `ctx.log(...)` | JS → 宿主 | 立即写宿主日志(线程安全) |
+| `ctx.provide(name, value)` | JS → 内核 | 暂存;`apply` 返回后由内核协程提交为 `kernel.Provide` |
+| `ctx.emit(event, payload)` | JS → 内核 | 暂存;`apply` 返回后由内核协程提交为 `EmitContext` |
+| `ctx.on(event, handler)` | 内核 → JS | 暂存注册;提交为内核监听器,事件触发时把载荷投递到 worker 执行 JS 函数 |
 
-**为什么要暂存**:内核的生命周期操作是单写者(M1 §1),而 JS 跑在自己的 goroutine 上。直接在 JS 线程里 `Provide`/`Emit` 会同时触碰服务表、事件总线与 fiber 表;加锁只能消除数据竞争,消除不了「半新半旧的依赖图」这类语义竞争。
+**为什么写方向要暂存**:内核的生命周期操作是单写者(M1 §1),而 JS 跑在自己的 goroutine 上。直接在 JS 线程里 `Provide`/`Emit` 会同时触碰服务表、事件总线与 fiber 表;加锁只能消除数据竞争,消除不了「半新半旧的依赖图」这类语义竞争。
 
 **提交语义**:
-- 顺序 = JS 调用顺序;先提交 `provide`,再派发 `emit`;
+- 顺序 = JS 调用顺序:先挂 `on`,再 `provide`,最后 `emit`——否则 apply 里 emit 的事件打不到自己刚注册的处理器;
 - 提交发生在 `apply` 返回之后、仍在调用 `Apply` 的内核协程上;
-- `apply` 结束后再调用 `provide`/`emit` 会抛 JS 异常(没有提交点的调用必须报错,不能静默丢失)。
+- `apply` 结束后再调用 `provide`/`emit`/`on` 会抛 JS 异常(没有提交点的调用必须报错,不能静默丢失)。
+
+**读方向(内核 → JS)**:
+- 监听器在内核协程上被调用,它把载荷 JSON 投递到 worker,并同步等待 JS 处理器返回;
+- 处理器返回值按 `emit` 语义忽略(内核不依赖它),抛出则记为监听器失败(内核 `emit` 记 warning);
+- 处理器里不能 `provide`/`emit`(已过提交点),只能 `log`;这是当前阶段的明确边界。
 
 ## 3. 约束落点
 
@@ -75,10 +81,11 @@ JS 侧的 `ctx` 目前只有三个能力:
 |---|---|
 | C1 单 goroutine | `jsrt.worker` 是唯一接触 `moejs.Runtime` 的 goroutine |
 | C2 字节码不可序列化 | Artifact 只存 JS 源文本;不缓存字节码 |
-| C3 跨边界只传 JSON | `Call` 逐个 `json.Marshal`/`ParseJSON`,返回值 `ToGo` |
-| C4 裸 Runtime 无环境能力 | 只有 `ctx.log/provide/emit`;默认零权限 |
+| C3 跨边界只传 JSON | 调用参数、事件载荷、返回值都经 `json.Marshal`/`ParseJSON`/`ToGo` |
+| C4 裸 Runtime 无环境能力 | 只有 `ctx.log/provide/emit/on`;默认零权限 |
 | P8 数据面留在 Go | JS 只处理控制面/小对象;大对象留后续句柄化 |
-| 单写者 | JS 侧写请求一律经 stager,回到内核协程提交 |
+| 单写者(写方向) | JS 侧写请求一律经 stager,回到内核协程提交 |
+| 反向调用(读方向) | 内核监听器 → 投递到 worker → `CallFunction`,只读不写内核 |
 | 内核无知 | `kernel/` 不 import `compile`/`jsrt`/`bridge`(guard 的 `go list -deps` 强制) |
 
 ## 4. 测试矩阵(M2 DoD 的 12 类 fixture)
@@ -97,16 +104,17 @@ JS 侧的 `ctx` 目前只有三个能力:
 | 缺导出 | ✅ | `jsrt.TestErrorsAreExplicit` |
 | JS 提供服务并由 Go 消费 | ✅ | `bridge.TestJSPluginRunsInKernel` |
 | JS 派发事件并由 Go 监听 | ✅ | `bridge.TestJSPluginRunsInKernel` |
-| ctx 能力未启用时报错 | ✅ | `jsrt.TestHostCallbackErrorsSurfaceInJS` |
+| 内核事件 → JS 回调 | ✅ | `jsrt.TestHostOnInvokesJSHandler`、`bridge.TestJSPluginRunsInKernel` |
+| ctx 能力未启用/参数非法时报错 | ✅ | `jsrt.TestHostCallbackErrorsSurfaceInJS`、`jsrt.TestHostOnRejectsNonFunction` |
 | CJS(`require`/`module.exports`) | ❌ | design §10 规定走离线 Bundle,M2 未做 |
 | OOM / 内存上限 | ❌ | `jsrt.Options.MemoryLimit` 已透传,未写拒绝用例 |
 | 卡死(不响应中断) | ❌ | `ErrBroken` 路径已实现,未写用例(需要不可中断的宿主函数) |
 
 ## 5. 已知边界与下一步
 
-1. **反向回调缺失**:`ctx.on`、`ctx.effect`、由 JS 实现的**服务方法**(内核 → JS 调用)都还没有。它们需要事件循环 + 调用队列:`jsrt` 已经具备「一次调用一个结果」的通道,缺的是「内核发起、JS 应答」的对称队列。
-2. **`apply` 必须同步返回**:`async apply` 返回的 Promise 尚未 await;落地时用 `moejs.PromiseResult` + 回调队列。
-3. **apply 之后不能 provide/emit**:暂存点只存在于装配期;运行期事件需要与反向回调一起设计,否则会把事件派发变成跨协程写。
+1. **`ctx.effect` 与 JS 服务方法缺失**:回调注册已经打通,但「JS 返回值参与内核决策」还没有。下一步做 **waterfall 型回调**(处理器返回改写后的值)与 **JS 服务方法**(Go 侧 `Service` 拿到 wrapper,调用转发到 worker)。
+2. **处理器里不能写内核**:`ctx.on` 的处理器只能 `log`。要在回调里 `emit`/`provide`,需要一个运行期提交队列(按调用栈回传),设计上要避免「内核等待 JS、JS 又等待内核」的环。
+3. **`apply` 必须同步返回**:`async apply` 的 Promise 尚未 await;落地时用 `moejs.PromiseResult`。
 4. **无装配层**:Artifact 目前由代码直接构造;插件清单、安装、签名、capability 属于 M3/M5。
 5. **sourcemap 未接**:`Transform` 支持产出 map,但错误堆栈还没有反查(design §10.6 / R3)。
 6. **池化与预算**:`pool: N`、内存/时间预算、熔断未做。
@@ -117,6 +125,6 @@ JS 侧的 `ctx` 目前只有三个能力:
 ```powershell
 go test -race -count=1 ./...          # 内核 + schema + compile + jsrt + bridge
 go run ./cmd/ada-demo                 # M1:纯 Go 插件装配
-go run ./cmd/ada-ts-demo              # M2:TS 插件编译→加载→提供服务/派发事件→内核消费
+go run ./cmd/ada-ts-demo              # M2:TS 插件编译→加载→提供服务/派发事件/接收内核事件
 pwsh scripts/guard.ps1                # 红线门禁(含 kernel 不依赖执行层的检查)
 ```

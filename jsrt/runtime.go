@@ -40,6 +40,9 @@ var (
 type Host struct {
 	Provide func(name string, value any) error
 	Emit    func(event string, payload any) error
+	// On 注册「内核 → JS」的回调。invoke 可以在任意 goroutine 上调用:
+	// 它会把请求投递到 worker 并在 ctx 取消时中断 JS。
+	On func(event string, invoke func(ctx context.Context, payload any) (any, error)) error
 }
 
 // Options 描述一次运行时装配。
@@ -71,6 +74,11 @@ type Runtime struct {
 	host   moejs.Value // 传给 apply 的 ctx 对象;只在 worker goroutine 上使用
 	broken bool
 	closed bool
+
+	// handlers 是 ctx.on 注册的 JS 函数。只在 worker goroutine 上读写:
+	// 注册发生在 nativeOn(worker),调用发生在 invokeOnWorker(worker)。
+	handlers map[uint64]moejs.Value
+	nextID   uint64
 }
 
 // New 装配并加载 Artifact,返回可调用的运行时。
@@ -84,11 +92,12 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		return nil, err
 	}
 	r := &Runtime{
-		art:     opts.Artifact,
-		opts:    opts,
-		jobs:    make(chan func()),
-		quit:    make(chan struct{}),
-		stopped: make(chan struct{}),
+		art:      opts.Artifact,
+		opts:     opts,
+		jobs:     make(chan func()),
+		quit:     make(chan struct{}),
+		stopped:  make(chan struct{}),
+		handlers: make(map[uint64]moejs.Value),
 	}
 	go r.worker()
 
@@ -164,6 +173,9 @@ func (r *Runtime) load() error {
 	}
 	if err := setFn("emit", r.nativeEmit(raw)); err != nil {
 		return fmt.Errorf("jsrt: 注入 ctx.emit 失败: %w", err)
+	}
+	if err := setFn("on", r.nativeOn(raw)); err != nil {
+		return fmt.Errorf("jsrt: 注入 ctx.on 失败: %w", err)
 	}
 	host := engine.ObjectValue(ctxObj)
 	// __adaCtx 只是调试入口;插件作者应该用 apply(ctx, config) 的第一个参数。
@@ -425,6 +437,98 @@ func (r *Runtime) clearInterrupt() {
 	if raw != nil {
 		raw.ClearInterrupt()
 	}
+}
+
+// nativeOn 实现 ctx.on(event, handler):把 JS 函数登记进 handlers,
+// 并把「如何调用它」交给桥接层。登记发生在 worker 上,所以 handlers 无需加锁。
+func (r *Runtime) nativeOn(raw *moejs.Runtime) moejs.NativeFunc {
+	return func(_ *engine.Realm, _ engine.Value, args []engine.Value) (engine.Value, error) {
+		if r.opts.Host.On == nil {
+			return engine.Undefined(), fmt.Errorf("ctx.on 未启用")
+		}
+		if len(args) < 2 {
+			return engine.Undefined(), fmt.Errorf("ctx.on(event, handler) 需要两个参数")
+		}
+		rawEvent, err := raw.ToGo(args[0])
+		if err != nil {
+			return engine.Undefined(), fmt.Errorf("ctx.on 的事件名无法转换: %w", err)
+		}
+		event, ok := rawEvent.(string)
+		if !ok || event == "" {
+			return engine.Undefined(), fmt.Errorf("ctx.on 的事件名必须是非空字符串")
+		}
+		if !engine.IsCallable(args[1]) {
+			return engine.Undefined(), fmt.Errorf("ctx.on 的第二个参数必须是函数")
+		}
+		r.nextID++
+		id := r.nextID
+		r.handlers[id] = args[1]
+		if err := r.opts.Host.On(event, func(ctx context.Context, payload any) (any, error) {
+			return r.invokeHandler(ctx, id, payload)
+		}); err != nil {
+			delete(r.handlers, id)
+			return engine.Undefined(), err
+		}
+		return engine.Undefined(), nil
+	}
+}
+
+// invokeHandler 调用一个 ctx.on 注册的 JS 函数;可从任意 goroutine 调用。
+func (r *Runtime) invokeHandler(ctx context.Context, id uint64, payload any) (any, error) {
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("jsrt: 事件载荷无法序列化: %w", err)
+	}
+	res := make(chan callResult, 1)
+	if err := r.enqueue(ctx, func() { res <- r.invokeOnWorker(id, b) }); err != nil {
+		return nil, err
+	}
+	select {
+	case got := <-res:
+		return got.value, got.err
+	case <-ctx.Done():
+		r.interrupt(ctx.Err())
+		select {
+		case <-res:
+			r.clearInterrupt()
+			return nil, ctx.Err()
+		case <-time.After(interruptGrace):
+			r.mu.Lock()
+			r.broken = true
+			r.mu.Unlock()
+			return nil, fmt.Errorf("%w: 事件处理器 %d 在 %s 内未响应取消", ErrBroken, id, interruptGrace)
+		}
+	}
+}
+
+func (r *Runtime) invokeOnWorker(id uint64, payload []byte) callResult {
+	r.mu.Lock()
+	raw, broken := r.raw, r.broken
+	r.mu.Unlock()
+	switch {
+	case broken:
+		return callResult{err: ErrBroken}
+	case raw == nil:
+		return callResult{err: ErrClosed}
+	}
+	fn, ok := r.handlers[id]
+	if !ok {
+		return callResult{err: fmt.Errorf("jsrt: 事件处理器 %d 不存在", id)}
+	}
+	arg, err := raw.ParseJSON(payload)
+	if err != nil {
+		return callResult{err: fmt.Errorf("jsrt: 事件载荷不是合法 JSON: %w", err)}
+	}
+	out, err := raw.CallFunction(fn, engine.Undefined(), arg)
+	if err != nil {
+		return callResult{err: r.wrap(raw, err)}
+	}
+	// 处理器的返回值对内核没有意义(emit 语义),转换失败不应让调用失败。
+	v, convErr := raw.ToGo(out)
+	if convErr != nil {
+		return callResult{value: nil}
+	}
+	return callResult{value: v}
 }
 
 // Exports 返回入口模块的导出名(排序),用于诊断与装配报告。

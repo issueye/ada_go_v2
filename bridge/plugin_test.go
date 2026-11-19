@@ -23,11 +23,17 @@ func TestJSPluginRunsInKernel(t *testing.T) {
 	art := buildArtifact(t, map[string]string{
 		"plugin.ts": `import { greet } from "./util"
 export enum Level { High = 3 }
-type Ctx = { log: (m: string) => void; provide: (n: string, v: unknown) => void; emit: (e: string, p: unknown) => void }
+type Ctx = {
+  log: (m: string) => void
+  provide: (n: string, v: unknown) => void
+  emit: (e: string, p: unknown) => void
+  on: (e: string, h: (p: any) => void) => void
+}
 export function apply(ctx: Ctx, cfg: { name: string }) {
   ctx.log(greet(cfg.name))
   ctx.provide("ts.greeting", { text: greet(cfg.name), level: Level.High })
   ctx.emit("ts/ready", { name: cfg.name })
+  ctx.on("ts/ping", (p) => ctx.log("ping:" + p.n))
 }`,
 		"util.ts": `export function greet(name: string): string { return "hello, " + name }`,
 	})
@@ -84,7 +90,10 @@ export function apply(ctx: Ctx, cfg: { name: string }) {
 	if eventPayload == nil {
 		t.Fatalf("JS 侧 emit 的事件没有派发")
 	}
-	if logs := p.Logs(); len(logs) != 1 || logs[0] != "hello, ada" {
+	// 反向回调:内核派发事件 → JS 处理器在 worker 上执行。
+	a.Root().Emit("ts/ping", map[string]any{"n": 1})
+	logs := p.Logs()
+	if len(logs) != 2 || logs[0] != "hello, ada" || logs[1] != "ping:1" {
 		t.Fatalf("JS 日志不正确: %v", logs)
 	}
 
