@@ -22,15 +22,11 @@ import (
 // PluginName 是插件 id。
 const PluginName = "agent-loop"
 
-// DefaultMaxSteps 是一轮内最多的「模型 → 工具」步数。
-const DefaultMaxSteps = 8
-
 // DefaultMaxParallelTools 是同一步内并行工具的上限。
 const DefaultMaxParallelTools = 4
 
 type config struct {
 	Model         string `json:"model,omitempty"`
-	MaxSteps      int    `json:"maxSteps,omitempty"`
 	MaxTokens     int    `json:"maxTokens,omitempty"`
 	PromptBudget  int    `json:"promptBudget,omitempty"`
 	ContextBudget int    `json:"contextBudget,omitempty"`
@@ -96,11 +92,9 @@ func (a *Agent) Run(ctx context.Context, sess session.Session, userText string) 
 	}
 
 	res := TurnResult{TurnID: turn.ID}
-	maxSteps := a.conf.MaxSteps
-	if maxSteps <= 0 {
-		maxSteps = DefaultMaxSteps
-	}
-	for step := 1; step <= maxSteps; step++ {
+	// 不设步数上限:由模型「不再调用工具」、工具返回 Terminate、上下文取消/报错等
+	// 自然结束。调用方必须通过 ctx 超时或取消承担兜底责任。
+	for step := 1; ; step++ {
 		if err := ctx.Err(); err != nil {
 			return a.abort(sess, turn, res, err)
 		}
@@ -198,7 +192,6 @@ func (a *Agent) Run(ctx context.Context, sess session.Session, userText string) 
 			return a.finish(sess, turn, res)
 		}
 	}
-	return a.finish(sess, turn, res)
 }
 
 type toolOutcome struct {

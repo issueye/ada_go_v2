@@ -3,6 +3,7 @@ package agentloop_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -205,7 +206,7 @@ func TestParallelTools(t *testing.T) {
 		"models":       []llm.ModelInfo{{ID: "replay", ContextWindow: 8192}},
 		"defaultModel": "replay",
 	})
-	mount("agent-loop", map[string]any{"model": "replay", "maxSteps": 3, "maxParallelTools": 2})
+	mount("agent-loop", map[string]any{"model": "replay", "maxParallelTools": 2})
 
 	raw, err := app.Root().Service("agent")
 	if err != nil {
@@ -230,6 +231,89 @@ func TestParallelTools(t *testing.T) {
 	close(release)
 	if err := <-done; err != nil {
 		t.Fatalf("并行执行失败: %v", err)
+	}
+}
+
+// 没有步数上限:模型连续调用工具超过旧的 8 步仍能继续,直到模型自己停止。
+func TestNoStepLimit(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	app := kernel.New(kernel.Options{})
+	defer func() { _ = app.Stop(ctx) }()
+	mount := func(id string, cfg map[string]any) {
+		t.Helper()
+		mk := builtins.Plugins()[id]
+		if mk == nil {
+			t.Fatalf("内置插件缺失: %s", id)
+		}
+		f, err := app.Plugin(mk(), kernel.NewConfig(cfg))
+		if err != nil {
+			t.Fatalf("挂载 %s 失败: %v", id, err)
+		}
+		if err := f.Ready(ctx); err != nil {
+			t.Fatalf("等待 %s 就绪失败: %v", id, err)
+		}
+	}
+	noop := kernel.Func("noop-tools", func(ctx *kernel.Context, _ kernel.Config) (kernel.Dispose, error) {
+		reg, err := kernel.Service[*tools.Registry](ctx, "tools")
+		if err != nil {
+			return nil, err
+		}
+		return reg.Register(tools.ToolDef{
+			Name: "noop",
+			Handler: func(context.Context, tools.CallInfo) (tools.Result, error) {
+				return tools.Result{Status: tools.StatusOK, Content: []llm.Block{{Kind: llm.BlockText, Text: "ok"}}}, nil
+			},
+		})
+	}).WithInject("tools")
+
+	steps := make([]replay.Step, 0, 11)
+	for i := 0; i < 10; i++ {
+		steps = append(steps, replay.Step{Response: llm.Response{
+			Message:   llm.Message{Role: llm.RoleAssistant, Content: []llm.Block{{Kind: llm.BlockText, Text: "step"}}},
+			ToolCalls: []llm.ToolCall{{ID: fmt.Sprintf("c%d", i), Name: "noop"}},
+			Finish:    llm.FinishToolCalls,
+		}})
+	}
+	steps = append(steps, replay.Step{Response: llm.Response{
+		Message: llm.Message{Role: llm.RoleAssistant, Content: []llm.Block{{Kind: llm.BlockText, Text: "done"}}},
+		Finish:  llm.FinishStop,
+	}})
+
+	mount("seam-session", nil)
+	mount("session-memory", nil)
+	mount("seam-prompts", nil)
+	mount("seam-tools", nil)
+	fiber, err := app.Plugin(noop, kernel.NewConfig(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fiber.Ready(ctx); err != nil {
+		t.Fatal(err)
+	}
+	mount("seam-llm", nil)
+	mount("llm-replay", map[string]any{
+		"steps":        steps,
+		"models":       []llm.ModelInfo{{ID: "replay", ContextWindow: 8192}},
+		"defaultModel": "replay",
+	})
+	mount("agent-loop", map[string]any{"model": "replay"})
+
+	raw, err := app.Root().Service("agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ag := raw.(*agentloop.Agent)
+	sess, err := ag.Open(ctx, session.Meta{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := ag.Run(ctx, sess, "keep going")
+	if err != nil {
+		t.Fatalf("无限步运行失败: %v", err)
+	}
+	if res.Steps != 11 || res.ToolCalls != 10 || res.Text != "done" {
+		t.Fatalf("步数/工具/结束不正确: %+v", res)
 	}
 }
 
@@ -284,7 +368,7 @@ func TestTurnWithReplayAndTool(t *testing.T) {
 	mount("seam-fs", nil)
 	mount("fs-local", map[string]any{"workspace": workspace})
 	mount("tool-fs", nil)
-	mount("agent-loop", map[string]any{"model": "replay", "maxSteps": 4})
+	mount("agent-loop", map[string]any{"model": "replay"})
 
 	raw, err := app.Root().Service("agent")
 	if err != nil {

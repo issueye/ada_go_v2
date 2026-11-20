@@ -5,5 +5,5 @@
   "kind": "go",
   "provide": ["agent"],
   "inject": {"required": ["session", "prompts", "llm", "tools"]},
-  "config": {"model": "replay", "maxSteps": 4}
+  "config": {"model": "replay"}
 }

@@ -3,7 +3,7 @@
   "plugins": ["plugins"],
   "disable": ["llm-openai", "session-memory"],
   "patch": {
-    "agent-loop": {"model": "replay", "maxSteps": 4},
+    "agent-loop": {"model": "replay"},
     "session-jsonl": {"dir": "examples/agent/sessions", "sync": true}
   }
 }
