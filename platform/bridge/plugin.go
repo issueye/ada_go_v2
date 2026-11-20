@@ -24,6 +24,7 @@ import (
 	"github.com/issueye/ada_go_v2/platform/jsrt"
 	"github.com/issueye/ada_go_v2/platform/kernel"
 	"github.com/issueye/ada_go_v2/platform/kernel/schema"
+	seamfs "github.com/issueye/ada_go_v2/plugins/seam/fs"
 	"github.com/issueye/ada_go_v2/plugins/seam/llm"
 	"github.com/issueye/ada_go_v2/plugins/seam/shell"
 	"github.com/issueye/ada_go_v2/plugins/seam/tools"
@@ -233,17 +234,24 @@ func (p *Plugin) Apply(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, 
 	if v, ok := ctx.TryService("shell"); ok {
 		shellChain, _ = v.(*shell.Chain)
 	}
-	var injected *moejs.Module
+	var fsChain *seamfs.Chain
+	if v, ok := ctx.TryService("fs"); ok {
+		fsChain, _ = v.(*seamfs.Chain)
+	}
+	modules := map[string]*moejs.Module{}
 	if shellChain != nil {
-		var cerr error
-		injected, cerr = moejs.Compile("ada:shell", "const host = globalThis.__adaHost;\nexport function run(program, args, dir) { return host.shell(program, args, dir); }\n")
+		m, cerr := moejs.Compile("ada:shell", "const host = globalThis.__adaHost;\nexport function run(program, args, dir) { return host.shell(program, args, dir); }\n")
 		if cerr != nil {
 			return nil, kernel.Wrap(kernel.CodeInvalid, cerr, "JS 插件 %s 注入模块编译失败", p.opts.Name)
 		}
+		modules["ada:shell"] = m
 	}
-	modules := map[string]*moejs.Module{}
-	if injected != nil {
-		modules["ada:shell"] = injected
+	if fsChain != nil {
+		m, cerr := moejs.Compile("ada:fs", "const host = globalThis.__adaHost;\nexport function read(path) { return host.fs.read(path); }\nexport function write(path, content, createDirs) { return host.fs.write(path, content, createDirs); }\n")
+		if cerr != nil {
+			return nil, kernel.Wrap(kernel.CodeInvalid, cerr, "JS 插件 %s 注入模块编译失败", p.opts.Name)
+		}
+		modules["ada:fs"] = m
 	}
 	rt, err := jsrt.New(actx, jsrt.Options{
 		Artifact: p.opts.Artifact,
@@ -278,6 +286,33 @@ func (p *Plugin) Apply(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, 
 					return "", fmt.Errorf("命令退出码 %d: %s", res.ExitCode, text)
 				}
 				return text, nil
+			},
+			FSRead: func(fctx context.Context, path string) (string, error) {
+				if fsChain == nil {
+					return "", fmt.Errorf("fs 服务不可用")
+				}
+				impl, err := fsChain.Get()
+				if err != nil {
+					return "", err
+				}
+				res, err := impl.Read(fctx, seamfs.ReadRequest{Path: seamfs.Path(path)})
+				if err != nil {
+					return "", err
+				}
+				return res.Content, nil
+			},
+			FSWrite: func(fctx context.Context, path, content string, createDirs bool) error {
+				if fsChain == nil {
+					return fmt.Errorf("fs 服务不可用")
+				}
+				impl, err := fsChain.Get()
+				if err != nil {
+					return err
+				}
+				_, err = impl.Write(fctx, seamfs.WriteRequest{
+					Path: seamfs.Path(path), Content: []byte(content), CreateDirs: createDirs,
+				})
+				return err
 			},
 			Tool: func(name, summary string, input map[string]any, readOnly bool, invoke func(ctx context.Context, args any) (any, error)) error {
 				if toolsReg == nil {

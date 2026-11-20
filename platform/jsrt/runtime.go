@@ -104,6 +104,9 @@ type Host struct {
 	Shell func(ctx context.Context, program string, args []string, dir string) (string, error)
 	// Tool 是 JS 侧 ctx.tool(spec, handler) 的宿主实现;invoke 在工具被调用时执行 JS handler。
 	Tool func(name, summary string, input map[string]any, readOnly bool, invoke func(ctx context.Context, args any) (any, error)) error
+	// FSRead/FSWrite 是注入模块 ada:fs 的宿主实现。
+	FSRead  func(ctx context.Context, path string) (string, error)
+	FSWrite func(ctx context.Context, path, content string, createDirs bool) error
 }
 
 // ErrReentrant 表示同一运行时在自己的回调链里被再次调用。
@@ -294,6 +297,22 @@ func (r *Runtime) load() error {
 			return fmt.Errorf("jsrt: 注入 __adaHost.shell 失败: %w", err)
 		}
 	}
+	if r.opts.Host.FSRead != nil || r.opts.Host.FSWrite != nil {
+		fsObj := realm.NewObject()
+		if r.opts.Host.FSRead != nil {
+			if err := fsObj.SetProp(realm, realm.KeyFromGoString("read"), raw.Function("read", 1, r.nativeFSRead(raw))); err != nil {
+				return fmt.Errorf("jsrt: 注入 __adaHost.fs.read 失败: %w", err)
+			}
+		}
+		if r.opts.Host.FSWrite != nil {
+			if err := fsObj.SetProp(realm, realm.KeyFromGoString("write"), raw.Function("write", 3, r.nativeFSWrite(raw))); err != nil {
+				return fmt.Errorf("jsrt: 注入 __adaHost.fs.write 失败: %w", err)
+			}
+		}
+		if err := hostObj.SetProp(realm, realm.KeyFromGoString("fs"), engine.ObjectValue(fsObj)); err != nil {
+			return fmt.Errorf("jsrt: 注入 __adaHost.fs 失败: %w", err)
+		}
+	}
 	if err := realm.Global.SetProp(realm, realm.KeyFromGoString("__adaHost"), engine.ObjectValue(hostObj)); err != nil {
 		return fmt.Errorf("jsrt: 注入 __adaHost 失败: %w", err)
 	}
@@ -448,6 +467,59 @@ func (r *Runtime) nativeShell(raw *moejs.Runtime) moejs.NativeFunc {
 			return engine.Undefined(), err
 		}
 		return raw.FromGo(out)
+	}
+}
+
+// nativeFSRead 实现 __adaHost.fs.read(path)。
+func (r *Runtime) nativeFSRead(raw *moejs.Runtime) moejs.NativeFunc {
+	return func(_ *engine.Realm, _ engine.Value, args []engine.Value) (engine.Value, error) {
+		if r.opts.Host.FSRead == nil {
+			return engine.Undefined(), fmt.Errorf("fs.read 未启用")
+		}
+		if len(args) < 1 {
+			return engine.Undefined(), fmt.Errorf("fs.read(path) 需要路径")
+		}
+		p, err := toString(raw, args[0])
+		if err != nil || p == "" {
+			return engine.Undefined(), fmt.Errorf("fs.read 路径必须是非空字符串")
+		}
+		out, err := r.opts.Host.FSRead(context.Background(), p)
+		if err != nil {
+			return engine.Undefined(), err
+		}
+		return raw.FromGo(out)
+	}
+}
+
+// nativeFSWrite 实现 __adaHost.fs.write(path, content, createDirs)。
+func (r *Runtime) nativeFSWrite(raw *moejs.Runtime) moejs.NativeFunc {
+	return func(_ *engine.Realm, _ engine.Value, args []engine.Value) (engine.Value, error) {
+		if r.opts.Host.FSWrite == nil {
+			return engine.Undefined(), fmt.Errorf("fs.write 未启用")
+		}
+		if len(args) < 2 {
+			return engine.Undefined(), fmt.Errorf("fs.write(path, content, createDirs) 需要路径与内容")
+		}
+		p, err := toString(raw, args[0])
+		if err != nil || p == "" {
+			return engine.Undefined(), fmt.Errorf("fs.write 路径必须是非空字符串")
+		}
+		content, err := toString(raw, args[1])
+		if err != nil {
+			return engine.Undefined(), fmt.Errorf("fs.write 内容必须是字符串")
+		}
+		createDirs := true
+		if len(args) > 2 {
+			if v, convErr := raw.ToGo(args[2]); convErr == nil {
+				if b, ok := v.(bool); ok {
+					createDirs = b
+				}
+			}
+		}
+		if err := r.opts.Host.FSWrite(context.Background(), p, content, createDirs); err != nil {
+			return engine.Undefined(), err
+		}
+		return engine.Undefined(), nil
 	}
 }
 

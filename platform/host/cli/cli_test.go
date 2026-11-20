@@ -685,3 +685,51 @@ func TestAgentGitScriptPlugin(t *testing.T) {
 		t.Fatalf("脚本插件运行失败: code=%d err=%s out=%s", code, errOut, out)
 	}
 }
+
+// 33. 脚本插件 task-helper + 注入 ada:fs 装配。
+func TestUpTaskScriptPlugin(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir("../../.."); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	code, out, errOut := run("up", "--preset", "examples/task-ts/task.preset.json")
+	if code != 0 || !strings.Contains(out, "task-helper") {
+		t.Fatalf("task-helper 装配失败: code=%d err=%s out=%s", code, errOut, out)
+	}
+}
+
+// 34. 脚本插件 task-helper:真实工具调用(add → list,经 ada:fs 持久化)。
+func TestAgentTaskScriptPlugin(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir("../../.."); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	workspace := t.TempDir()
+	f, err := os.CreateTemp("examples/task-ts", "test-*.preset.json")
+	if err != nil {
+		t.Fatalf("创建临时 preset 失败: %v", err)
+	}
+	preset := f.Name()
+	_ = f.Close()
+	t.Cleanup(func() { _ = os.Remove(preset) })
+	body := `{"name":"task-test","plugins":["../agent/plugins","plugins"],"disable":["llm-openai","session-jsonl"],"patch":{"agent-loop":{"model":"replay"},"llm-replay":{"path":"examples/task-ts/replay.jsonl"},"fs-local":{"workspace":"` + strings.ReplaceAll(workspace, `\`, `\\`) + `"}}}`
+	if err := os.WriteFile(preset, []byte(body), 0o644); err != nil {
+		t.Fatalf("写临时 preset 失败: %v", err)
+	}
+	code, out, errOut := run("agent", "--preset", preset, "-message", "添加任务并列出")
+	if code != 0 || !strings.Contains(out, "任务已添加并列出") {
+		t.Fatalf("task-helper 运行失败: code=%d err=%s out=%s", code, errOut, out)
+	}
+	data, err := os.ReadFile(workspace + "/.ada/tasks.json")
+	if err != nil || !strings.Contains(string(data), "验证脚本插件") {
+		t.Fatalf("任务文件不正确: %v %s", err, data)
+	}
+}
