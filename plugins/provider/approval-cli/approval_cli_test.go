@@ -65,7 +65,25 @@ func TestTimeout(t *testing.T) {
 	}
 }
 
-// 5. 插件注册到 approval 服务。
+// 5.1 提示中的 URL target 去掉 query/userinfo。
+func TestPromptRedacted(t *testing.T) {
+	var out bytes.Buffer
+	a := approvalcli.NewApprover(strings.NewReader("n\n"), &out)
+	if _, err := a.Approve(context.Background(), seamapproval.Request{
+		ID: "r1", Source: "net", Op: "GET",
+		Target: "https://user:pass@example.com/x?token=SECRET",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "SECRET") || strings.Contains(out.String(), "pass@") {
+		t.Fatalf("审批提示未脱敏: %s", out.String())
+	}
+	if !strings.Contains(out.String(), "REDACTED") {
+		t.Fatalf("审批提示缺少 REDACTED: %s", out.String())
+	}
+}
+
+// 6. 插件注册到 approval 服务。
 func TestPluginRegistration(t *testing.T) {
 	app := kernel.New(kernel.Options{})
 	t.Cleanup(func() { _ = app.Stop(context.Background()) })

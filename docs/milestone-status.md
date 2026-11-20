@@ -2,7 +2,7 @@
 
 > 本文件把里程碑验收项映射到**实现位置、证据命令与已知边界**。口径来源:
 > [plugin-kernel-design.md](plugin-kernel-design.md) §17、AGENTS §10。
-> 最近更新:2026-11-20(441 个 Test + 4 个 Benchmark;不做 v1 插件迁移)。
+> 最近更新:2026-11-20(444 个 Test + 4 个 Benchmark;不做 v1 插件迁移)。
 
 ## 0. 结论速览
 
@@ -86,7 +86,7 @@ go run ./cmd/ada inspect --chain --preset examples/agent/agent.preset.json
 
 当前实测:
 
-- 测试 **441 个 Test + 4 个 Benchmark**,`go test -race ./...` 全绿;
+- 测试 **444 个 Test + 4 个 Benchmark**,`go test -race ./...` 全绿;
 - kernel 生产 **2396 / 3000** 行;
 - host 生产 **2298 / 2500**(cli 1410 / 1500,其它最大 408 / 800);
 - bench:ServiceResolve 58ns、Emit 1.61μs、waterfall 5.55μs、50 插件 348μs;
@@ -97,6 +97,6 @@ go run ./cmd/ada inspect --chain --preset examples/agent/agent.preset.json
 1. **OS 级沙箱强制**(landlock/seatbelt/Job Object 级 fs/shell):当前只有 policy-only;
 2. **真实桌面窗口(mygo)**:只有 Renderer/View/Subscribe/OpenPage 骨架;
 3. **M4.5 基础已落地**;剩余摘要质量评估、检查点持久化与 `core/agent` 拆分;
-4. **安全 P0 缺口**:审批/审计通用脱敏、连接级 IP 校验。
+4. **安全 P0 缺口**:连接级 IP 校验(TOCTOU)。
 
 前两项记录在 [ADR 0001](adr/0001-deferred-m5-scope.md),复议日期 2027-01-15;在此之前 **不得宣称 M5 完成**。

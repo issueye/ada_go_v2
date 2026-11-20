@@ -2,6 +2,7 @@ package approval_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -183,5 +184,16 @@ func TestRequestedEvent(t *testing.T) {
 
 	if payload == nil || payload["id"] != "r1" || payload["plugin"] != "consumer" {
 		t.Fatalf("requested payload 不正确: %+v", payload)
+	}
+}
+
+// 5. 审批 target 的 URL query/userinfo 在提示与事件里脱敏。
+func TestRedactTarget(t *testing.T) {
+	got := seamapproval.RedactTarget("https://user:pass@example.com/x?token=SECRET#frag")
+	if strings.Contains(got, "SECRET") || strings.Contains(got, "pass") || !strings.Contains(got, "REDACTED") {
+		t.Fatalf("target 未脱敏: %q", got)
+	}
+	if got := seamapproval.RedactTarget("/workspace/a"); got != "/workspace/a" {
+		t.Fatalf("非 URL 目标不应改变: %q", got)
 	}
 }

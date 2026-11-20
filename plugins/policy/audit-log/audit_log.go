@@ -79,7 +79,7 @@ func Plugin() kernel.Plugin {
 			mu.Lock()
 			defer mu.Unlock()
 			data, err := json.Marshal(record{
-				TS: time.Now().UTC().Format(time.RFC3339Nano), Event: event, Payload: payload,
+				TS: time.Now().UTC().Format(time.RFC3339Nano), Event: event, Payload: redactPayload(payload),
 			})
 			if err != nil {
 				return

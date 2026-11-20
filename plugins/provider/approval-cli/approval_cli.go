@@ -44,7 +44,7 @@ func (a *Approver) Approve(ctx context.Context, req approval.Request) (approval.
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	fmt.Fprintf(a.out, "审批请求: %s %s %s (%s)\n允许吗? [y/N] ", req.Source, req.Op, req.Target, req.Reason)
+	fmt.Fprintf(a.out, "审批请求: %s %s %s (%s)\n允许吗? [y/N] ", req.Source, req.Op, approval.RedactTarget(req.Target), req.Reason)
 
 	type readResult struct {
 		line string

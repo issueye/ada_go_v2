@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"sort"
 	"sync"
 	"time"
@@ -148,7 +149,7 @@ func Plugin() kernel.Plugin {
 		registry.SetNotifier(func(callCtx context.Context, req Request) {
 			payload := map[string]any{
 				"id": req.ID, "source": req.Source, "op": req.Op,
-				"target": req.Target, "reason": req.Reason,
+				"target": RedactTarget(req.Target), "reason": req.Reason,
 			}
 			if id, ok := kernel.Principal(callCtx); ok {
 				payload["plugin"] = id
@@ -194,6 +195,21 @@ func Ask(ctx context.Context, registry *Registry, backend string, req Request) (
 		dec.Approver = approver.Name()
 	}
 	return dec, nil
+}
+
+// RedactTarget 去掉 URL target 的 userinfo、fragment 与 query,避免 secret 进入审批提示/审计。
+// 非 URL 目标(文件路径/工具名)原样返回。
+func RedactTarget(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" {
+		return raw
+	}
+	u.User = nil
+	u.Fragment = ""
+	if u.RawQuery != "" {
+		u.RawQuery = "REDACTED"
+	}
+	return u.String()
 }
 
 // Describe 便于日志。

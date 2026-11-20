@@ -145,7 +145,32 @@ func TestApprovalDecided(t *testing.T) {
 	}
 }
 
-// 7. caps 拒绝经 caps-static 的 Broker 回调落盘,并脱敏 URL target。
+// 8. 观察/审批 payload 的敏感 key 与 URL query 统一脱敏。
+func TestRedactsPayload(t *testing.T) {
+	path := t.TempDir() + "/audit.jsonl"
+	app := kernel.New(kernel.Options{})
+	t.Cleanup(func() { _ = app.Stop(context.Background()) })
+	if _, err := app.Plugin(auditlog.Plugin(), kernel.NewConfig(map[string]any{"path": path})); err != nil {
+		t.Fatalf("挂载失败: %v", err)
+	}
+	app.Root().Emit(auditlog.EventApprovalDecided, map[string]any{
+		"target":  "https://user:pass@example.com/x?token=SECRET",
+		"headers": map[string]any{"Authorization": "Bearer SECRET"},
+		"nested":  map[string]any{"apiKey": "SECRET", "ok": "keep"},
+		"reason":  "fetch https://example.com/y?token=SECRET failed",
+	})
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("读审计文件失败: %v", err)
+	}
+	if strings.Contains(string(data), "SECRET") || strings.Contains(string(data), "pass") {
+		t.Fatalf("审计 payload 未脱敏: %s", data)
+	}
+	if !strings.Contains(string(data), "REDACTED") || !strings.Contains(string(data), `"ok":"keep"`) {
+		t.Fatalf("脱敏结果不正确: %s", data)
+	}
+}
+
 func TestCapsDeny(t *testing.T) {
 	path := t.TempDir() + "/audit.jsonl"
 	app := kernel.New(kernel.Options{})

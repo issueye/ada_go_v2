@@ -28,6 +28,7 @@ fs-sandbox / shell-guard ──可选 inject "approval"──▶ 拒绝时 Ask()
 | 类型/函数 | 说明 |
 |---|---|
 | `Request` | `Source` / `Op` / `Target` / `Reason` / `Details` / `Timeout` |
+| `RedactTarget` | URL target 去掉 userinfo/fragment/query;非 URL 路径原样 |
 | `Decision` | `Allow` / `Reason`(必须可展示) / `Approver` |
 | `Approver` | `Name()` + `Approve(ctx, Request)` |
 | `Registry` | 按名注册;默认取名字排序第一个;没有审批人 → 错误 |
@@ -41,7 +42,7 @@ fs-sandbox / shell-guard ──可选 inject "approval"──▶ 拒绝时 Ask()
   挂起的审批人不能阻塞调用方。
 - **升级触发点**:fs 在 sandbox `Escalatable` 时问审批;shell 在「shell 门拒绝 / 只读白名单拒绝」时问审批。
   不可升级的拒绝直接拒绝,不打扰审批人。
-- **事件**:调用审批人**之前**发 `approval/requested`(id/source/op/target/reason/plugin),完成后发 `approval/decided`(source/op/target/allow/approver/reason);
+- **事件**:调用审批人**之前**发 `approval/requested`(id/source/op/target/reason/plugin;target 已脱敏),完成后发 `approval/decided`(source/op/target/allow/approver/reason);
   只观察、不阻断。
 - **批准即放行本次操作**(policy-only 后端下等价于临时提升);OS 级后端需要重新施加约束,尚未实现。
 
@@ -73,10 +74,11 @@ fs-sandbox / shell-guard ──可选 inject "approval"──▶ 拒绝时 Ask()
 | 默认审批人永远拒绝 + 内核装配 + 无审批人 | `approvaldeny.TestAlwaysDenies`、`TestKernelIntegration`、`TestNoApprover` |
 | fs 升级审批:允许放行 / 拒绝 / 缺失 | `fssandbox.TestApprovalEscalation` |
 | shell 升级审批:允许放行 / 拒绝 | `shellguard.TestShellApproval` |
+| URL target 脱敏 | `approval.TestRedactTarget`、`approvalcli.TestPromptRedacted` |
 
 ## 6. 下一步
 
-1. 审计字段补全会话 id 与目标摘要;net 来源的 target 已脱敏,fs/shell 的通用 target 仍按原样进入审批/审计。
+1. 审计字段补全会话 id 与目标摘要;URL target 已在提示/事件/审计中脱敏,非 URL 路径保持原样。
 2. `core/approval` 桌面 UI 审批人;CLI 审批人已由 `provider/approval-cli` 提供。
 3. `policy/approval-gate` 已接到 `tools/pre-execute`;caps 已由 `caps-gate`/`net-guard` 独立强制。
 4. 审批人路由(按 op/来源);批量审批与会话级「记住本次决定」。

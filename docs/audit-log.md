@@ -8,7 +8,7 @@
 plugins/policy/audit-log/   把观察/审批事件追加为 JSONL 文件
 ```
 
-它只做「落盘 + 大小轮转」:不脱敏、不上报、不阻断。
+它做「落盘 + 大小轮转 + payload 通用脱敏」:不上报、不阻断。
 
 ## 2. 事件
 
@@ -44,13 +44,15 @@ plugins/policy/audit-log/   把观察/审批事件追加为 JSONL 文件
 - `auditlog.TestMissingPath`:缺 `path` 插件失败;
 - `auditlog.TestApprovalDecided`:`approval/decided` 落盘;
 - `auditlog.TestCapsDeny`:`caps/deny` 落盘且 URL target 已脱敏;
+- `auditlog.TestRedactsPayload`:敏感 key/URL query 通用脱敏;
 - `auditlog.TestRotation`:小阈值触发轮转、keep 保留正确;
 - `auditlog.TestRotationInvalid`:负 maxBytes 失败。
 
 ## 5. 偏差与边界
 
-1. **观察事件不脱敏**:依赖观察事件本身不含 body/secret;`caps/deny` 的 URL target 已在
-   `caps.RedactTarget` 去掉 userinfo/query,但其它 payload 仍按原样落盘。
+1. **payload 通用脱敏**:敏感 key(`authorization`/`token`/`secret`/`password` 等)置
+   `REDACTED`;URL 类 key 与文本中的 http(s) URL 去掉 userinfo/fragment/query。
+   非 URL 的路径/工具名保持原样。
 2. **有大小轮转、无按天轮转/压缩**:`maxBytes` 达到后移位并丢弃最旧;没有保留期与压缩。
 3. **写入失败静默**:磁盘满/权限错误不会阻断业务,也没有错误上报。
 4. **没有 fsync**:崩溃可能丢最后几行。
@@ -61,8 +63,7 @@ plugins/policy/audit-log/   把观察/审批事件追加为 JSONL 文件
 
 1. 按天轮转与保留期(按大小轮转已实现);
 2. `fsync` 策略与失败计数;
-3. 标准审计 schema(会话 id/调用链)与远程 sink;
-4. 观察/审批 payload 的通用脱敏;caps 拒绝已接。
+3. 标准审计 schema(会话 id/调用链)与远程 sink。
 
 ## 7. 验证命令
 
