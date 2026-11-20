@@ -24,7 +24,9 @@ func Plugin() kernel.Plugin {
 		if err := cfg.Decode(&conf); err != nil {
 			return nil, kernel.Fail(kernel.CodeInvalid, "caps-static: 解析 grants 失败: %v", err)
 		}
-		broker := caps.NewBroker(nil)
+		broker := caps.NewBroker(func(d caps.Deny) {
+			ctx.Emit(caps.EventDeny, d)
+		})
 		for plugin, list := range conf.Grants {
 			if err := broker.Grant(plugin, list...); err != nil {
 				return nil, kernel.Fail(kernel.CodeInvalid, "caps-static: 授予 %q 失败: %v", plugin, err)

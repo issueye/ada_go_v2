@@ -8,8 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/adag/ada-go/v2/platform/caps"
 	"github.com/adag/ada-go/v2/platform/kernel"
 	auditlog "github.com/adag/ada-go/v2/plugins/policy/audit-log"
+	capsstatic "github.com/adag/ada-go/v2/plugins/provider/caps-static"
 	seamfs "github.com/adag/ada-go/v2/plugins/seam/fs"
 	seamnet "github.com/adag/ada-go/v2/plugins/seam/net"
 	seamshell "github.com/adag/ada-go/v2/plugins/seam/shell"
@@ -140,5 +142,39 @@ func TestApprovalDecided(t *testing.T) {
 	}
 	if !strings.Contains(string(data), auditlog.EventApprovalDecided) {
 		t.Fatalf("缺少 approval/decided 记录: %s", data)
+	}
+}
+
+// 7. caps 拒绝经 caps-static 的 Broker 回调落盘,并脱敏 URL target。
+func TestCapsDeny(t *testing.T) {
+	path := t.TempDir() + "/audit.jsonl"
+	app := kernel.New(kernel.Options{})
+	t.Cleanup(func() { _ = app.Stop(context.Background()) })
+	if _, err := app.Plugin(auditlog.Plugin(), kernel.NewConfig(map[string]any{"path": path})); err != nil {
+		t.Fatalf("挂载 audit-log 失败: %v", err)
+	}
+	if _, err := app.Plugin(capsstatic.Plugin(), kernel.NewConfig(map[string]any{})); err != nil {
+		t.Fatalf("挂载 caps-static 失败: %v", err)
+	}
+	raw, err := app.Root().Service("caps")
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker, ok := raw.(*caps.Broker)
+	if !ok {
+		t.Fatalf("caps 服务类型不对: %T", raw)
+	}
+	if err := broker.Grant("p", "fs.read"); err != nil {
+		t.Fatal(err)
+	}
+	if err := broker.Authorize(context.Background(), "p", "fs.write", "https://example.com/x?token=SECRET"); err == nil {
+		t.Fatalf("未授权应拒绝")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("读审计文件失败: %v", err)
+	}
+	if !strings.Contains(string(data), caps.EventDeny) || strings.Contains(string(data), "SECRET") {
+		t.Fatalf("caps 拒绝审计不正确: %s", data)
 	}
 }

@@ -230,7 +230,7 @@ func Plugin() kernel.Plugin {
 		if err := cfg.Decode(&conf); err != nil {
 			return nil, kernel.Fail(kernel.CodeInvalid, "net-guard: 解析配置失败: %v", err)
 		}
-		broker := caps.NewBroker(nil)
+		broker := caps.NewBroker(func(d caps.Deny) { ctx.Emit(caps.EventDeny, d) })
 		fromService := false
 		if v, ok := ctx.TryService("caps"); ok {
 			if b, ok := v.(*caps.Broker); ok {

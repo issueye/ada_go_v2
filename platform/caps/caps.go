@@ -7,6 +7,7 @@ package caps
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -198,10 +199,29 @@ func IsDenied(err error) bool {
 
 // Deny 是一条拒绝审计记录。
 type Deny struct {
-	Plugin string
-	Cap    string
-	Target string
-	At     time.Time
+	Plugin string    `json:"plugin"`
+	Cap    string    `json:"cap"`
+	Target string    `json:"target,omitempty"`
+	Reason string    `json:"reason,omitempty"`
+	At     time.Time `json:"at"`
+}
+
+// EventDeny 是能力拒绝的观察事件名;audit-log 等观察者订阅它。
+const EventDeny = "caps/deny"
+
+// RedactTarget 去掉 URL 目标的 userinfo、fragment 与 query,避免 secret 进入审计。
+// 非 URL 目标(如 fs 路径、secret 名)原样返回。
+func RedactTarget(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" {
+		return raw
+	}
+	u.User = nil
+	u.Fragment = ""
+	if u.RawQuery != "" {
+		u.RawQuery = "REDACTED"
+	}
+	return u.String()
 }
 
 // Broker 是能力授权表:插件 id → 能力集合。
@@ -258,6 +278,9 @@ func (b *Broker) Has(plugin string, c Cap, target string) bool {
 func (b *Broker) Authorize(ctx context.Context, plugin, spec, target string) error {
 	c, err := Parse(spec)
 	if err != nil {
+		target = RedactTarget(target)
+		b.audit(Deny{Plugin: plugin, Cap: spec, Target: target,
+			Reason: "能力名非法: " + err.Error(), At: time.Now()})
 		return &DeniedError{Plugin: plugin, Cap: Cap(spec), Target: target, Reason: "能力名非法: " + err.Error()}
 	}
 	return b.AuthorizeCap(ctx, plugin, c, target)
@@ -268,18 +291,25 @@ func (b *Broker) AuthorizeCap(_ context.Context, plugin string, c Cap, target st
 	if b.Has(plugin, c, target) {
 		return nil
 	}
-	b.audit(Deny{Plugin: plugin, Cap: string(c), Target: target, At: time.Now()})
+	target = RedactTarget(target)
+	b.audit(Deny{Plugin: plugin, Cap: string(c), Target: target,
+		Reason: "能力未授予", At: time.Now()})
 	return &DeniedError{Plugin: plugin, Cap: c, Target: target, Reason: "能力未授予"}
 }
 
 // AuthorizeWithTrust 额外检查信任等级是否足以持有该能力。
 func (b *Broker) AuthorizeWithTrust(ctx context.Context, plugin string, c Cap, target string, trust Trust) error {
 	if !ValidTrust(trust) {
+		target = RedactTarget(target)
+		b.audit(Deny{Plugin: plugin, Cap: string(c), Target: target,
+			Reason: "信任等级非法", At: time.Now()})
 		return &DeniedError{Plugin: plugin, Cap: c, Target: target, Reason: "信任等级非法"}
 	}
 	if !AllowedByTrust(c, trust) {
-		b.audit(Deny{Plugin: plugin, Cap: string(c), Target: target, At: time.Now()})
-		return &DeniedError{Plugin: plugin, Cap: c, Target: target, Reason: fmt.Sprintf("信任等级 %s 不足(需要 %s)", trust, Requirement(c))}
+		target = RedactTarget(target)
+		reason := fmt.Sprintf("信任等级 %s 不足(需要 %s)", trust, Requirement(c))
+		b.audit(Deny{Plugin: plugin, Cap: string(c), Target: target, Reason: reason, At: time.Now()})
+		return &DeniedError{Plugin: plugin, Cap: c, Target: target, Reason: reason}
 	}
 	return b.AuthorizeCap(ctx, plugin, c, target)
 }

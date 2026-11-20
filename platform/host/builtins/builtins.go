@@ -13,6 +13,7 @@ import (
 	sessionstats "github.com/adag/ada-go/v2/plugins/core/session-stats"
 	systemprompt "github.com/adag/ada-go/v2/plugins/core/system-prompt"
 	approvalgate "github.com/adag/ada-go/v2/plugins/policy/approval-gate"
+	auditlog "github.com/adag/ada-go/v2/plugins/policy/audit-log"
 	capsgate "github.com/adag/ada-go/v2/plugins/policy/caps-gate"
 	fsobserve "github.com/adag/ada-go/v2/plugins/policy/fs-observe"
 	fsredact "github.com/adag/ada-go/v2/plugins/policy/fs-redact"
@@ -59,6 +60,7 @@ func Plugins() map[string]func() kernel.Plugin {
 		"session-stats":    sessionstats.Plugin,
 		"compaction-basic": compaction.Plugin,
 		"approval-gate":    approvalgate.Plugin,
+		"audit-log":        auditlog.Plugin,
 		"llm-retry":        llmretry.Plugin,
 		"tool-timeout":     tooltimeout.Plugin,
 		"seam-fs":          seamfs.Plugin,

@@ -56,7 +56,9 @@ broker.Authorize(ctx, "plugin-a", "fs.write", "/workspace/a") // → *DeniedErro
 ```
 
 - **fail-closed**:未登记插件、未授予能力、能力名非法 → 拒绝。
-- 拒绝写审计(`Deny{Plugin,Cap,Target,At}`);`AuthorizeWithTrust` 额外检查信任等级。
+- 拒绝写审计(`Deny{Plugin,Cap,Target,Reason,At}`);URL target 在审计/错误里去掉 userinfo 与 query。
+  `caps-static` 把拒绝转成 `caps/deny` 事件,`audit-log` 订阅后落 JSONL。
+- `AuthorizeWithTrust` 额外检查信任等级。
 - `Grant` 整批校验,任一能力非法则整批失败(不会部分生效);`Revoke` 撤销全部。
 - `Snapshot()` 供诊断。
 
@@ -69,7 +71,9 @@ broker.Authorize(ctx, "plugin-a", "fs.write", "/workspace/a") // → *DeniedErro
    仍按 `third-party` 处理。
 3. **安装同意只有 CLI 级**:`-yes` 已能展示能力后继续;桌面确认/逐项授权未实现,安装 trust
    已通过 `install.LoadDir` 灌入 `caps`。
-4. **cap 拒绝审计只走回调**:`caps.Broker` 有 `Deny` 回调,JSONL 审计只订阅观察/审批事件,尚未接 caps 拒绝。
+4. **cap 拒绝审计已接 JSONL**:`caps.Broker` 的 `Deny` 回调由 `caps-static` 转成
+   `caps/deny` 事件,`audit-log` 订阅落盘;target 已脱敏。非 `caps-static` 的临时 Broker
+   (无 caps 服务时的 fallback)也发同一事件。
 5. **没有目标级约束**:`fs.write` 的「工作区 + 插件自身目录」由 sandbox/fs-local 承担,
    caps 层不重复判定路径;`exec` 的程序 allowlist 未与 caps 合并。
 6. **net/secrets 已接强制;config/ui 仍未接**:`net-guard`/`secrets-guard` 已按 principal 授权;
@@ -89,6 +93,8 @@ broker.Authorize(ctx, "plugin-a", "fs.write", "/workspace/a") // → *DeniedErro
 | 通配匹配(主机/名字/命名空间不放宽) | `caps.TestGrantsWildcard` |
 | 授权 fail-closed、拒绝错误码、审计、撤销 | `caps.TestBrokerAuthorize` |
 | 信任等级矩阵 | `caps.TestTrust` |
+| 拒绝 reason/URL target 脱敏 | `caps.TestDenyAuditReasonAndRedaction` |
+| caps 拒绝落 JSONL | `auditlog.TestCapsDeny` |
 | 并发授权(-race) | `caps.TestConcurrent` |
 | 拒绝信息可读 | `caps.TestDeniedMessage` |
 | 清单 caps/trust 校验 | `plugin.TestCapsAndTrust` |

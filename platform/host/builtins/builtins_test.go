@@ -11,7 +11,7 @@ import (
 func TestBuiltinGoPlugins(t *testing.T) {
 	got := builtins.Plugins()
 	for _, id := range []string{"seam-fs", "fs-local", "caps-static", "caps-gate", "shell-local", "seam-approval",
-		"seam-llm", "llm-replay", "llm-openai", "seam-prompts", "system-prompt", "seam-tools", "agent-loop", "session-stats", "compaction-basic", "approval-gate", "llm-retry", "tool-timeout", "session-jsonl"} {
+		"seam-llm", "llm-replay", "llm-openai", "seam-prompts", "system-prompt", "seam-tools", "agent-loop", "session-stats", "compaction-basic", "approval-gate", "audit-log", "llm-retry", "tool-timeout", "session-jsonl"} {
 		if _, ok := got[id]; !ok {
 			t.Fatalf("内置注册表缺少 %q", id)
 		}

@@ -123,7 +123,26 @@ func TestConcurrent(t *testing.T) {
 	wg.Wait()
 }
 
-// 6. 拒绝错误包含可读信息。
+// 7. 拒绝审计带 reason,URL target 去掉 query/userinfo。
+func TestDenyAuditReasonAndRedaction(t *testing.T) {
+	var got caps.Deny
+	broker := caps.NewBroker(func(d caps.Deny) { got = d })
+	if err := broker.Grant("p", "fs.read"); err != nil {
+		t.Fatal(err)
+	}
+	if err := broker.Authorize(context.Background(), "p", "fs.write", "https://user:pass@example.com/x?token=SECRET"); err == nil {
+		t.Fatalf("未授权应拒绝")
+	}
+	if got.Reason != "能力未授予" {
+		t.Fatalf("拒绝 reason 不正确: %+v", got)
+	}
+	if strings.Contains(got.Target, "SECRET") || strings.Contains(got.Target, "pass") {
+		t.Fatalf("拒绝 target 未脱敏: %q", got.Target)
+	}
+	if !strings.Contains(got.Target, "REDACTED") {
+		t.Fatalf("拒绝 target 缺少 REDACTED: %q", got.Target)
+	}
+}
 func TestDeniedMessage(t *testing.T) {
 	err := (&caps.DeniedError{Plugin: "p", Cap: "fs.write", Target: "/workspace/a", Reason: "未授予"}).Error()
 	if !strings.Contains(err, "EDENIED") || !strings.Contains(err, "fs.write") {

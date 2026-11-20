@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/adag/ada-go/v2/platform/caps"
 	"github.com/adag/ada-go/v2/platform/kernel"
 	seamapproval "github.com/adag/ada-go/v2/plugins/seam/approval"
 	seamfs "github.com/adag/ada-go/v2/plugins/seam/fs"
@@ -94,6 +95,7 @@ func Plugin() kernel.Plugin {
 		for _, name := range []string{
 			seamfs.EventObserve, seamshell.EventObserve,
 			seamnet.EventObserve, seamapproval.EventRequested, EventApprovalDecided,
+			caps.EventDeny,
 		} {
 			eventName := name
 			ctx.On(eventName, func(_ context.Context, _ *kernel.Context, args []any) (any, error) {

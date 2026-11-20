@@ -135,7 +135,7 @@ func Plugin() kernel.Plugin {
 		}
 		// 优先使用注入的 caps 服务(caps-static 提供),这样宿主可以把清单 caps
 		// 与 install 的 trust 灌进同一个 Broker;没有服务时才退回 config grants。
-		broker := caps.NewBroker(nil)
+		broker := caps.NewBroker(func(d caps.Deny) { ctx.Emit(caps.EventDeny, d) })
 		fromService := false
 		if v, ok := ctx.TryService("caps"); ok {
 			if b, ok := v.(*caps.Broker); ok {
