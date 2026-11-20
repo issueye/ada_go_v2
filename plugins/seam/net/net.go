@@ -19,6 +19,10 @@ type Request struct {
 	URL     string            `json:"url"`
 	Headers map[string]string `json:"headers,omitempty"`
 	Body    []byte            `json:"body,omitempty"`
+
+	// NoRedirect 让 provider 不跟随重定向,由外层策略逐跳校验并自行跟随。
+	// 它是控制面标记,不进 JSON 配置。
+	NoRedirect bool `json:"-"`
 }
 
 // Response 是抓取结果。

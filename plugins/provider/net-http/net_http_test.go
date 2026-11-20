@@ -32,6 +32,39 @@ func TestFetch(t *testing.T) {
 	}
 }
 
+// 1.1 NoRedirect 让 provider 原样返回 3xx,由外层策略逐跳校验。
+func TestNoRedirect(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("target"))
+	}))
+	defer target.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusFound)
+	}))
+	defer srv.Close()
+
+	c := nethttp.New(5*time.Second, 1024)
+	resp, err := c.Do(context.Background(), seamnet.Request{URL: srv.URL, NoRedirect: true})
+	if err != nil {
+		t.Fatalf("抓取失败: %v", err)
+	}
+	if resp.Status != http.StatusFound {
+		t.Fatalf("NoRedirect 应返回 302,实际 %d", resp.Status)
+	}
+	if got := resp.Headers["Location"]; got != target.URL {
+		t.Fatalf("Location 不正确: %q", got)
+	}
+
+	// 不带标记时仍按 provider 默认策略跟随。
+	resp, err = c.Do(context.Background(), seamnet.Request{URL: srv.URL})
+	if err != nil {
+		t.Fatalf("跟随失败: %v", err)
+	}
+	if resp.Status != http.StatusOK || string(resp.Body) != "target" {
+		t.Fatalf("默认跟随结果不正确: %+v", resp)
+	}
+}
+
 // 2. 非 2xx 原样返回(不自动报错)。
 func TestNon2xx(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

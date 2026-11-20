@@ -122,6 +122,65 @@ func TestServiceBroker(t *testing.T) {
 	}
 }
 
+type redirectClient struct {
+	target string
+	calls  int
+	urls   []string
+}
+
+func (f *redirectClient) Do(_ context.Context, req seamnet.Request) (seamnet.Response, error) {
+	f.calls++
+	f.urls = append(f.urls, req.URL)
+	if f.calls == 1 {
+		return seamnet.Response{Status: 302, Headers: map[string]string{"Location": f.target}}, nil
+	}
+	return seamnet.Response{Status: 200, Body: []byte("ok"), URL: req.URL}, nil
+}
+
+// 10. 重定向到私网必须被逐跳拒绝,且不能发出第二次请求。
+func TestRedirectPrivateDenied(t *testing.T) {
+	f := &redirectClient{target: "http://10.0.0.1/secret"}
+	b := brokerWith(t, map[string][]string{"p1": {"net.fetch.example.com"}})
+	g := netguard.NewWithResolver(f, b, false, func(context.Context, string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("93.184.216.34")}, nil
+	})
+	if _, err := g.Do(kernel.WithPrincipal(context.Background(), "p1"), seamnet.Request{URL: "http://example.com/x"}); err == nil {
+		t.Fatalf("重定向到私网应拒绝")
+	}
+	if f.calls != 1 {
+		t.Fatalf("私网重定向不应继续请求,实际 %d 次", f.calls)
+	}
+}
+
+// 11. 重定向到未授权公网 host 也必须拒绝。
+func TestRedirectUnauthorizedDenied(t *testing.T) {
+	f := &redirectClient{target: "http://other.example/x"}
+	b := brokerWith(t, map[string][]string{"p1": {"net.fetch.example.com"}})
+	g := netguard.New(f, b, true)
+	if _, err := g.Do(kernel.WithPrincipal(context.Background(), "p1"), seamnet.Request{URL: "http://example.com/x"}); err == nil {
+		t.Fatalf("重定向到未授权 host 应拒绝")
+	}
+	if f.calls != 1 {
+		t.Fatalf("未授权重定向不应继续请求,实际 %d 次", f.calls)
+	}
+}
+
+// 12. 两跳都有授权时允许跟随,最终返回 200。
+func TestRedirectAllowed(t *testing.T) {
+	f := &redirectClient{target: "http://other.example/x"}
+	b := brokerWith(t, map[string][]string{"p1": {
+		"net.fetch.example.com", "net.fetch.other.example",
+	}})
+	g := netguard.New(f, b, true)
+	resp, err := g.Do(kernel.WithPrincipal(context.Background(), "p1"), seamnet.Request{URL: "http://example.com/x"})
+	if err != nil {
+		t.Fatalf("已授权重定向应放行: %v", err)
+	}
+	if resp.Status != 200 || f.calls != 2 {
+		t.Fatalf("跟随结果不正确: status=%d calls=%d", resp.Status, f.calls)
+	}
+}
+
 type fakeClient struct{ called bool }
 
 func (f *fakeClient) Do(context.Context, seamnet.Request) (seamnet.Response, error) {

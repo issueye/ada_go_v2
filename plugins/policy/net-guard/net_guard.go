@@ -67,46 +67,124 @@ type guard struct {
 	escalate     bool
 }
 
+const (
+	// maxRedirects 是逐跳校验允许跟随的最大重定向数。
+	maxRedirects = 5
+)
+
 func (g *guard) Do(ctx context.Context, req seamnet.Request) (seamnet.Response, error) {
+	current := req
+	for hop := 0; hop <= maxRedirects; hop++ {
+		u, err := g.check(ctx, current)
+		if err != nil {
+			return seamnet.Response{}, err
+		}
+		// 让 provider 返回 3xx,由这里逐跳校验后再跟随;否则 provider 会直接跳到私网。
+		current.NoRedirect = true
+		resp, err := g.inner.Do(ctx, current)
+		if err != nil {
+			return seamnet.Response{}, err
+		}
+		if !isRedirect(resp.Status) {
+			return resp, nil
+		}
+		loc := header(resp.Headers, "location")
+		if loc == "" {
+			return resp, nil
+		}
+		if hop == maxRedirects {
+			return seamnet.Response{}, seamnet.Denied("重定向次数超过 5")
+		}
+		current, err = redirectRequest(current, u, resp.Status, loc)
+		if err != nil {
+			return seamnet.Response{}, err
+		}
+	}
+	return seamnet.Response{}, seamnet.Denied("重定向次数超过 5")
+}
+
+func (g *guard) check(ctx context.Context, req seamnet.Request) (*url.URL, error) {
 	u, err := url.Parse(req.URL)
 	if err != nil || u.Hostname() == "" {
-		return seamnet.Response{}, seamnet.Invalid("URL 非法: " + req.URL)
+		return nil, seamnet.Invalid("URL 非法: " + req.URL)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return nil, seamnet.Invalid("只支持 http/https: " + u.Scheme)
 	}
 	host := strings.ToLower(u.Hostname())
 	if !g.allowPrivate {
 		if isPrivateHost(host) {
-			return seamnet.Response{}, seamnet.Denied("禁止访问私有/本地地址: " + host)
+			return nil, seamnet.Denied("禁止访问私有/本地地址: " + host)
 		}
 		// 域名可能解析到私网:解析后逐个检查;解析失败按拒绝处理(fail-closed)。
 		if net.ParseIP(host) == nil {
 			ips, err := g.resolver(ctx, host)
 			if err != nil {
-				return seamnet.Response{}, seamnet.Denied("域名解析失败: " + host)
+				return nil, seamnet.Denied("域名解析失败: " + host)
 			}
 			for _, ip := range ips {
 				if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
-					return seamnet.Response{}, seamnet.Denied("域名解析到私有/本地地址: " + host)
+					return nil, seamnet.Denied("域名解析到私有/本地地址: " + host)
 				}
 			}
 		}
 	}
 	id, ok := kernel.Principal(ctx)
 	if !ok {
-		return seamnet.Response{}, seamnet.Denied("缺少调用者身份:请使用 ctx.Context()")
+		return nil, seamnet.Denied("缺少调用者身份:请使用 ctx.Context()")
 	}
 	if err := g.broker.Authorize(ctx, id, "net.fetch."+host, req.URL); err != nil {
 		if !g.escalate || g.approval == nil {
-			return seamnet.Response{}, seamnet.Denied(err.Error())
+			return nil, seamnet.Denied(err.Error())
 		}
 		dec, aerr := seamapproval.Ask(ctx, g.approval, "", seamapproval.Request{
 			ID: "net:" + req.Method + ":" + host, Source: "net", Op: req.Method,
 			Target: redactTarget(req.URL), Reason: "未授权的 net.fetch host: " + host,
 		})
 		if aerr != nil || !dec.Allow {
-			return seamnet.Response{}, seamnet.Denied("审批未通过: " + host)
+			return nil, seamnet.Denied("审批未通过: " + host)
 		}
 	}
-	return g.inner.Do(ctx, req)
+	return u, nil
+}
+
+func isRedirect(status int) bool {
+	switch status {
+	case 301, 302, 303, 307, 308:
+		return true
+	}
+	return false
+}
+
+func header(headers map[string]string, name string) string {
+	for k, v := range headers {
+		if strings.EqualFold(k, name) {
+			return v
+		}
+	}
+	return ""
+}
+
+func redirectRequest(req seamnet.Request, base *url.URL, status int, location string) (seamnet.Request, error) {
+	ref, err := url.Parse(location)
+	if err != nil {
+		return seamnet.Request{}, seamnet.Invalid("重定向 Location 非法: " + err.Error())
+	}
+	nextURL := base.ResolveReference(ref)
+	next := req
+	next.URL = nextURL.String()
+	next.NoRedirect = true
+
+	method := req.Method
+	if method == "" {
+		method = "GET"
+	}
+	// 303 总是改为 GET;301/302 对非 GET/HEAD 也改为 GET;307/308 保留方法与 body。
+	if status == 303 || ((status == 301 || status == 302) && method != "GET" && method != "HEAD") {
+		next.Method = "GET"
+		next.Body = nil
+	}
+	return next, nil
 }
 
 // isPrivateHost 判断 host 是否是本地/私有/链路本地地址。

@@ -18,7 +18,7 @@ plugins/policy/net-observe/  策略:每次抓取后广播 net/observe(观察,不
 
 | 类型/方法 | 语义 |
 |---|---|
-| `Request{Method,URL,Headers,Body}` | Method 空 = GET;只允许 http/https |
+| `Request{Method,URL,Headers,Body,NoRedirect}` | Method 空 = GET;只允许 http/https;`NoRedirect=true` 让 provider 返回 3xx |
 | `Response{Status,Headers,Body,URL,Truncated}` | 非 2xx **原样返回**,不自动报错 |
 | `Chain.Install(base)` | provider 安装底座;重复安装报错 |
 | `Chain.Decorate(fn, priority)` | policy 叠加;priority 越大越靠外 |
@@ -28,7 +28,8 @@ plugins/policy/net-observe/  策略:每次抓取后广播 net/observe(观察,不
 
 - 超时:配置 `timeoutMs`(默认 30s);用 `context.WithTimeout` 包住整次请求;
 - 响应上限:`maxBytes`(默认 8 MiB),超出截断并置 `Truncated=true`;
-- 重定向:最多 5 次,之后返回最后一次响应(`http.ErrUseLastResponse`);
+- 重定向:默认最多 5 次,之后返回最后一次响应;`Request.NoRedirect=true` 时不跟随,
+  原样返回 3xx 与 `Location`,由 `net-guard` 逐跳校验后自行跟随;
 - 请求头逐项设置;响应头用 `", "` 合并多值;
 - 非法 URL/scheme → 参数错误(`EINVALID`)。
 
@@ -39,8 +40,11 @@ plugins/policy/net-observe/  策略:每次抓取后广播 net/observe(观察,不
 3. **响应体全量读入内存**(到上限为止),没有流式接口。
 4. **没有代理/证书/HTTP2 配置**;用默认 Transport。
 5. **没有重试/退避**;一次失败即返回。
-6. **SSRF 防护在 policy 层**:`net-guard` 拒绝字面私网与解析后的私网 IP;但存在 **TOCTOU**(校验时解析与请求时解析可能不同),且 provider 直接用默认 Transport,不做连接级地址校验。
-7. **重定向后的最终 URL** 记录在 `Response.URL`,但中间跳转不可见。
+6. **SSRF 防护在 policy 层**:`net-guard` 拒绝字面私网与解析后的私网 IP,并对重定向逐跳
+   重新校验 host/私网/授权;仍存在 **TOCTOU**(校验时解析与请求时解析可能不同),且
+   provider 直接用默认 Transport,不做连接级地址校验。
+7. **重定向由 net-guard 跟随**:`net-guard` 给 provider 设 `NoRedirect=true`,收到 3xx 后
+   校验 `Location` 与下一跳,再发起请求;最多 5 跳。`Response.URL` 是最后一跳。
 
 ### 4.1 `net/observe` 事件
 
@@ -67,6 +71,9 @@ plugins/policy/net-observe/  策略:每次抓取后广播 net/observe(观察,不
 | 超限截断 | `nethttp.TestTruncate` |
 | 超时失败 | `nethttp.TestTimeout` |
 | 非法 scheme 拒绝 | `nethttp.TestBadScheme` |
+| `NoRedirect` 返回 3xx、默认跟随 | `nethttp.TestNoRedirect` |
+| net-guard:重定向到私网/未授权 host 拒绝 | `netguard.TestRedirectPrivateDenied`、`TestRedirectUnauthorizedDenied` |
+| net-guard:两跳均已授权时跟随 | `netguard.TestRedirectAllowed` |
 | 内核集成(seam + provider + consumer) | `nethttp.TestKernelIntegration` |
 | net-guard:platform/host/通配授权、未授权/无身份、私网拒绝 | `netguard.TestAllowed`、`TestDenied`、`TestPrivateDenied` |
 | net-guard 使用注入的 caps 服务 | `netguard.TestServiceBroker` |
@@ -80,10 +87,11 @@ plugins/policy/net-observe/  策略:每次抓取后广播 net/observe(观察,不
 
 ## 6. 下一步
 
-1. **重定向逐跳校验**:当前 `net-guard` 只校验初始 URL;公网 host 可 302 到私网。需要 `CheckRedirect` 逐跳校验或连接级 IP 校验。
-2. **请求体上限与流式响应**;代理/TLS/HTTP2 配置。
-3. **审批目标脱敏**:`net-guard` 已对审批 `Target` 去掉 userinfo 与 query(置换为 `REDACTED`);其它 source 的通用脱敏仍需统一。
-4. 把 `caps-gate` 扩展到 net(当前由 `net-guard` 承担)。
+1. **请求体上限与流式响应**;代理/TLS/HTTP2 配置。
+2. **审批目标脱敏**:`net-guard` 已对审批 `Target` 去掉 userinfo 与 query(置换为 `REDACTED`);
+   其它 source 的通用脱敏仍需统一。
+3. 把 `caps-gate` 扩展到 net(当前由 `net-guard` 承担)。
+4. **连接级 IP 校验**:消除解析与拨号之间的 TOCTOU。
 
 ## 7. 验证命令
 

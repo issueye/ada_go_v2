@@ -85,7 +85,16 @@ func (c *client) Do(ctx context.Context, req seamnet.Request) (seamnet.Response,
 		hreq.Header.Set(k, v)
 	}
 
-	resp, err := c.http.Do(hreq)
+	hc := c.http
+	if req.NoRedirect {
+		// http.Client 不能按请求改 CheckRedirect;复制一份,Transport 仍共享。
+		cp := *c.http
+		cp.CheckRedirect = func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		}
+		hc = &cp
+	}
+	resp, err := hc.Do(hreq)
 	if err != nil {
 		return seamnet.Response{}, fmt.Errorf("net-http: 抓取失败: %w", err)
 	}
