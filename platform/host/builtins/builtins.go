@@ -19,6 +19,9 @@ import (
 	fsredact "github.com/adag/ada-go/v2/plugins/policy/fs-redact"
 	fssandbox "github.com/adag/ada-go/v2/plugins/policy/fs-sandbox"
 	llmretry "github.com/adag/ada-go/v2/plugins/policy/llm-retry"
+	netguard "github.com/adag/ada-go/v2/plugins/policy/net-guard"
+	netobserve "github.com/adag/ada-go/v2/plugins/policy/net-observe"
+	secretsguard "github.com/adag/ada-go/v2/plugins/policy/secrets-guard"
 	shellguard "github.com/adag/ada-go/v2/plugins/policy/shell-guard"
 	shellobserve "github.com/adag/ada-go/v2/plugins/policy/shell-observe"
 	shellredact "github.com/adag/ada-go/v2/plugins/policy/shell-redact"
@@ -29,19 +32,23 @@ import (
 	fslocal "github.com/adag/ada-go/v2/plugins/provider/fs-local"
 	openai "github.com/adag/ada-go/v2/plugins/provider/llm-openai"
 	replay "github.com/adag/ada-go/v2/plugins/provider/llm-replay"
+	nethttp "github.com/adag/ada-go/v2/plugins/provider/net-http"
 	rpcjson "github.com/adag/ada-go/v2/plugins/provider/rpc-json"
 	rpcnet "github.com/adag/ada-go/v2/plugins/provider/rpc-net"
 	rpcpipe "github.com/adag/ada-go/v2/plugins/provider/rpc-pipe"
 	sandboxnone "github.com/adag/ada-go/v2/plugins/provider/sandbox-none"
+	secretsenv "github.com/adag/ada-go/v2/plugins/provider/secrets-env"
 	sessionjsonl "github.com/adag/ada-go/v2/plugins/provider/session-jsonl"
 	memory "github.com/adag/ada-go/v2/plugins/provider/session-memory"
 	shelllocal "github.com/adag/ada-go/v2/plugins/provider/shell-local"
 	seamapproval "github.com/adag/ada-go/v2/plugins/seam/approval"
 	seamfs "github.com/adag/ada-go/v2/plugins/seam/fs"
 	seamllm "github.com/adag/ada-go/v2/plugins/seam/llm"
+	seamnet "github.com/adag/ada-go/v2/plugins/seam/net"
 	seamprompts "github.com/adag/ada-go/v2/plugins/seam/prompts"
 	seamrpc "github.com/adag/ada-go/v2/plugins/seam/rpc"
 	seamsandbox "github.com/adag/ada-go/v2/plugins/seam/sandbox"
+	seamsecrets "github.com/adag/ada-go/v2/plugins/seam/secrets"
 	seamsession "github.com/adag/ada-go/v2/plugins/seam/session"
 	seamshell "github.com/adag/ada-go/v2/plugins/seam/shell"
 	seamtools "github.com/adag/ada-go/v2/plugins/seam/tools"
@@ -82,6 +89,13 @@ func Plugins() map[string]func() kernel.Plugin {
 		"session-memory":   memory.Plugin,
 		"session-jsonl":    sessionjsonl.Plugin,
 		"caps-static":      capsstatic.Plugin,
+		"seam-net":         seamnet.Plugin,
+		"net-http":         nethttp.Plugin,
+		"net-guard":        netguard.Plugin,
+		"net-observe":      netobserve.Plugin,
+		"seam-secrets":     seamsecrets.Plugin,
+		"secrets-env":      secretsenv.Plugin,
+		"secrets-guard":    secretsguard.Plugin,
 		"caps-gate":        capsgate.Plugin,
 		"fs-redact":        fsredact.Plugin,
 		"fs-observe":       fsobserve.Plugin,

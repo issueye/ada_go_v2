@@ -1,0 +1,7 @@
+{
+  "id": "net-http",
+  "name": "net http",
+  "version": "0.1.0",
+  "kind": "go",
+  "inject": {"required": ["net"]}
+}

@@ -654,3 +654,18 @@ func TestCheckJSON(t *testing.T) {
 		t.Fatalf("JSON 内容不正确: %+v", payload)
 	}
 }
+
+// M5 net/secrets 内置实现已接入宿主:示例 preset 可真实挂载。
+func TestUpNetStack(t *testing.T) {
+	code, out, errOut := run("up", "--preset", "../../../examples/net/net.preset.json")
+	if code != 0 || !strings.Contains(out, "service net") {
+		t.Fatalf("net 栈挂载失败: code=%d err=%s out=%s", code, errOut, out)
+	}
+}
+
+func TestUpSecretsStack(t *testing.T) {
+	code, out, errOut := run("up", "--preset", "../../../examples/secrets/secrets.preset.json")
+	if code != 0 || !strings.Contains(out, "service secrets") {
+		t.Fatalf("secrets 栈挂载失败: code=%d err=%s out=%s", code, errOut, out)
+	}
+}

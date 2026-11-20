@@ -1,0 +1,7 @@
+{
+  "id": "seam-net",
+  "name": "net seam",
+  "version": "0.1.0",
+  "kind": "go",
+  "provide": ["net"]
+}
