@@ -90,6 +90,8 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 | [adr/0006](docs/adr/0006-custom-ui-components.md) | ADR(提案):受控自定义 UI 组件(反转「插件不画 UI」) |
 | [adr/0007](docs/adr/0007-host-web-budget.md) | ADR(提案):platform/host/web 与 host 总行数预算例外 |
 | [adr/0008](docs/adr/0008-desktop-webview-shell.md) | ADR(提案):桌面只做 WebView 壳(mygo WebView2/Electron)，不做 native UI |
+| [adr/0009](docs/adr/0009-rpc-json-budget.md) | ADR(提案):rpc-json 单插件预算例外 |
+| [seam-rpc.md](docs/seam-rpc.md) | RPC 通讯:P0–P2 已实现(tcp/unix/Windows 命名管道、帧协议、握手与取消) |
 | [seam-net.md](docs/seam-net.md) | M5 网络能力:seam/net 与 provider/net-http |
 | [seam-secrets.md](docs/seam-secrets.md) | M5 secret 能力:seam/secrets 与 provider/secrets-env |
 | [seam-session.md](docs/seam-session.md) | seam/session 与 session-memory |

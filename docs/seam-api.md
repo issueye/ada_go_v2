@@ -78,6 +78,8 @@ type Error struct {
 | `ETIMEOUT` | 超时 | kernel budget | 按策略 |
 | `EDENIED` | 审批/guard 拒绝 | policy | 作为结果返回（`status=denied`） |
 | `ESCHEMA` | 工具输出不符合 schema | seam/tools | 作为工具失败结果 |
+| `EINTERNAL` | 实现内部错误（细节不进边界） | provider | 不重试，按通用失败处理 |
+| `ELIMIT` | 超出配额/队列/帧上限 | provider | 退避或降级，不无限重试 |
 
 ### 1.3 上下文、取消与预算
 

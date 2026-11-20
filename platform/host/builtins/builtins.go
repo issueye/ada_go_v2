@@ -29,6 +29,9 @@ import (
 	fslocal "github.com/adag/ada-go/v2/plugins/provider/fs-local"
 	openai "github.com/adag/ada-go/v2/plugins/provider/llm-openai"
 	replay "github.com/adag/ada-go/v2/plugins/provider/llm-replay"
+	rpcjson "github.com/adag/ada-go/v2/plugins/provider/rpc-json"
+	rpcnet "github.com/adag/ada-go/v2/plugins/provider/rpc-net"
+	rpcpipe "github.com/adag/ada-go/v2/plugins/provider/rpc-pipe"
 	sandboxnone "github.com/adag/ada-go/v2/plugins/provider/sandbox-none"
 	sessionjsonl "github.com/adag/ada-go/v2/plugins/provider/session-jsonl"
 	memory "github.com/adag/ada-go/v2/plugins/provider/session-memory"
@@ -37,6 +40,7 @@ import (
 	seamfs "github.com/adag/ada-go/v2/plugins/seam/fs"
 	seamllm "github.com/adag/ada-go/v2/plugins/seam/llm"
 	seamprompts "github.com/adag/ada-go/v2/plugins/seam/prompts"
+	seamrpc "github.com/adag/ada-go/v2/plugins/seam/rpc"
 	seamsandbox "github.com/adag/ada-go/v2/plugins/seam/sandbox"
 	seamsession "github.com/adag/ada-go/v2/plugins/seam/session"
 	seamshell "github.com/adag/ada-go/v2/plugins/seam/shell"
@@ -83,6 +87,10 @@ func Plugins() map[string]func() kernel.Plugin {
 		"fs-observe":       fsobserve.Plugin,
 		"shell-redact":     shellredact.Plugin,
 		"shell-observe":    shellobserve.Plugin,
+		"seam-rpc":         seamrpc.Plugin,
+		"rpc-json":         rpcjson.Plugin,
+		"rpc-net":          rpcnet.Plugin,
+		"rpc-pipe":         rpcpipe.Plugin,
 	}
 }
 

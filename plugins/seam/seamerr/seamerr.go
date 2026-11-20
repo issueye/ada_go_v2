@@ -25,6 +25,8 @@ const (
 	ErrTimeout       Code = "ETIMEOUT"       // 超时
 	ErrDenied        Code = "EDENIED"        // 审批/guard 拒绝
 	ErrSchema        Code = "ESCHEMA"        // 输出不符合 schema
+	ErrInternal      Code = "EINTERNAL"      // 实现内部错误(细节不进边界)
+	ErrLimit         Code = "ELIMIT"         // 超出配额/队列/帧上限
 )
 
 // Error 是 seam 层的错误。它保留 kernel 的错误码形制,同时带 retryable 与来源。
