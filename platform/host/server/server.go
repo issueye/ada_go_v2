@@ -244,6 +244,10 @@ func (s *Server) loadTarget(rel string) ([]*plugin.Manifest, error) {
 		}
 		return p.Expand()
 	}
+	// 安装根目录按 index.json 的 trust 加载;普通插件目录仍走 plugin.LoadDir。
+	if _, err := os.Stat(filepath.Join(path, install.IndexFile)); err == nil {
+		return install.LoadDir(path)
+	}
 	return plugin.LoadDir(path)
 }
 

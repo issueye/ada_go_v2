@@ -13,6 +13,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/adag/ada-go/v2/platform/assemble"
@@ -149,6 +150,10 @@ func loadTarget(t target) ([]*plugin.Manifest, error) {
 		}
 		return p.Expand()
 	case t.dir != "":
+		// 安装根目录要先按 index.json 的 trust 加载;否则 TS 插件会被降为 third-party。
+		if _, err := os.Stat(filepath.Join(t.dir, install.IndexFile)); err == nil {
+			return install.LoadDir(t.dir)
+		}
 		return plugin.LoadDir(t.dir)
 	default:
 		return nil, fmt.Errorf("需要给出插件目录或 --preset 文件")

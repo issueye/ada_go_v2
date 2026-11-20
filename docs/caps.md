@@ -42,8 +42,9 @@ ui
 
 `builtin` > `official` > `verified` > `third-party`;`AllowedByTrust` 做等级比较。
 设计口径是信任来自**安装来源**(签名/仓库),不来自清单自述;当前实现已把
-**磁盘上的 TS 插件**一律降为 `third-party`(`plugin.LoadDir` 的 `ApplySourceTrust`),
-但安装来源的 verified/official 还没有灌进 Broker;程序内直接构造的 `Manifest`
+**磁盘上的 TS 插件**一律降为 `third-party`(`plugin.LoadDir` 的 `ApplySourceTrust`);
+安装根目录则由 `install.LoadDir` 按 `index.json` 的 trust 回填 verified/official,
+再交给 `builtins.ApplyAutoGrants` 灌进 Broker。程序内直接构造的 `Manifest`
 仍可自述 trust(测试/宿主内部用,不经过磁盘加载)。
 
 ## 4. Broker
@@ -63,11 +64,11 @@ broker.Authorize(ctx, "plugin-a", "fs.write", "/workspace/a") // → *DeniedErro
 
 1. **调用点强制已落地(fs/shell/net/secrets)**:`policy/caps-gate`(fs/shell)与 `policy/net-guard`(net)从 `kernel.Principal(ctx)` 取调用者,向 Broker 查能力;
    缺少身份/未授权一律拒绝。`caps-gate` 优先使用注入的 `caps` 服务;`assemble.GrantManifests` 把清单 `caps`/`trust` 灌入 Broker;CLI 的 `up`/`inspect` 已通过 `applyAutoGrants` 自动接线。
-2. **trust 来源只做了磁盘降级**:`plugin.LoadDir` 已把非 Go 插件的 trust 固定为
-   `third-party`(见 `TestLoadDirDowngradesDiskTrust`);但安装得到的 verified/official
-   还没有灌进 `caps.Broker`,程序内构造的 Manifest 仍按自述处理。签名插件的 `fs.write`
-   暂时会被降级,这是安全优先的取舍。
-3. **安装同意只有 CLI 级**:`-yes` 已能展示能力后继续;桌面确认/逐项授权未实现,安装 trust 也还没有灌进 `caps`。
+2. **trust 来源已接安装索引**:`plugin.LoadDir` 把磁盘非 Go 插件降为 `third-party`;
+   `install.LoadDir` 对安装根目录按 `index.json` 回填 verified/official;直接拷入的非安装目录
+   仍按 `third-party` 处理。
+3. **安装同意只有 CLI 级**:`-yes` 已能展示能力后继续;桌面确认/逐项授权未实现,安装 trust
+   已通过 `install.LoadDir` 灌入 `caps`。
 4. **cap 拒绝审计只走回调**:`caps.Broker` 有 `Deny` 回调,JSONL 审计只订阅观察/审批事件,尚未接 caps 拒绝。
 5. **没有目标级约束**:`fs.write` 的「工作区 + 插件自身目录」由 sandbox/fs-local 承担,
    caps 层不重复判定路径;`exec` 的程序 allowlist 未与 caps 合并。
@@ -94,9 +95,9 @@ broker.Authorize(ctx, "plugin-a", "fs.write", "/workspace/a") // → *DeniedErro
 
 ## 7. 下一步
 
-1. assemble/loader 把清单的 `caps`/`trust`、install 的 trust 自动灌进 Broker(替代 config grants)。
-2. 在 plan 报告里展示能力清单与 trust。
-3. 安装同意 + 签名(§13.4)与 trust 来源判定。
+1. 在 plan 报告里展示能力清单与 trust 来源(磁盘/安装索引/内置)。
+2. `$ADA_HOME/keys` 与签名发布工具。
+3. JSONL 审计出口与脱敏。
 4. JSONL 审计出口与脱敏。
 
 ## 8. CLI 自检(`ada caps`)

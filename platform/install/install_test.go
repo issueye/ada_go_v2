@@ -798,3 +798,24 @@ func TestInstallLockStale(t *testing.T) {
 		t.Fatalf("过期锁应被回收并安装成功: %v", err)
 	}
 }
+
+// 32. 已安装目录按 index 的 trust 加载,而不是退回 third-party。
+func TestLoadDirUsesInstallTrust(t *testing.T) {
+	dir, raw, digest := writeTSPlugin(t)
+	keys, priv := newKeyRing(t, caps.TrustVerified)
+	writeSignature(t, dir, "k1", install.Sign(priv, raw, digest))
+	dest := t.TempDir()
+	if _, err := install.Install(dir, dest, install.Options{Keys: keys}); err != nil {
+		t.Fatalf("安装失败: %v", err)
+	}
+	ms, err := install.LoadDir(dest)
+	if err != nil {
+		t.Fatalf("加载安装目录失败: %v", err)
+	}
+	if len(ms) != 1 || ms[0].ID != "ts-demo" {
+		t.Fatalf("加载结果不正确: %+v", ms)
+	}
+	if ms[0].Trust != string(caps.TrustVerified) {
+		t.Fatalf("trust 应来自索引 verified,实际 %q", ms[0].Trust)
+	}
+}

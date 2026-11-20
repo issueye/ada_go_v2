@@ -45,6 +45,19 @@ func TestApplyAutoGrants(t *testing.T) {
 	}
 }
 
+// verified trust 的插件应能获得高信任能力(安装来源灌入 caps 的最后一环)。
+func TestApplyAutoGrantsVerified(t *testing.T) {
+	capsPlugin := &plugin.Manifest{ID: "caps-static", Kind: "go", Provide: []string{"caps"}}
+	trusted := &plugin.Manifest{ID: "trusted", Kind: "ts", Trust: "verified", Caps: []string{"fs.write"}}
+	if err := builtins.ApplyAutoGrants([]*plugin.Manifest{capsPlugin, trusted}); err != nil {
+		t.Fatalf("verified 灌入失败: %v", err)
+	}
+	grants := capsPlugin.Config["grants"].(map[string][]string)
+	if len(grants["trusted"]) != 1 || grants["trusted"][0] != "fs.write" {
+		t.Fatalf("verified 授权不正确: %+v", grants)
+	}
+}
+
 // 非法 caps 应使灌入失败(不静默)。
 func TestApplyAutoGrantsInvalid(t *testing.T) {
 	bad := &plugin.Manifest{ID: "bad", Kind: "go", Trust: "third-party", Caps: []string{"fs.write"}}

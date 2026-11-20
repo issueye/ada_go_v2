@@ -92,8 +92,10 @@ go run ./cmd/ada repo <仓库索引 URL> [-keys 密钥文件] [-require-repo-sig
 1. **本机索引/卸载/升级/回滚/离线/在线更新 + 安装锁已实现**:同一 `destRoot` 上的 platform/install/uninstall/upgrade/rollback 由 `.install.lock` 串行化(锁被占用即失败);锁超过 `InstallLockTTL`(10 分钟)视为崩溃残留并回收。artifact 不单独签名,靠索引签名+digest。
 2. **安装同意只有 CLI 级**:`-yes` 让 `ada install` 在展示能力后继续;桌面确认框/逐项授权未实现,`-yes` 是一次性整体同意。
 3. **没有 `$ADA_HOME/keys` 与官方 keyring**:key ring 由调用方显式提供。
-4. **安装 trust 未进入 caps 授权表**:`caps-gate` 的调用点强制已存在;磁盘 TS 插件已由 `plugin.LoadDir` 降为 `third-party`,
-   但安装流程得到的 verified/official 还没有写进 Broker(见 [caps.md](caps.md) §3)。
+4. **安装 trust 已进入 caps 授权表**:`install.LoadDir` 按 `index.json` 选出每个 id 的最新版本,
+   并用索引 trust 覆盖清单自述;CLI/server 识别安装根目录后交给
+   `builtins.ApplyAutoGrants` 灌进 Broker。直接绕开安装根、从普通磁盘目录加载仍按
+   `third-party` 处理。
 5. **摘要只覆盖 Artifact 文件内容**:目录级元数据(权限、空目录)不参与签名。
 6. **安装锁是进程级文件锁**:`.install.lock` + `InstallLockTTL` 能挡住同一 `destRoot` 的并发安装,但不是分布式锁;TTL 误回收仍可能。
 7. **Windows 长路径/保留名**未处理:安装路径长度与保留名未显式校验。
@@ -135,13 +137,14 @@ go run ./cmd/ada repo <仓库索引 URL> [-keys 密钥文件] [-require-repo-sig
 | CLI update -repo-url 在线更新 | `platform/host/cli.TestUpdateRemote` |
 | 安装锁:占用拒绝/结束后清理 | `install.TestInstallLock` |
 | 过期锁回收 | `install.TestInstallLockStale` |
+| 安装根按索引 trust 加载 | `install.TestLoadDirUsesInstallTrust` |
 
 ## 8. 下一步
 
-1. 把安装来源 trust 灌进 `caps`(当前清单 trust 仍是自述,见 [caps.md](caps.md) §3)。
-2. `$ADA_HOME/keys` 与 keyring;签名发布工具(生成 `plugin.sig.json`)。
-3. 分布式安装锁与 Windows 长路径。
-4. 桌面确认框/逐项授权(替代 CLI 的 `-yes` 整体同意)。
+1. `$ADA_HOME/keys` 与 keyring;签名发布工具(生成 `plugin.sig.json`)。
+2. 分布式安装锁与 Windows 长路径。
+3. 桌面确认框/逐项授权(替代 CLI 的 `-yes` 整体同意)。
+4. 安装根目录的 `plan`/`inspect` 展示 trust 来源与 caps 自检。
 
 ## 9. 验证命令
 
