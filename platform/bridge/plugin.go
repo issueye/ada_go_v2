@@ -12,15 +12,21 @@ package bridge
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/MoeForge/moejs"
 	"github.com/issueye/ada_go_v2/platform/compile"
 	"github.com/issueye/ada_go_v2/platform/jsrt"
 	"github.com/issueye/ada_go_v2/platform/kernel"
 	"github.com/issueye/ada_go_v2/platform/kernel/schema"
+	"github.com/issueye/ada_go_v2/plugins/seam/llm"
+	"github.com/issueye/ada_go_v2/plugins/seam/shell"
+	"github.com/issueye/ada_go_v2/plugins/seam/tools"
 )
 
 // applyTimeout 是装配预算。装配只做编译 + 加载 + 一次 apply,
@@ -33,6 +39,8 @@ type Options struct {
 	Artifact *compile.Artifact
 	// Logf 接收宿主判定的日志(JS 侧的 ctx.log);nil 表示丢弃。
 	Logf func(format string, args ...any)
+	// Inject 是清单声明的依赖;TS 插件可注入 tools/shell 以使用脚本工具能力。
+	Inject kernel.Inject
 }
 
 type provideReq struct {
@@ -43,6 +51,10 @@ type provideReq struct {
 type emitReq struct {
 	event   string
 	payload any
+}
+
+type toolReq struct {
+	def tools.ToolDef
 }
 
 type onReq struct {
@@ -68,6 +80,7 @@ type stager struct {
 	mu         sync.Mutex
 	closed     bool
 	ons        []onReq
+	tools      []toolReq
 	waterfalls []wfReq
 	effects    []effectReq
 	provides   []provideReq
@@ -114,6 +127,16 @@ func (s *stager) provide(name string, value *jsrt.Service) error {
 	return nil
 }
 
+func (s *stager) tool(def tools.ToolDef) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return fmt.Errorf("ctx.tool 只能在 apply 期间调用")
+	}
+	s.tools = append(s.tools, toolReq{def: def})
+	return nil
+}
+
 func (s *stager) emit(event string, payload any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -126,11 +149,11 @@ func (s *stager) emit(event string, payload any) error {
 
 // drain 关闭入口并取出暂存请求。之后 JS 再调用会被拒绝:
 // 没有提交点的调用必须报错,而不是静默丢失。
-func (s *stager) drain() ([]wfReq, []onReq, []effectReq, []provideReq, []emitReq) {
+func (s *stager) drain() ([]wfReq, []onReq, []effectReq, []provideReq, []emitReq, []toolReq) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closed = true
-	return s.waterfalls, s.ons, s.effects, s.provides, s.emits
+	return s.waterfalls, s.ons, s.effects, s.provides, s.emits, s.tools
 }
 
 func (s *stager) close() {
@@ -185,7 +208,7 @@ func New(opts Options) (*Plugin, error) {
 func (p *Plugin) Name() string { return p.opts.Name }
 
 // Inject 声明无依赖:M2 第一段桥不做 JS 侧的服务注入。
-func (p *Plugin) Inject() kernel.Inject { return kernel.Inject{} }
+func (p *Plugin) Inject() kernel.Inject { return p.opts.Inject }
 
 // Provide 声明不提供服务:实际提供什么由 JS 在 apply 期间通过 ctx.provide 决定,
 // 装配期的预检(M3)会在加载 Artifact 后根据运行结果补上。
@@ -202,15 +225,89 @@ func (p *Plugin) Apply(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, 
 	defer cancel()
 
 	stage := &stager{}
+	var toolsReg *tools.Registry
+	if v, ok := ctx.TryService("tools"); ok {
+		toolsReg, _ = v.(*tools.Registry)
+	}
+	var shellChain *shell.Chain
+	if v, ok := ctx.TryService("shell"); ok {
+		shellChain, _ = v.(*shell.Chain)
+	}
+	var injected *moejs.Module
+	if shellChain != nil {
+		var cerr error
+		injected, cerr = moejs.Compile("ada:shell", "const host = globalThis.__adaHost;\nexport function run(program, args, dir) { return host.shell(program, args, dir); }\n")
+		if cerr != nil {
+			return nil, kernel.Wrap(kernel.CodeInvalid, cerr, "JS 插件 %s 注入模块编译失败", p.opts.Name)
+		}
+	}
+	modules := map[string]*moejs.Module{}
+	if injected != nil {
+		modules["ada:shell"] = injected
+	}
 	rt, err := jsrt.New(actx, jsrt.Options{
 		Artifact: p.opts.Artifact,
 		Logf:     p.record,
+		Modules:  modules,
 		Host: jsrt.Host{
 			Provide:   stage.provide,
 			Emit:      func(event string, payload any) error { return p.emitTo(stage, event, payload) },
 			On:        stage.on,
 			Effect:    stage.effect,
 			Waterfall: stage.waterfall,
+			Shell: func(sctx context.Context, program string, args []string, dir string) (string, error) {
+				if shellChain == nil {
+					return "", fmt.Errorf("shell 服务不可用")
+				}
+				sh, err := shellChain.Get()
+				if err != nil {
+					return "", err
+				}
+				res, err := sh.Run(sctx, shell.Command{Program: program, Args: args, Dir: shell.Path(dir), Timeout: 30 * time.Second})
+				if err != nil {
+					return "", err
+				}
+				text := strings.TrimSpace(string(res.Stdout))
+				if stderr := strings.TrimSpace(string(res.Stderr)); stderr != "" {
+					if text != "" {
+						text += "\\n"
+					}
+					text += stderr
+				}
+				if res.ExitCode != 0 {
+					return "", fmt.Errorf("命令退出码 %d: %s", res.ExitCode, text)
+				}
+				return text, nil
+			},
+			Tool: func(name, summary string, input map[string]any, readOnly bool, invoke func(ctx context.Context, args any) (any, error)) error {
+				if toolsReg == nil {
+					return fmt.Errorf("tools 服务不可用")
+				}
+				def := tools.ToolDef{
+					Name: name, Summary: summary, ReadOnly: readOnly,
+					Timeout: 30 * time.Second, Source: p.opts.Name,
+					Input: schema.FromMap(input),
+					Handler: func(tctx context.Context, call tools.CallInfo) (tools.Result, error) {
+						var args any
+						if len(call.Args) > 0 {
+							if err := json.Unmarshal(call.Args, &args); err != nil {
+								return tools.Result{Status: tools.StatusError, Content: []llm.Block{{Kind: llm.BlockText, Text: "参数解析失败: " + err.Error()}}}, nil
+							}
+						}
+						out, err := invoke(tctx, args)
+						if err != nil {
+							return tools.Result{Status: tools.StatusError, Content: []llm.Block{{Kind: llm.BlockText, Text: err.Error()}}}, nil
+						}
+						text, ok := out.(string)
+						if !ok {
+							b, _ := json.Marshal(out)
+							text = string(b)
+						}
+						return tools.Result{Status: tools.StatusOK, Content: []llm.Block{{Kind: llm.BlockText, Text: text}}}, nil
+					},
+				}
+				return stage.tool(def)
+			},
 		},
 	})
 	if err != nil {
@@ -227,7 +324,7 @@ func (p *Plugin) Apply(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, 
 		return nil, kernel.Wrap(kernel.CodeInvalid, err, "JS 插件 %s 的 apply 失败", p.opts.Name)
 	}
 
-	waterfalls, ons, effects, provides, emits := stage.drain()
+	waterfalls, ons, effects, provides, emits, toolDefs := stage.drain()
 
 	// waterfall 先于普通监听器注册:中间件通常要包住整条链的其余部分。
 	for _, req := range waterfalls {
@@ -263,6 +360,19 @@ func (p *Plugin) Apply(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, 
 			return nil, kernel.Wrap(kernel.CodeInvalid, perr, "JS 插件 %s 提供服务 %q 失败", p.opts.Name, req.name)
 		}
 	}
+	var toolDisposers []kernel.Dispose
+	for _, req := range toolDefs {
+		d, terr := toolsReg.Register(req.def)
+		if terr != nil {
+			for _, td := range toolDisposers {
+				_ = td(context.Background())
+			}
+			runEffects(p.opts.Name, effects, context.Background())
+			_ = rt.Close(context.Background())
+			return nil, kernel.Wrap(kernel.CodeInvalid, terr, "JS 插件 %s 注册工具 %q 失败", p.opts.Name, req.def.Name)
+		}
+		toolDisposers = append(toolDisposers, d)
+	}
 	for _, req := range emits {
 		ctx.EmitContext(actx, req.event, req.payload)
 	}
@@ -274,7 +384,7 @@ func (p *Plugin) Apply(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, 
 
 	ctx.Log().Info("JS 插件已装配",
 		"exports", rt.Exports(), "ons", len(ons), "waterfalls", len(waterfalls), "effects", len(effects),
-		"provides", len(provides), "emits", len(emits), "result", res)
+		"provides", len(provides), "emits", len(emits), "tools", len(toolDefs), "result", res)
 	return func(dctx context.Context) error {
 		p.mu.Lock()
 		r := p.rt
@@ -284,8 +394,14 @@ func (p *Plugin) Apply(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, 
 		if r == nil {
 			return nil
 		}
-		// JS 的清理必须先于运行时关闭,否则清理函数已经无处可跑。
-		errs := runEffects(p.opts.Name, effects, dctx)
+		// 工具先注销,再跑 JS 清理,最后关闭运行时。
+		var errs []error
+		for i := len(toolDisposers) - 1; i >= 0; i-- {
+			if err := toolDisposers[i](dctx); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		errs = append(errs, runEffects(p.opts.Name, effects, dctx)...)
 		if cerr := r.Close(dctx); cerr != nil {
 			errs = append(errs, cerr)
 		}

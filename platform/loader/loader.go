@@ -57,7 +57,8 @@ func Lookup(opts Options) func(m *plugin.Manifest) (kernel.Plugin, error) {
 			if err != nil {
 				return nil, err
 			}
-			return bridge.New(bridge.Options{Name: m.ID, Artifact: artifact, Logf: opts.Logf})
+			return bridge.New(bridge.Options{Name: m.ID, Artifact: artifact, Logf: opts.Logf,
+				Inject: kernel.Inject{Names: m.Inject.Required, Optional: m.Inject.Optional}})
 		default:
 			return nil, fmt.Errorf("loader: 插件 %q 的 kind %q 未知", m.ID, m.Kind)
 		}

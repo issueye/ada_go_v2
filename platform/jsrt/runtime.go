@@ -100,6 +100,10 @@ type Host struct {
 	// Waterfall 注册一个可改写/否决的中间件。invoke 接收内核的 next,
 	// JS 侧通过同步调用 next 继续下游并拿到结果。
 	Waterfall func(event string, invoke func(ctx context.Context, input any, next func(any) (any, error)) (any, error)) error
+	// Shell 是 JS 侧 ctx.shell / 注入模块的宿主实现。
+	Shell func(ctx context.Context, program string, args []string, dir string) (string, error)
+	// Tool 是 JS 侧 ctx.tool(spec, handler) 的宿主实现;invoke 在工具被调用时执行 JS handler。
+	Tool func(name, summary string, input map[string]any, readOnly bool, invoke func(ctx context.Context, args any) (any, error)) error
 }
 
 // ErrReentrant 表示同一运行时在自己的回调链里被再次调用。
@@ -117,6 +121,10 @@ type Options struct {
 	Logf func(format string, args ...any)
 	// Host 提供 ctx.provide / ctx.emit 的落地实现。
 	Host Host
+	// Modules 是宿主注入的 moejs 模块(如 "ada:shell");Link 时优先于相对路径。
+	Modules map[string]*moejs.Module
+	// Globals 是加载前注入的全局变量(宿主能力对象)。
+	Globals map[string]any
 }
 
 // Runtime 是一个插件实例的 JS 世界。
@@ -270,7 +278,25 @@ func (r *Runtime) load() error {
 	if err := setFn("waterfall", r.nativeWaterfall(raw)); err != nil {
 		return fmt.Errorf("jsrt: 注入 ctx.waterfall 失败: %w", err)
 	}
+	if err := setFn("tool", r.nativeTool(raw)); err != nil {
+		return fmt.Errorf("jsrt: 注入 ctx.tool 失败: %w", err)
+	}
+	for name, val := range r.opts.Globals {
+		if err := raw.SetGlobal(name, val); err != nil {
+			return fmt.Errorf("jsrt: 注入全局 %s 失败: %w", name, err)
+		}
+	}
 	host := engine.ObjectValue(ctxObj)
+	// __adaHost 是注入 moejs 模块可用的宿主能力对象(当前只有 shell)。
+	hostObj := realm.NewObject()
+	if r.opts.Host.Shell != nil {
+		if err := hostObj.SetProp(realm, realm.KeyFromGoString("shell"), raw.Function("shell", 3, r.nativeShell(raw))); err != nil {
+			return fmt.Errorf("jsrt: 注入 __adaHost.shell 失败: %w", err)
+		}
+	}
+	if err := realm.Global.SetProp(realm, realm.KeyFromGoString("__adaHost"), engine.ObjectValue(hostObj)); err != nil {
+		return fmt.Errorf("jsrt: 注入 __adaHost 失败: %w", err)
+	}
 	// __adaCtx 只是调试入口;插件作者应该用 apply(ctx, config) 的第一个参数。
 	if err := realm.Global.SetProp(realm, realm.KeyFromGoString("__adaCtx"), host); err != nil {
 		return fmt.Errorf("jsrt: 注入 __adaCtx 失败: %w", err)
@@ -293,9 +319,12 @@ func (r *Runtime) load() error {
 		return fmt.Errorf("jsrt: 入口 %q 不存在", r.art.Entry)
 	}
 	linked, err := moejs.Link(entry, func(ref moejs.Referrer, spec string) (*moejs.Module, error) {
+		if m, ok := r.opts.Modules[spec]; ok {
+			return m, nil
+		}
 		name, ok := r.art.Resolve(ref.Name(), spec)
 		if !ok {
-			return nil, fmt.Errorf("jsrt: 无法解析 %q(来自 %s);只允许相对导入", spec, ref.Name())
+			return nil, fmt.Errorf("jsrt: 无法解析 %q(来自 %s);只允许相对导入或宿主注入模块", spec, ref.Name())
 		}
 		m, ok := mods[name]
 		if !ok {
@@ -372,6 +401,107 @@ func (r *Runtime) nativeProvide(raw *moejs.Runtime) moejs.NativeFunc {
 		}
 		return engine.Undefined(), nil
 	}
+}
+
+// nativeShell 实现宿主注入模块用的 __adaHost.shell(program, args, dir)。
+//
+// 返回值是 stdout 字符串;非零退出与 stderr 由宿主实现合并后返回。
+func (r *Runtime) nativeShell(raw *moejs.Runtime) moejs.NativeFunc {
+	return func(_ *engine.Realm, _ engine.Value, args []engine.Value) (engine.Value, error) {
+		if r.opts.Host.Shell == nil {
+			return engine.Undefined(), fmt.Errorf("shell 未启用")
+		}
+		if len(args) < 1 {
+			return engine.Undefined(), fmt.Errorf("shell(program, args, dir) 至少需要 program")
+		}
+		program, err := toString(raw, args[0])
+		if err != nil || program == "" {
+			return engine.Undefined(), fmt.Errorf("shell program 必须是非空字符串")
+		}
+		var argv []string
+		if len(args) > 1 {
+			v, convErr := raw.ToGo(args[1])
+			if convErr != nil {
+				return engine.Undefined(), fmt.Errorf("shell args 无法转换: %w", convErr)
+			}
+			list, ok := v.([]any)
+			if !ok {
+				return engine.Undefined(), fmt.Errorf("shell args 必须是数组")
+			}
+			for _, item := range list {
+				s, ok := item.(string)
+				if !ok {
+					return engine.Undefined(), fmt.Errorf("shell args 只能包含字符串")
+				}
+				argv = append(argv, s)
+			}
+		}
+		dir := "/workspace"
+		if len(args) > 2 {
+			if s, convErr := toString(raw, args[2]); convErr == nil && s != "" {
+				dir = s
+			}
+		}
+		// 工具调用链路上的取消由 Go 侧 tools 超时兜底;JS 无法把 ctx 传回原生函数。
+		out, err := r.opts.Host.Shell(context.Background(), program, argv, dir)
+		if err != nil {
+			return engine.Undefined(), err
+		}
+		return raw.FromGo(out)
+	}
+}
+
+// nativeTool 实现 ctx.tool(spec, handler):handler 是 JS 函数,工具调用时回调。
+func (r *Runtime) nativeTool(raw *moejs.Runtime) moejs.NativeFunc {
+	return func(_ *engine.Realm, _ engine.Value, args []engine.Value) (engine.Value, error) {
+		if r.opts.Host.Tool == nil {
+			return engine.Undefined(), fmt.Errorf("ctx.tool 未启用")
+		}
+		if len(args) < 2 {
+			return engine.Undefined(), fmt.Errorf("ctx.tool(spec, handler) 需要两个参数")
+		}
+		if !engine.IsCallable(args[1]) {
+			return engine.Undefined(), fmt.Errorf("ctx.tool 的第二个参数必须是函数")
+		}
+		spec, err := raw.ToGo(args[0])
+		if err != nil {
+			return engine.Undefined(), fmt.Errorf("ctx.tool 的 spec 无法转换: %w", err)
+		}
+		obj, ok := spec.(map[string]any)
+		if !ok {
+			return engine.Undefined(), fmt.Errorf("ctx.tool 的 spec 必须是对象")
+		}
+		name, _ := obj["name"].(string)
+		summary, _ := obj["summary"].(string)
+		input, _ := obj["input"].(map[string]any)
+		readOnly, _ := obj["readOnly"].(bool)
+		if name == "" {
+			return engine.Undefined(), fmt.Errorf("ctx.tool 需要非空 name")
+		}
+		r.nextID++
+		id := r.nextID
+		r.handlers[id] = handlerEntry{fn: args[1], this: engine.Undefined()}
+		invoke := func(ctx context.Context, a any) (any, error) {
+			return r.invokeHandler(ctx, id, a)
+		}
+		if err := r.opts.Host.Tool(name, summary, input, readOnly, invoke); err != nil {
+			delete(r.handlers, id)
+			return engine.Undefined(), err
+		}
+		return engine.Undefined(), nil
+	}
+}
+
+func toString(raw *moejs.Runtime, v engine.Value) (string, error) {
+	got, err := raw.ToGo(v)
+	if err != nil {
+		return "", err
+	}
+	s, ok := got.(string)
+	if !ok {
+		return "", fmt.Errorf("不是字符串")
+	}
+	return s, nil
 }
 
 // nativeEmit 实现 ctx.emit(event, payload):桥接层负责把它排到内核协程上派发。

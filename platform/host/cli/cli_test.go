@@ -669,3 +669,19 @@ func TestUpSecretsStack(t *testing.T) {
 		t.Fatalf("secrets 栈挂载失败: code=%d err=%s out=%s", code, errOut, out)
 	}
 }
+
+// 32. 脚本插件(git-helper TS)+ 注入模块 ada:shell 端到端。
+func TestAgentGitScriptPlugin(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir("../../.."); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	code, out, errOut := run("agent", "--preset", "examples/git-ts/git.preset.json", "-message", "看看 git 状态")
+	if code != 0 || !strings.Contains(out, "已读取 git 状态(脚本插件)") {
+		t.Fatalf("脚本插件运行失败: code=%d err=%s out=%s", code, errOut, out)
+	}
+}
