@@ -17,7 +17,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/adag/ada-go/v2/kernel"
+	"github.com/adag/ada-go/v2/platform/kernel"
 	seamfs "github.com/adag/ada-go/v2/plugins/seam/fs"
 	"github.com/adag/ada-go/v2/plugins/seam/seamerr"
 )
@@ -109,15 +109,60 @@ func (f *FS) resolve(v seamfs.Path) (host string, root string, err error) {
 		return "", "", seamfs.Denied("sandbox", fmt.Sprintf("路径越界: %s", s))
 	}
 
-	// 符号链接:目标存在时必须仍在同一根内(读与写都检查)。
+	// 符号链接:目标存在时解析它;目标不存在时解析「最深的已存在祖先」。
+	// 只检查最终路径的 EvalSymlinks 会在「新文件 + 父目录是根外链接」时漏掉。
+	target, err := secureTarget(root, host)
+	if err != nil {
+		return "", "", err
+	}
+	return target, root, nil
+}
+
+// secureTarget 返回一个解析掉符号链接、且确定在 root 内的宿主路径。
+//
+// 对不存在的目标,逐级向上找已存在祖先并解析它,再把缺失的相对段拼回;
+// 这样 Write 的父目录链接不会把临时文件/rename 带到根外。
+func secureTarget(root, host string) (string, error) {
 	resolvedRoot := resolvedOrSelf(root)
 	if target, err := filepath.EvalSymlinks(host); err == nil {
 		if !within(resolvedRoot, target) {
-			return "", "", seamfs.Denied("sandbox", fmt.Sprintf("符号链接指向根外: %s", s))
+			return "", seamfs.Denied("sandbox", fmt.Sprintf("符号链接指向根外: %s", host))
 		}
-		return target, root, nil
+		return target, nil
 	}
-	return host, root, nil
+
+	cur := host
+	var missing []string
+	for {
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			break
+		}
+		// 先把当前段记为「缺失」,再判断父目录是否存在:
+		// 父目录存在时,当前段仍要拼回最终路径。
+		missing = append(missing, filepath.Base(cur))
+		if _, err := os.Lstat(parent); err == nil {
+			resolvedParent, err := filepath.EvalSymlinks(parent)
+			if err != nil {
+				return "", err
+			}
+			if !within(resolvedRoot, resolvedParent) {
+				return "", seamfs.Denied("sandbox", fmt.Sprintf("路径父目录指向根外: %s", host))
+			}
+			parts := append([]string{resolvedParent}, reverse(missing)...)
+			return filepath.Join(parts...), nil
+		}
+		cur = parent
+	}
+	return host, nil
+}
+
+func reverse(in []string) []string {
+	out := make([]string, len(in))
+	for i := range in {
+		out[i] = in[len(in)-1-i]
+	}
+	return out
 }
 
 func resolvedOrSelf(p string) string {

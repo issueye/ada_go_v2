@@ -8,7 +8,7 @@ import (
 	"context"
 	"os"
 
-	"github.com/adag/ada-go/v2/kernel"
+	"github.com/adag/ada-go/v2/platform/kernel"
 	seamsecrets "github.com/adag/ada-go/v2/plugins/seam/secrets"
 )
 

@@ -181,6 +181,29 @@ func TestSymlinkEscape(t *testing.T) {
 	}
 }
 
+// 5.1 新文件经由根外父目录符号链接写入:必须拒绝(不能只检查已存在目标)。
+func TestWriteThroughSymlinkParent(t *testing.T) {
+	dir := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(dir, "link")); err != nil {
+		t.Skipf("平台无法创建符号链接: %v", err)
+	}
+	f, err := fslocal.New(fslocal.Options{Workspace: dir})
+	if err != nil {
+		t.Fatalf("创建 fs-local 失败: %v", err)
+	}
+	if _, err := f.Write(context.Background(), seamfs.WriteRequest{
+		Path:       ws("/link/escaped.txt"),
+		Content:    []byte("x"),
+		CreateDirs: true,
+	}); err == nil {
+		t.Fatalf("父目录符号链接指向根外时应拒绝")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "escaped.txt")); err == nil {
+		t.Fatalf("根外文件不应被创建")
+	}
+}
+
 // 6. 换行与编码:CRLF 原样返回,不做换行改写。
 func TestPreservesCRLF(t *testing.T) {
 	f, _ := newFS(t)

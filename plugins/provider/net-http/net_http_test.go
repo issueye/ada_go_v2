@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/adag/ada-go/v2/kernel"
+	"github.com/adag/ada-go/v2/platform/kernel"
 	nethttp "github.com/adag/ada-go/v2/plugins/provider/net-http"
 	seamnet "github.com/adag/ada-go/v2/plugins/seam/net"
 )

@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/adag/ada-go/v2/caps"
-	"github.com/adag/ada-go/v2/kernel"
+	"github.com/adag/ada-go/v2/platform/caps"
+	"github.com/adag/ada-go/v2/platform/kernel"
 	seamapproval "github.com/adag/ada-go/v2/plugins/seam/approval"
 	seamsandbox "github.com/adag/ada-go/v2/plugins/seam/sandbox"
 	seamshell "github.com/adag/ada-go/v2/plugins/seam/shell"

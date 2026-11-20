@@ -8,7 +8,7 @@
 | 目标仓库 | `E:\codes\go_projects\ada_go_v2`（当前为空） |
 | 依赖基线 | `github.com/egoist/mygo`（桌面壳/UI）、`github.com/MoeForge/moejs v0.1.0-alpha.11`、`github.com/evanw/esbuild v0.28.2` |
 | 参考实现 | DeepSeek Harness 的 `@deepseek-ai/cordis@4.1.0`（Context/Fiber/Service/Effect/Event/Loader） |
-| 现实基线 | ada_go v1（`internal/agent_core/plugins/host/*`、`internal/common/pluginapi/*`） |
+| 现实基线 | ada_go v1（`internal/agent_core/plugins/platform/host/*`、`internal/common/pluginapi/*`） |
 | 编写日期 | 2026-11-19 |
 
 ---
@@ -35,12 +35,12 @@ v1 是一个成熟但**功能化**的插件宿主（`internal/agent_core/plugins
 | 已有能力 | 实现位置 | 对 v2 的意义 |
 |---|---|---|
 | 清单校验 + 信任分级 + Ed25519 验签 | `pluginapi/manifest.go`、`trust.go`、`signature.go` | 直接移植；签名覆盖「去 sig 清单 + 目录摘要」 |
-| 每插件一个 moejs Runtime + 一条 owner goroutine | `host/runtime.go` | 并发模型已验证：调用经 channel 串行，跨插件天然并行 |
-| 虚拟模块表 + `Link`/`Resolver`（不读盘、不解析 node_modules） | `host/load.go` | v2 编译层的模块装载可直接复用 |
-| 宿主模块表（`node:fs/path/crypto/...` 自实现） | `host/caps.go`、`host/nodemods/*` | 纯计算部分可复用 |
-| 十类能力桥（fs/exec/process/config/events/turn/dispatch/catalog/processes/ui） | `host/cap_*.go` | 沙箱边界与限额是最大资产 |
-| 预算分档 + 熔断半开探测 | `host/budget.go`、`breaker.go` | 直接复用，v2 再叠「激活配额」 |
-| 贡献装配事务（staging → commit → rollback） | `host/staging.go` | v2 升级为 effect 撤销栈 |
+| 每插件一个 moejs Runtime + 一条 owner goroutine | `platform/host/runtime.go` | 并发模型已验证：调用经 channel 串行，跨插件天然并行 |
+| 虚拟模块表 + `Link`/`Resolver`（不读盘、不解析 node_modules） | `platform/host/load.go` | v2 编译层的模块装载可直接复用 |
+| 宿主模块表（`node:fs/path/crypto/...` 自实现） | `platform/host/caps.go`、`platform/host/nodemods/*` | 纯计算部分可复用 |
+| 十类能力桥（fs/exec/process/config/events/turn/dispatch/catalog/processes/ui） | `platform/host/cap_*.go` | 沙箱边界与限额是最大资产 |
+| 预算分档 + 熔断半开探测 | `platform/host/budget.go`、`breaker.go` | 直接复用，v2 再叠「激活配额」 |
+| 贡献装配事务（staging → commit → rollback） | `platform/host/staging.go` | v2 升级为 effect 撤销栈 |
 | 钩子链（14 点位、5 档动作、超时忽略） | `plugins/hooks.go` | v2 泛化成事件总线的一种分发模式 |
 
 ### 1.2 v1 的结构性缺口
@@ -83,7 +83,7 @@ v1 是一个成熟但**功能化**的插件宿主（`internal/agent_core/plugins
 | G4 | **纯 Go 工具链**：编译、执行、安装、校验都不需要 Node | CI 里 `node`/`npm` 不存在也能构建、安装、运行 |
 | G5 | **能力=授权，服务=可见性**：双重门禁 | 未授权的 `fs.read` 在调用点被拒并审计；未 inject 的服务拿不到 |
 | G6 | **可观测**：fiber 树、effect 树、服务表、装配报告、调用跨度 | `ada inspect` 能回答「谁提供了 X、谁依赖 X、X 为什么被重载」 |
-| G7 | **宿主可移植**：桌面（mygo）、headless CLI、服务端同内核 | 内核包不 import `mygo`；mygo 只是 `host/desktop` 适配器 |
+| G7 | **宿主可移植**：桌面（mygo）、headless CLI、服务端同内核 | 内核包不 import `mygo`；mygo 只是 `platform/host/desktop` 适配器 |
 | G8 | **编排可声明**：流水线、激活事件、组合 patch 都是数据不是代码 | 用 JSON/YAML 能表达一条跨插件流水线，无需改 Go |
 
 ### 2.2 非目标（v2 明确不做）
@@ -116,7 +116,7 @@ v1 是一个成熟但**功能化**的插件宿主（`internal/agent_core/plugins
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ L6  应用/宿主     mygo 桌面窗口 · ada CLI(headless) · 服务端 HTTP             │
-│                   host/desktop   host/cli   host/server                        │
+│                   platform/host/desktop   platform/host/cli   platform/host/server                        │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ L5  组合层（数据）preset（agent 能力组合）· bundle · profile patch            │
 │                   「装哪些插件」在这一层决定，不改代码                          │
@@ -155,7 +155,7 @@ type Provider interface {
 
 ```
                      ┌──────────── app 进程 ─────────────┐
- mygo UI 主线程 ────▶ │ host/desktop：RunOnMain / 类型化事件 │
+ mygo UI 主线程 ────▶ │ platform/host/desktop：RunOnMain / 类型化事件 │
                      │                                    │
                      │  kernel goroutine (#1)              │ ← 装配、服务表、事件分发、配置
                      │    ├─ plugin A loop goroutine       │ ← moejs Runtime A（单线程）
@@ -645,7 +645,7 @@ kernel.WaterfallOn(ctx, events.ModelRequest, func(hctx context.Context, c *kerne
 
 - 监听器默认按「注册顺序」；`OnOption{Priority: p}` 可调（越大越先，同级按 plugin id 稳定排序——沿用 v1 `HookChain` 的做法）。
 - 每个监听器有超时(默认 200ms,可用 `OnOption{Timeout: ...}` 放宽,上限 2s,超出被截断);超时按该模式的错误策略处理。
-- 监听器签名带 `context.Context`([ADR 0001](adr/0001-handler-context-and-timeout-gate.md)):它是「父上下文 + 本监听器超时」派生的子上下文,超时即取消,监听器应据此收尾。内核无法杀死 goroutine,只能停止等待。
+- 监听器签名带 `context.Context`([ADR 0003](adr/0003-handler-context-and-timeout-gate.md)):它是「父上下文 + 本监听器超时」派生的子上下文,超时即取消,监听器应据此收尾。内核无法杀死 goroutine,只能停止等待。
 - **waterfall 超时闸门**:本次派发超时后 `Next` 一律返回 `ETIMEOUT`,下游绝不执行——即使监听器忽略取消信号。waterfall 是策略/拦截的唯一原语,超时后放行下游等于 fail-open(AGENTS P7)。
 - `Once` 只触发一次；`global` 监听器（`OnOption{Global: true}`）穿透 `isolate`，用于「全局面板/审计」。
 
@@ -980,7 +980,7 @@ plugin.json
   │
   ├─(5) 写 Artifact（dist/plugin.artifact.json）+ 计算 digest（可选签名）
   │
-  └─(6) 缓存：$ADA_HOME/cache/compile/<key>.artifact.json
+  └─(6) 缓存：$ADA_HOME/cache/platform/compile/<key>.artifact.json
          key = sha256(全部源文件内容 + esbuild 版本 + 编译选项 + hostApi + entry)
 ```
 
@@ -1659,7 +1659,7 @@ preset 的形态（数据，不是代码）：
 1. **agent-loop 用 Go 插件实现（默认）**。循环在热路径上：每一步都要读 session、组装 context、调 llm、跑工具；用 JS 实现会把每次消息/增量过 JSON 桥（~7 µs + 序列化），并让 token 流经过两次边界。Go 插件零桥接开销；TS 插件仍可写一个「实验循环」，通过同一 seam 替换。
 2. **内核不出现 agent 词汇**。`kernel` 包里不允许出现 `Turn`、`Message`、`ToolCall`、`Model` 这类类型；一旦出现，说明该能力应该下沉成插件或 seam。CI 用 grep 守护。
 3. **seam 契约版本化**。每个 seam 声明 `ServiceSpec{Version}`（§5.1）；provider 声明它实现的版本；preset 校验「seam 与 provider 版本匹配」；不匹配 = 依赖未满足（`pending`），不是运行期 panic。**首批四个 seam（llm / tools / session / prompts）的接口草案已单独成文：[seam-api.md](seam-api.md)**。
-4. **preset 即产品**。桌面、headless、server 的差异只允许两种来源：preset 列表 + host 适配器。**不允许**为某个产品在 kernel/core 里加分支。
+4. **preset 即产品**。桌面、headless、server 的差异只允许两种来源：preset 列表 + host 适配器。**不允许**为某个产品在 platform/kernel/core 里加分支。
 
 #### 代价与对策
 
@@ -1800,7 +1800,7 @@ func (b *Broker) Authorize(ctx context.Context, p PluginRef, cap caps.Cap, targe
 
 ### 14.3 mygo 桌面宿主集成
 
-内核是 headless 的，mygo 只做「窗口 + UI 渲染 + 系统能力」。两者在 `host/desktop` 一个适配器里会合：
+内核是 headless 的，mygo 只做「窗口 + UI 渲染 + 系统能力」。两者在 `platform/host/desktop` 一个适配器里会合：
 
 ```go
 func main() {
@@ -1927,7 +1927,7 @@ func TestReadFile(t *testing.T) {
 ```
 ada_go_v2/
   go.mod                      module github.com/adag/ada（v2）
-  kernel/                     ← 纯 Go，不依赖 moejs / mygo
+  platform/kernel/                     ← 纯 Go，不依赖 moejs / mygo
     app.go                    App：根 Context、代际、生命周期
     context.go                Context 派生（Extend/Isolate/Intercept）
     fiber.go                  Fiber 状态机、epoch、Ready/Update/Reload/Dispose
@@ -1937,18 +1937,18 @@ ada_go_v2/
     config.go                 Config 快照、Decode、volatile
     schema/                   JSON Schema 子集（校验 + 默认值 + simplify）
     errors.go                 错误码与类型
-  plugin/                     清单、发现、Artifact、安装、信任、签名
-  compile/                    esbuild Transform 管线、模块表、缓存、sourcemap
-  jsrt/                       moejs 适配：Entry/Runtime/Loop/Loader/Bridge/Budget/Breaker
+  platform/plugin/                     清单、发现、Artifact、安装、信任、签名
+  platform/compile/                    esbuild Transform 管线、模块表、缓存、sourcemap
+  platform/jsrt/                       moejs 适配：Entry/Runtime/Loop/Loader/Bridge/Budget/Breaker
     api/                      宿主模块实现（ada:fs / ada:net / ada:clock …）
-  caps/                       能力授权与沙箱（fs/net/exec/proc/secrets/ui/config/audit）
+  platform/caps/                       能力授权与沙箱（fs/net/exec/proc/secrets/ui/config/audit）
   contrib/                    贡献目录（tools/providers/prompts/actions/routes/pages/slots/jobs）
-  assemble/                   Plan/Graph/Assembler/Report/Generation
-  flow/                       流水线：DSL、执行、检查点、受限表达式
-  sched/                      激活、配额、闲置回收、cron
+  platform/assemble/                   Plan/Graph/Assembler/Report/Generation
+  platform/flow/                       流水线：DSL、执行、检查点、受限表达式
+  platform/sched/                      激活、配额、闲置回收、cron
   profile/                    bundle/patch 分层与合并
   observe/                    日志、span、指标、健康、inspect
-  host/
+  platform/host/
     desktop/                  mygo 适配器（窗口、协议、绑定、面板）
     cli/                      headless：up/dev/install
     server/                   HTTP 适配器（可选）
@@ -1974,13 +1974,13 @@ ada_go_v2/
 依赖禁令（CI 用 `go list` 检查）：
 
 ```
-kernel   ✗→ jsrt, compile, assemble, flow, sched, host/*, plugins/*
-         ✗→ 出现 agent 词汇（Turn/Message/ToolCall/Model/Session）
-compile  ✗→ jsrt, assemble
-jsrt     ✓→ kernel（只实现接口）  ✗→ assemble, host/*
-assemble ✓→ kernel, plugin, contrib, observe
-plugins/* ✓→ kernel, contrib, observe, caps（seam 插件之间只经服务与事件）
-host/*   ✓→ 全部
+platform/kernel   ✗→ platform/jsrt, platform/compile, platform/assemble, platform/flow, platform/sched, platform/host/*, plugins/*
+                  ✗→ 出现 agent 词汇（Turn/Message/ToolCall/Model/Session）
+platform/compile  ✗→ platform/jsrt, platform/assemble
+platform/jsrt     ✓→ platform/kernel（只实现接口）  ✗→ platform/assemble, platform/host/*
+platform/assemble ✓→ platform/kernel, platform/plugin, platform/caps
+plugins/*         ✓→ platform/kernel, platform/caps（seam 插件之间只经服务与事件）
+platform/host/*   ✓→ 全部
 ```
 
 > 第三条禁令（`kernel` 里不得出现 agent 词汇）是 §12.6 的守护线：一旦 `kernel` 需要认识「turn」，就说明这项能力该做成 core 插件而不是内核机制。
@@ -1988,7 +1988,7 @@ host/*   ✓→ 全部
 ### 16.2 骨架（把设计落成可编译的形状）
 
 ```go
-// kernel/app.go
+// platform/kernel/app.go
 type App struct {
     opts    Options
     root    *Context
@@ -2009,7 +2009,7 @@ func (a *App) Stop(ctx context.Context) error
 ```
 
 ```go
-// assemble/assembler.go
+// platform/assemble/assembler.go
 type Assembler struct {
     app  *kernel.App
     disc plugin.Discoverer
@@ -2024,7 +2024,7 @@ func (a *Assembler) Remove(ctx context.Context, id string) error
 ```
 
 ```go
-// jsrt/entry.go —— TS 插件实现 kernel.Plugin
+// platform/jsrt/entry.go —— TS 插件实现 kernel.Plugin
 type EntryPlugin struct {
     art  *plugin.Artifact
     json Manifest
@@ -2072,15 +2072,15 @@ export interface Context {
 | 里程碑 | 内容 | 交付物 | 验收（DoD） | 估算 |
 |---|---|---|---|---|
 | **M0 验证周** | 跑通 12 个 spike（附录 D；S1/S2/S6/S8/S9 已预验），冻结内核 API 草案 | spike 报告 + 一页 API 摘要 | 每个 spike 有明确通过/失败结论；失败项有替代方案 | 4–5 天（**gate 已关闭**） |
-| **M1 内核骨架** | Context/Fiber/Scope/Effect/Service/Event/Config + 单测 | `kernel/` 可独立跑 | 20 个 Go 插件按拓扑序装配；effect 逆序回收无泄漏；`-race` 全绿；`kernel` 无 agent 词汇（CI 检查） | 2 周 |
+| **M1 内核骨架** | Context/Fiber/Scope/Effect/Service/Event/Config + 单测 | `platform/kernel/` 可独立跑 | 20 个 Go 插件按拓扑序装配；effect 逆序回收无泄漏；`-race` 全绿；`kernel` 无 agent 词汇（CI 检查） | 2 周 |
 | **M2 执行层** | compile + jsrt + bridge + 宿主模块 | TS 插件能跑 | 12 类 fixture（正常/抛错/超时/OOM/卡死/CJS/缺模块/循环/装饰器/enum/TSX/多文件）全部按预期 | 3 周 |
 | **M3 装配与配置** | Plan/Graph/Assembler/Report/Profile | `ada plan/up/install` | 装/卸/改配置不重建整代；失败保留旧代；热重载级联正确 | 2 周 |
 | **M4 编排** | flow / sched / 配额 / cron | 一条跨插件流水线示例 | 崩溃后从检查点恢复；闲置回收后再激活成功；配额拒绝有审计 | 3 周 |
 | **M4.5 Agent Core 插件化** | seam/provider/policy 三段式 + `core/agent`·`agent-loop`·`session`·`system-prompt` + `presets/base`（任务拆分见 [seam-api.md 附录 C](seam-api.md)） | 能跑通一次「用户消息 → 模型 → 工具 → 结果」的最小 agent | 删掉任一插件产品仍能装配；seam 无 provider 时返回 `EUNIMPLEMENTED`；换成 `headless` preset 行为一致 | 3 周 |
 | **M5 安全与宿主** | caps 强制点、信任/签名、CLI、mygo 适配器、inspect；fs/sandbox/shell 契约见 [seam-api-security.md](seam-api-security.md) | 桌面 demo + CLI | 拒绝矩阵全绿；安装签名校验；`ada inspect` 展示 fiber/服务/effect 树与装饰器链 | 3 周 |
-| **M6 迁移与生态** | 移植 v1 的 fs/cron/provider/tools 等 10 个插件；SDK 完善 | 可用的插件集 + 文档 | 与 v1 行为对齐（同输入同输出）；插件作者按文档能在半天内写出可用插件 | 3–4 周 |
 
-累计约 **19–21 周**（单人全职，含验证周）；若两人并行（内核/执行 vs 编排/agent core）可压到 12–14 周。
+本路线图**不含 v1 插件迁移**,不提供 `ada migrate`;v1 仅作为行为参照保留在 §11。
+累计约 **15–17 周**（单人全职，含验证周）；若两人并行（内核/执行 vs 编排/agent core）可压到 12–14 周。
 
 **M0 的 gate 已关闭（2026-11-19）**：S2（1000 次 Runtime 重载，goroutine 0 泄漏、堆增量 358 KB 且不随轮次线性增长、单次 create+load+call+stop 平均 11.4 µs）与 S8（20 文件插件全量编译 13.3 ms；改 1 个文件的增量 transform+compile+link+load+call 平均 0.66 ms）均通过，无需启用备选方案。
 
@@ -2101,7 +2101,7 @@ export interface Context {
 | R9 | 循环依赖的 ESM 时序（TDZ） | 链接/调用异常 | 已预验可链接可调用（S9）；保留 TDZ 回归用例，编译期仍禁止「类型专用环」 |
 | R10 | Windows 路径/符号链接沙箱差异 | 越权读文件 | 三平台测试矩阵；`EvalSymlinks` 逐段校验；`os.Root` 为主 |
 | R11 | 重载丢失内存状态 | 用户可感知的中断 | 契约写死：状态必须进 `store`；提供 `internal/reload` 事件供交接；UI 显示「重载中」 |
-| R12 | 插件生态冷启动 | 没有插件可装 | 移植 v1 官方 10 个插件打样；`ada new` 脚手架；SDK 类型齐全；文档带 3 个完整示例 |
+| R12 | M4.5 agent 未闭环 | 平台没有真实产品验证，seam 形状可能返工 | 先按 C1–C6 做最小 agent 与 golden；不以更多 platform/host/安全插件替代闭环 |
 | R13 | 文档与代码漂移（v1 的老问题） | 信任受损 | 清单 schema 与 d.ts 由 Go 结构生成；文档示例进 CI 编译；`ada check` 校验示例 |
 | R14 | loop goroutine panic 导致进程退出 | 稳定性 | `eventloop.Options.OnError` + 外层 `recover`；panic 视为该插件致命并熔断 |
 | R15 | 预算/熔断参数拍脑袋 | 误杀或漏杀 | 先用 v1 实测参数（budget.go/breaker.go），上线后按 p99 调 |
@@ -2149,7 +2149,7 @@ export interface Context {
 | `ESERVICEINUSE` | 服务仍有依赖者 | dispose 超时 |
 | `EEFFECT` | effect 注册失败/已卸载后注册 | scope |
 | `ECONFIG` | 配置校验失败 | schema |
-| `EMANIFEST` | 清单非法 | install/preflight |
+| `EMANIFEST` | 清单非法 | platform/install/preflight |
 | `ESIGN` | 签名缺失/无效 | install |
 | `EARTIFACT` | Artifact 缺失/摘要不符 | load |
 | `ECOMPILE` | 编译失败（语法/CJS/.node） | compile |
@@ -2177,16 +2177,16 @@ export interface Context {
 | `frontend.slots/pages/blocks/nav/dashboard/actions/styles/assets` | `contributes.pages/slots/actions` | 渲染契约保留（Page/Section/Item） |
 | `host.Context`（每调用回调结构体） | 服务 + `CallContext` | 成员拆成服务：`ctx.fs` → `fs` 服务、`ctx.exec` → `exec` 服务、`ctx.state` → `store` |
 | `agent.registerTool/Provider/Prompt/Action/Route/Timer/Hook` | `contrib/*.Register` | 全部返回 disposer |
-| `host/staging.go`（Targets.commit/undo） | `assemble` 的事务 + effect 栈 | 原子提交与回滚保留，粒度到贡献 |
-| `host/runtime.go`（Load + frozen + 双代重载） | `jsrt.Entry` + `fiber.Reload` | 细粒度重载，双代保留为「整代回退」兜底 |
-| `host/load.go`（Virtual module + Link/Resolver） | `compile` + `jsrt.Loader` | 结构照搬，输入从 `.ts` 源码改为 Artifact |
+| `platform/host/staging.go`（Targets.commit/undo） | `assemble` 的事务 + effect 栈 | 原子提交与回滚保留，粒度到贡献 |
+| `platform/host/runtime.go`（Load + frozen + 双代重载） | `jsrt.Entry` + `fiber.Reload` | 细粒度重载，双代保留为「整代回退」兜底 |
+| `platform/host/load.go`（Virtual module + Link/Resolver） | `compile` + `jsrt.Loader` | 结构照搬，输入从 `.ts` 源码改为 Artifact |
 | `plugins/official/build.mjs`（Node 类型擦除） | `compile`（esbuild Go） | 去掉 Node 依赖 |
-| `host/budget.go` / `breaker.go` / `limits.go` | `jsrt.Budget/Breaker` | 参数沿用 |
-| `host/cap_*.go` | `caps/*` | 沙箱逻辑与限额照搬，加授权门禁与审计 |
+| `platform/host/budget.go` / `breaker.go` / `limits.go` | `jsrt.Budget/Breaker` | 参数沿用 |
+| `platform/host/cap_*.go` | `platform/caps/*` | 沙箱逻辑与限额照搬，加授权门禁与审计 |
 | `pluginapi/signature.go`（签目录） | `plugin.Sign`（签 Artifact digest） | 签名对象改为实际执行物 |
 | `app/app.go` 的组合根（七个 registry 硬编码） | `assemble` + 服务表 | 组合根只装基座服务 |
 | `cli/session_assembly.go`（整代重建 + 排空 30s） | `assemble.Apply/Add/Remove` | 增量装配 |
-| `host/skills.go`（扫描 SKILL.md） | 保留为 `contrib` 的一个 kind | 触发时机改为 lazy |
+| `platform/host/skills.go`（扫描 SKILL.md） | 保留为 `contrib` 的一个 kind | 触发时机改为 lazy |
 
 ---
 
@@ -2220,7 +2220,6 @@ export interface Context {
 5. **受限表达式求值器**：自研（安全、弱）vs moejs 沙箱（强、需额外加固）。建议默认自研，`expr.lang: "js"` 显式开启。
 6. **能力授权模型**：桌面端「按插件 + 按能力」的同意 UI 粒度；CLI 安装是否需要逐能力 flag。
 7. **`moejs` 升级策略**：锁 alpha.11 直到对方发布稳定版，还是允许 minor 跟进（需要执行层契约测试兜底）。
-8. **旧插件兼容**：v1 插件是否需要一键迁移工具（`ada migrate`），还是只在新脚手架里支持。
 
 
 

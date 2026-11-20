@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"testing"
 
-	"github.com/adag/ada-go/v2/kernel"
+	"github.com/adag/ada-go/v2/platform/kernel"
 	shellobserve "github.com/adag/ada-go/v2/plugins/policy/shell-observe"
 	shelllocal "github.com/adag/ada-go/v2/plugins/provider/shell-local"
 	seamshell "github.com/adag/ada-go/v2/plugins/seam/shell"

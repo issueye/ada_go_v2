@@ -27,7 +27,7 @@ plugin.json ──plugin.LoadDir──▶ []*Manifest(校验过的清单)
 
 **不在这一刀里**:插件安装与更新、签名校验、capability 授权、bundle/profile 的多级 patch。
 
-## 2. 清单(`plugin/`)
+## 2. 清单(`platform/plugin/`)
 
 字段是 design §9.2 的子集:
 
@@ -77,7 +77,7 @@ func (r *Report) OK() bool
 func (r *Report) Err() error // *assemble.Error,码 EASSEMBLEPLAN
 ```
 
-## 4. 组合(`preset/`)
+## 4. 组合(`platform/preset/`)
 
 preset 是**数据不是代码**(AGENTS §2.2 的组合数据类):产品差异靠换 preset 表达,不允许 `if product == ...`。
 

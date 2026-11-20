@@ -9,7 +9,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/adag/ada-go/v2/kernel"
+	"github.com/adag/ada-go/v2/platform/kernel"
 	"github.com/adag/ada-go/v2/plugins/seam/seamerr"
 )
 
@@ -113,15 +113,15 @@ func (c *Chain) Get() (Client, error) {
 	return out, nil
 }
 
-// Applied 返回当前装饰器 id(诊断用)。
-func (c *Chain) Applied() []uint64 {
+// Applied 返回当前装饰器优先级(外层到内层,诊断用)。
+func (c *Chain) Applied() []int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	out := make([]uint64, 0, len(c.items))
+	out := make([]int, 0, len(c.items))
 	for _, it := range c.items {
-		out = append(out, it.id)
+		out = append(out, it.priority)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	sort.Slice(out, func(i, j int) bool { return out[i] > out[j] })
 	return out
 }
 

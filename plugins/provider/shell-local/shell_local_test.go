@@ -3,6 +3,8 @@ package shelllocal_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -41,10 +43,13 @@ func echoCommand(args ...string) seamshell.Command {
 }
 
 func sleepCommand() seamshell.Command {
-	// Windows 用 powershell 单进程 sleep:cmd /c ping 会留下子进程,
-	// 子进程仍持有工作目录,导致测试的 TempDir 清理失败(也会暴露真实的杀树缺口)。
+	// Windows 用测试二进制自身作为长任务,避免 powershell 启动/杀进程的额外抖动。
 	if runtime.GOOS == "windows" {
-		return seamshell.Command{Program: "powershell", Args: []string{"-NoProfile", "-Command", "Start-Sleep -Seconds 5"}}
+		return seamshell.Command{
+			Program: os.Args[0],
+			Args:    []string{"-test.run=TestShellHelperProcess"},
+			Env:     map[string]string{"ADA_SHELL_HELPER": "1"},
+		}
 	}
 	return seamshell.Command{Program: "sleep", Args: []string{"20"}}
 }
@@ -102,14 +107,25 @@ func TestRejectsProgramWithSpace(t *testing.T) {
 // 4. 超时:ETIMEOUT,且及时返回。
 func TestTimeout(t *testing.T) {
 	s := newShell(t, shelllocal.Options{})
+	cmd := sleepCommand()
+	cmd.Timeout = 200 * time.Millisecond
 	start := time.Now()
-	_, err := s.Run(context.Background(), seamshell.Command{Program: sleepCommand().Program, Args: sleepCommand().Args, Timeout: 200 * time.Millisecond})
+	_, err := s.Run(context.Background(), cmd)
 	if err == nil || errCode(err) != seamshell.CodeTimeout {
 		t.Fatalf("超时应 ETIMEOUT,实际 %v", err)
 	}
 	if elapsed := time.Since(start); elapsed > 3*time.Second {
 		t.Fatalf("超时没有及时返回: %s", elapsed)
 	}
+}
+
+// TestShellHelperProcess 是 sleepCommand 的 Windows 子进程:
+// 只有被 shell-local 以 ADA_SHELL_HELPER=1 启动时才长时间休眠。
+func TestShellHelperProcess(t *testing.T) {
+	if os.Getenv("ADA_SHELL_HELPER") != "1" {
+		t.Skip("helper process only")
+	}
+	time.Sleep(5 * time.Second)
 }
 
 // 5. 输出上限:截断可见,命令被终止。
@@ -128,7 +144,21 @@ func TestOutputTruncation(t *testing.T) {
 	}
 }
 
-// 6. Stream:分块回调 + 汇总结果。
+// 5.1 Dir 是根外符号链接:拒绝,命令不得在根外执行。
+func TestDirSymlinkEscape(t *testing.T) {
+	ws := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(ws, "link")); err != nil {
+		t.Skipf("平台无法创建符号链接: %v", err)
+	}
+	s := newShell(t, shelllocal.Options{Workspace: ws})
+	cmd := echoCommand("x")
+	cmd.Dir = "/workspace/link"
+	if _, err := s.Run(context.Background(), cmd); err == nil {
+		t.Fatalf("根外符号链接目录应拒绝")
+	}
+}
+
 func TestStream(t *testing.T) {
 	s := newShell(t, shelllocal.Options{})
 	var text strings.Builder

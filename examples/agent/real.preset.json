@@ -1,0 +1,8 @@
+{
+  "name": "agent-real",
+  "plugins": ["plugins"],
+  "disable": ["llm-replay"],
+  "patch": {
+    "agent-loop": {"model": "mosi/nex-n2.6", "maxSteps": 4}
+  }
+}

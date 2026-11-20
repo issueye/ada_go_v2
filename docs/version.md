@@ -5,9 +5,9 @@
 ## 1. 范围
 
 ```
-version/   semver 解析、比较与约束(`>= > <= < = !=`)
-plugin/    清单新增 engines(只认 "ada")
-bundle/    bundle 新增 engine;ExpandWithOptions 传入宿主版本做校验
+platform/version/   semver 解析、比较与约束(`>= > <= < = !=`)
+platform/plugin/    清单新增 engines(只认 "ada")
+platform/bundle/    bundle 新增 engine;ExpandWithOptions 传入宿主版本做校验
 ```
 
 ## 2. 语法

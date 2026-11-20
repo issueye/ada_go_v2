@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/adag/ada-go/v2/kernel"
+	"github.com/adag/ada-go/v2/platform/kernel"
 	capsgate "github.com/adag/ada-go/v2/plugins/policy/caps-gate"
 	fsobserve "github.com/adag/ada-go/v2/plugins/policy/fs-observe"
 	fslocal "github.com/adag/ada-go/v2/plugins/provider/fs-local"

@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/adag/ada-go/v2/kernel"
+	"github.com/adag/ada-go/v2/platform/kernel"
 )
 
 // Code 是跨 seam 的统一错误码。

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/adag/ada-go/v2/kernel"
+	"github.com/adag/ada-go/v2/platform/kernel"
 	auditlog "github.com/adag/ada-go/v2/plugins/policy/audit-log"
 	seamfs "github.com/adag/ada-go/v2/plugins/seam/fs"
 	seamnet "github.com/adag/ada-go/v2/plugins/seam/net"

@@ -7,7 +7,7 @@ package shellobserve
 import (
 	"context"
 
-	"github.com/adag/ada-go/v2/kernel"
+	"github.com/adag/ada-go/v2/platform/kernel"
 	seamshell "github.com/adag/ada-go/v2/plugins/seam/shell"
 )
 

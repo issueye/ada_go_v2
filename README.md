@@ -2,10 +2,29 @@
 
 **一个以插件为核心的程序基座**：Go 内核 + TypeScript 插件（纯 Go 编译与执行，无需 Node 环境）+ Cordis 式的作用域与编排。
 
-> 当前处于 **M3 装配 + M4 编排(`sched`/`quota`/`flow`)+ M4.5 seam(`session`)+ M5 安全(`fs`/`shell`/`sandbox`/`approval`,三闸串联 + 默认拒绝审批)**:M1/M2/M3 已落地;M4 与 M5 仍在推进,M5 剩余 caps/签名/宿主。
+> 当前处于 **M4.5 Agent Core 第一刀(`prompts`/`llm`/`tools`/`agent-loop` + 最小 preset)+ M5 安全与宿主(`fs`/`shell`/`sandbox`/`approval`/`caps`/`net`/`secrets`/`install`/CLI/server/registry)**:M1–M4 已落地;M4.5 已跑通「用户消息 → 模型 → 工具 → 结果」的最小回路;M5 剩余 OS 级沙箱与真实桌面窗口(ADR 0001)。**不做 v1 插件迁移,不提供 `ada migrate`。**
 > **工作约定/红线**：[AGENTS.md](AGENTS.md)（动代码或改设计前先读）
 > 设计文档：[docs/plugin-kernel-design.md](docs/plugin-kernel-design.md)
 > seam 契约：[docs/seam-api.md](docs/seam-api.md)（llm / tools / session / prompts）
+
+## 目录结构
+
+```
+platform/              插件编排系统(作为一个整体)
+  kernel/              L1 内核(含 schema)
+  assemble/ plugin/ loader/ preset/ bundle/   装配与组合
+  compile/ jsrt/ bridge/                      执行层
+  sched/ quota/ flow/ expr/                   编排层
+  caps/ install/ version/                     授权、安装、版本
+  host/                CLI / server / desktop / registry / builtins
+plugins/               业务插件
+  seam/ provider/ policy/ core/ tool/
+cmd/                   入口(ada / ada-demo / ada-ts-demo)
+docs/ examples/ scripts/
+```
+
+`platform/kernel` 不 import `plugins/`;`plugins/` 只能 import `platform/` 的 seam/内核契约;
+`platform/host/builtins` 是唯一反向依赖(内置插件注册表);`cmd/` 负责装配入口。
 
 ## 这套方案要解决什么
 
@@ -49,6 +68,7 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 | §16–§18 | 目录与骨架代码、里程碑（19–21 周）、风险 |
 | 附录 A–E | Cordis→Go 对照、错误码、v1→v2 迁移映射、12 个 spike、待决问题 |
 | [seam-api.md](docs/seam-api.md) | **首批 seam 契约**：llm / tools / session / prompts 的 Go 接口、事件、管线、不变量与契约测试 |
+| [m4.5-agent-core.md](docs/m4.5-agent-core.md) | **M4.5 第一刀**:prompts/llm/tools/agent-loop 的实现、最小 preset、golden 与已知边界 |
 | [seam-api-security.md](docs/seam-api-security.md) | **安全 seam 契约**：sandbox / fs / shell 的三道闸、虚拟路径、装饰器强制链、拒绝矩阵 |
 | [kernel-api.md](docs/kernel-api.md) | M1 冻结的内核 API 与实现边界 |
 | [m2-execution.md](docs/m2-execution.md) | M2 执行层第一刀:compile / jsrt / bridge 的契约、测试矩阵与已知边界 |
@@ -57,12 +77,15 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 | [m4-flow.md](docs/m4-flow.md) | M4 流水线:声明式 flow、受限表达式、checkpoint/resume |
 | [m4-composition.md](docs/m4-composition.md) | M4 组合层:bundle / profile(整体替换与补丁) |
 | [version.md](docs/version.md) | 版本与引擎约束:semver 解析与 engine/engines 校验 |
-| [host-cli.md](docs/host-cli.md) | M5 宿主适配器第一刀:host/cli 命令实现与测试 |
-| [host-server.md](docs/host-server.md) | 第二宿主适配器:host/server 只读 HTTP API |
-| [host-desktop.md](docs/host-desktop.md) | 宿主适配器骨架:host/desktop 视图映射 |
-| [host-registry.md](docs/host-registry.md) | 在线仓库服务端:host/registry 只读 HTTP |
+| [host-cli.md](docs/host-cli.md) | M5 宿主适配器第一刀:platform/host/cli 命令实现与测试 |
+| [host-server.md](docs/host-server.md) | 第二宿主适配器:platform/host/server 只读 HTTP API |
+| [host-desktop.md](docs/host-desktop.md) | 宿主适配器骨架:platform/host/desktop 视图映射 |
+| [host-registry.md](docs/host-registry.md) | 在线仓库服务端:platform/host/registry 只读 HTTP |
 | [audit-log.md](docs/audit-log.md) | M5 审计落盘:policy/audit-log JSONL |
 | [adr/0001](docs/adr/0001-deferred-m5-scope.md) | ADR:延迟 OS 级沙箱与真实桌面窗口(复议 2027-01-15) |
+| [adr/0002](docs/adr/0002-host-budget-exception.md) | ADR:host 层代码预算例外(CLI 适配器) |
+| [adr/0003](docs/adr/0003-handler-context-and-timeout-gate.md) | ADR:监听器 ctx 与 waterfall 超时闸门 |
+| [adr/0004](docs/adr/0004-execution-layer-deps.md) | ADR:执行层引入 esbuild 与 moejs |
 | [seam-net.md](docs/seam-net.md) | M5 网络能力:seam/net 与 provider/net-http |
 | [seam-secrets.md](docs/seam-secrets.md) | M5 secret 能力:seam/secrets 与 provider/secrets-env |
 | [seam-session.md](docs/seam-session.md) | seam/session 与 session-memory |
@@ -85,15 +108,20 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 
 `Transform` 单文件 0.77–0.88 ms；moejs 新建 Runtime 1.39 µs、加载插件 71 µs、单次调用 6.86 µs、每 Runtime 常驻 80.5 KiB。
 
-## 当前状态:M1 内核 + M2 执行层 + M3 装配 + M4 编排 + M4.5 seam + M5 安全(fs/shell/sandbox/approval,三闸串联)
+## 当前状态:M1 内核 + M2 执行层 + M3 装配 + M4 编排 + M4.5 Agent Core 第一刀 + M5 安全与宿主
 
 ```powershell
-go test -race -count=1 -timeout 300s ./...   # 389 个用例:kernel 29 + schema 7 + compile 6 + jsrt 15 + bridge 3 + plugin 7 + preset 5 + assemble 22 + loader 5 + session 3 + sched 27 + quota 11 + flow 29 + expr 2 + bundle 12 + version 3 + caps 6 + install 31 + fs 12 + shell 18 + sandbox 5 + approval 10 + approval-cli 5 + caps-gate 4 + fs-redact 5 + fs-observe 5 + shell-observe 5 + shell-redact 5 + net-http 6 + net-guard 9 + net-observe 4 + secrets-env 5 + secrets-guard 3 + audit-log 6 + caps-static 1 + host/builtins 3 + host/cli 29 + host/server 14 + host/desktop 4 + host/registry 7
+go test -race -count=1 -timeout 300s ./...   # 417 个 Test + 4 个 Benchmark
 go run ./cmd/ada-demo                        # 依赖门控 + 级联重载演示
 pwsh scripts/guard.ps1                       # 门禁:词汇/依赖/gofmt/build/vet/staticcheck/race/交叉编译/预算
 go run ./cmd/ada-ts-demo                     # M2:TS 插件编译→加载→提供服务/派发事件→内核消费
 go run ./cmd/ada plan examples/plugins       # M3:读清单→依赖图→装配顺序/问题报告
 go run ./cmd/ada up examples/plugins-ts      # M3:现场编译 TS 插件并真的挂载一遍
+go run ./cmd/ada plan --preset examples/agent/agent.preset.json   # M4.5:最小 agent preset
+go run ./cmd/ada up --preset examples/agent/agent.preset.json     # M4.5:挂载 agent 栈(一次性)
+go run ./cmd/ada inspect --chain --preset examples/agent/agent.preset.json  # M5:装饰器链快照
+go run ./cmd/ada up --preset examples/agent/real.preset.json               # M4.5:真实 OpenAI 兼容端点(需 env)
+go run ./cmd/ada agent --preset examples/agent/agent.preset.json -message "读取 a.txt 并总结"  # M4.5:跑一轮
 go run ./cmd/ada plan --preset examples/presets/base.preset.json   # M3:preset(多目录/disabled/patch)
 go run ./cmd/ada inspect --preset examples/presets/ts-only.preset.json  # M3:诊断快照(fiber/服务/effect)
 go run ./cmd/ada verify examples/plugins-ts/hello-ts  # M5:清单/摘要/验签/信任
@@ -103,19 +131,19 @@ go run ./cmd/ada upgrade <目录> -dest <安装根>         # M5:升级并清理
 go run ./cmd/ada rollback <id> -dest <安装根>          # M5:回滚到上一版本
 go run ./cmd/ada update <id> -repo <仓库> -dest <安装根>  # M5:离线仓库更新
 go run ./cmd/ada caps examples/plugins -json          # M5:能力自检(caps/trust → Broker)
-go run ./cmd/ada check examples/plugins-ts           # M5:清单/计划/caps/编译一键校验
+go run ./cmd/ada check examples/plugins-ts           # M5:清单/计划/platform/caps/编译一键校验
 pwsh scripts/bench.ps1                       # 性能预算:≤20 μs/次、50 插件冷启动 ≤150 ms
 ```
 
-已完成:`kernel/`(Context / Fiber / Service / Effect / Event / Config / Schema / 闲置回收)、`kernel/schema`、`cmd/ada`、`cmd/ada-demo`、`cmd/ada-ts-demo`、`compile/`(esbuild)、`jsrt/`(moejs)、`bridge/`、`plugin/`(清单)、`preset/`(组合数据)、`assemble/`(计划/事务)、`loader/`(按 kind 装载)、`assemble/` 延迟激活(`UpLazy`/`Deferred`)、`plugins/seam/session`(seam + 契约测试)、`plugins/provider/session-memory`、`sched/`(调度底座)、`quota/`(配额与回压)、`flow/`(声明式流水线)、`bundle/`(组合层)、`expr/`(受限表达式)、`plugins/seam/fs` + `provider/fs-local` + `policy/fs-sandbox`、`plugins/seam/shell` + `provider/shell-local` + `policy/shell-guard`、`plugins/policy/fs-redact`(脱敏)、`plugins/policy/fs-observe`·`shell-observe`(观察事件)、`shell-redact`(输出脱敏)、`plugins/seam/sandbox` + `provider/sandbox-none`、`plugins/seam/approval` + `provider/approval-deny`、`caps/`(能力授权)、`install/`(安装与签名)、`host/cli`(命令行宿主适配器)、`host/server`(只读 HTTP 宿主)、`host/builtins`(共享内置插件)、`host/desktop`(视图映射骨架)、`host/registry`(只读仓库服务)(M5 安全)、`scripts/guard.ps1`、`scripts/bench.ps1`、`docs/kernel-api.md`、`docs/m2-execution.md`、`docs/m3-assembly.md`、`docs/m4-orchestration.md`、`docs/m4-flow.md`、`docs/seam-session.md`、`docs/seam-fs.md`、`docs/seam-shell.md`、`docs/seam-sandbox.md`、`docs/seam-approval.md`、`docs/adr/0001`、`docs/adr/0002`。
-未开始:M5 剩余(caps 运行时接线(CLI 内置栈)/在线更新/`host/desktop`·`host/server`/Windows Job Object 进程树终止/OS 级沙箱后端)、剩余 seam(`prompts`/`llm`/`tools`);M4 剩余:flow 的 fanout、触发器接线(`onCron`/`onPage`,onService 已有 helper);M4.5 剩余:投影、session-jsonl、core/session。
+已完成:`platform/kernel/`、`platform/kernel/schema`、`cmd/ada`、`cmd/ada-demo`、`cmd/ada-ts-demo`、`platform/compile/`、`platform/jsrt/`、`platform/bridge/`、`platform/plugin/`、`platform/preset/`、`platform/assemble/`(含延迟激活)、`platform/loader/`、`platform/sched/`、`platform/quota/`、`platform/flow/`、`platform/bundle/`、`platform/expr/`、`plugins/seam/session` + `provider/session-memory`、`plugins/seam/prompts` + `core/system-prompt`、`plugins/seam/llm` + `provider/llm-replay`/`provider/llm-openai`、`plugins/seam/tools` + `tool/fs`、`policy/approval-gate`/`policy/llm-retry`/`policy/tool-timeout`、`core/agent-loop`、`examples/agent`(最小 preset + 回放脚本)、`plugins/seam/fs` + `provider/fs-local` + `policy/fs-sandbox`、`plugins/seam/shell` + `provider/shell-local` + `policy/shell-guard`、`plugins/policy/fs-redact`/`fs-observe`/`shell-observe`/`shell-redact`、`plugins/seam/sandbox` + `provider/sandbox-none`、`plugins/seam/approval` + `provider/approval-deny`/`approval-cli`、`platform/caps/`、`platform/install/`、`platform/host/cli`、`platform/host/server`、`platform/host/builtins`、`platform/host/desktop`(视图映射骨架)、`platform/host/registry`、`scripts/guard.ps1`、`scripts/bench.ps1`、`docs/m4.5-agent-core.md`、`docs/kernel-api.md`、`docs/m2-execution.md`、`docs/m3-assembly.md`、`docs/m4-orchestration.md`、`docs/m4-flow.md`、`docs/seam-session.md`、`docs/seam-fs.md`、`docs/seam-shell.md`、`docs/seam-sandbox.md`、`docs/seam-approval.md`、`docs/adr/0001-deferred-m5-scope.md`、`docs/adr/0002-host-budget-exception.md`。
+
+未开始 / 剩余:`session-jsonl` + projection、`core/agent` 与 `core/agent-loop` 拆分、compaction/上下文预算、并行工具、`llm-deepseek` 专用适配(当前是 OpenAI 兼容通用 provider);M5 剩余 OS 级沙箱后端与真实桌面窗口(ADR 0001)。**不做 v1 插件迁移。**
 
 本轮修复了 M1 评审中复现的缺陷(waterfall 超时幽灵执行、兄弟插件被误拆、failed 不可复活、卸载错误被吞、fiber 注册表泄漏、Intercept 合并反向、Stop 后仍派发、schema 静默放行),每条都有回归用例;清单见 [kernel-api.md §6](docs/kernel-api.md)。
 
 ## 下一步
 
-1. 评审 seam 契约的 13 个待决问题（`seam-api.md` 附录 B + `seam-api-security.md` §6）。
-2. M2：`compile/` + `jsrt/` + 调用桥，把 Go 插件与 TS 插件放到同一个 `kernel.Plugin` 下（S3/S5/S7 三个 spike 随 M2 一起做）。
-3. M4.5 按顺序冻结合同：`session` → `prompts` → `llm` → `tools`；安全侧 `sandbox` → `fs` → `shell`。
-
-
+1. M4.5:`session-jsonl` + projection + `policy/tool-timeout`;真实模型、重试与审批已落地。
+2. M4.5:并行工具、compaction/上下文预算、`core/agent` 拆分。
+3. M5:C13 拒绝矩阵与 `inspect --chain` 已落地;剩余 OS 级沙箱与真实桌面窗口按 ADR 0001 复议。
+4. 文档与示例继续跟随代码;示例必须能在 CI 装配(golden/preset)。

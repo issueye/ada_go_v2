@@ -5,11 +5,12 @@
 ## 1. 范围
 
 ```
-install/     L2 基础设施:清单校验、Artifact 摘要、Ed25519 验签、原子安装、本机索引(index.json)
-host/cli     verify / install / list 命令
+platform/install/     L2 基础设施:清单校验、Artifact 摘要、Ed25519 验签、原子安装、本机索引(index.json)
+platform/host/cli     verify / install / list 命令
 ```
 
-本刀只做「校验 + 落地」;**不包含**在线拉取、索引、更新、回滚与安装同意(见 §6)。
+本刀已包含**校验、原子安装、本机索引、卸载/升级/回滚、离线/在线仓库、CLI 安装同意**;
+不包含桌面确认框、官方 keyring 与分布式安装锁(见 §6)。
 
 ## 2. 签名格式
 
@@ -88,13 +89,14 @@ go run ./cmd/ada repo <仓库索引 URL> [-keys 密钥文件] [-require-repo-sig
 
 ## 6. 偏差与边界
 
-1. **本机索引/卸载/升级/回滚/离线/在线更新 + 安装锁已实现**:同一 `destRoot` 上的 install/uninstall/upgrade/rollback 由 `.install.lock` 串行化(锁被占用即失败);锁超过 `InstallLockTTL`(10 分钟)视为崩溃残留并回收。artifact 不单独签名,靠索引签名+digest。
+1. **本机索引/卸载/升级/回滚/离线/在线更新 + 安装锁已实现**:同一 `destRoot` 上的 platform/install/uninstall/upgrade/rollback 由 `.install.lock` 串行化(锁被占用即失败);锁超过 `InstallLockTTL`(10 分钟)视为崩溃残留并回收。artifact 不单独签名,靠索引签名+digest。
 2. **安装同意只有 CLI 级**:`-yes` 让 `ada install` 在展示能力后继续;桌面确认框/逐项授权未实现,`-yes` 是一次性整体同意。
 3. **没有 `$ADA_HOME/keys` 与官方 keyring**:key ring 由调用方显式提供。
-4. **trust 未进入 caps 强制**:安装得到 trust 后,没有把 `caps` 授权与 trust 关联(调用点强制仍缺)。
+4. **安装 trust 未进入 caps 授权表**:`caps-gate` 的调用点强制已存在;磁盘 TS 插件已由 `plugin.LoadDir` 降为 `third-party`,
+   但安装流程得到的 verified/official 还没有写进 Broker(见 [caps.md](caps.md) §3)。
 5. **摘要只覆盖 Artifact 文件内容**:目录级元数据(权限、空目录)不参与签名。
-6. **无并发安装锁**:两个安装进程可能竞争同一目标(rename 语义保证不会半装,但错误信息可能不友好)。
-7. **Windows Job Object/长路径**未处理:安装路径长度与保留名未显式校验。
+6. **安装锁是进程级文件锁**:`.install.lock` + `InstallLockTTL` 能挡住同一 `destRoot` 的并发安装,但不是分布式锁;TTL 误回收仍可能。
+7. **Windows 长路径/保留名**未处理:安装路径长度与保留名未显式校验。
 
 ## 7. 测试矩阵
 
@@ -108,38 +110,38 @@ go run ./cmd/ada repo <仓库索引 URL> [-keys 密钥文件] [-require-repo-sig
 | 原子安装、拒绝覆盖 | `install.TestInstallAtomic` |
 | 符号链接拒绝 | `install.TestRejectsSymlink`(平台不支持时跳过) |
 | 文件数/总大小上限 | `install.TestInstallLimits` |
-| CLI:verify 能力清单、install 同意(-yes) | `host/cli.TestVerifyCaps`、`host/cli.TestInstallConsent` |
+| CLI:verify 能力清单、install 同意(-yes) | `platform/host/cli.TestVerifyCaps`、`platform/host/cli.TestInstallConsent` |
 | 索引写入与 List / 空索引 / 索引损坏 | `install.TestIndexWrittenAndListed`、`TestListEmpty`、`TestListCorrupt` |
-| CLI list:安装后条目、空列表 | `host/cli.TestList`、`host/cli.TestListEmpty` |
+| CLI list:安装后条目、空列表 | `platform/host/cli.TestList`、`platform/host/cli.TestListEmpty` |
 | 卸载:删除全部版本 + 清理索引 / 未知 id / 索引越界拒绝 | `install.TestUninstall`、`TestUninstallUnknown`、`TestUninstallRejectsOutside` |
-| CLI uninstall:卸载后列表为空 / 未知 id | `host/cli.TestUninstall`、`host/cli.TestUninstallUnknown` |
+| CLI uninstall:卸载后列表为空 / 未知 id | `platform/host/cli.TestUninstall`、`platform/host/cli.TestUninstallUnknown` |
 | 升级:清理旧版本 + 索引只剩最新 | `install.TestUpgrade` |
 | 升级拒绝:未安装/同版本/降级 | `install.TestUpgradeRejects` |
-| CLI upgrade:旧目录清理 + list 最新 | `host/cli.TestUpgrade` |
+| CLI upgrade:旧目录清理 + list 最新 | `platform/host/cli.TestUpgrade` |
 | KeepPrevious 保留旧版本 / Rollback 回退 / 单版本拒绝 | `install.TestUpgradeKeepPrevious`、`TestRollback`、`TestRollbackNoPrevious` |
-| CLI upgrade -keep + rollback / 单版本回滚失败 | `host/cli.TestRollback`、`host/cli.TestRollbackNoPrevious` |
+| CLI upgrade -keep + rollback / 单版本回滚失败 | `platform/host/cli.TestRollback`、`platform/host/cli.TestRollbackNoPrevious` |
 | 仓库 Latest 选版 | `install.TestRepoLatest` |
 | UpdateFromRepo 更新并清理旧版 | `install.TestUpdateFromRepo` |
 | 已是最新/摘要不匹配/目录逃逸 | `install.TestUpdateFromRepoRejects` |
-| CLI update 成功/已是最新 | `host/cli.TestUpdateFromRepo` |
+| CLI update 成功/已是最新 | `platform/host/cli.TestUpdateFromRepo` |
 | 仓库签名:往返/缺签名/篡改/固定 keyring | `install.TestRepoSignature`、`TestUpdateFromSignedRepo` |
-| CLI update -require-repo-signature 缺签名拒绝 | `host/cli.TestUpdateRequiresRepoSignature` |
+| CLI update -require-repo-signature 缺签名拒绝 | `platform/host/cli.TestUpdateRequiresRepoSignature` |
 | 在线索引:未签名可读/require 缺签名拒绝 | `install.TestFetchRepoIndex` |
 | 在线索引验签:通过/篡改拒绝 | `install.TestFetchRepoIndexSigned` |
-| CLI repo:读取/require 缺签名 | `host/cli.TestRepo` |
+| CLI repo:读取/require 缺签名 | `platform/host/cli.TestRepo` |
 | 下载+解包+校验 | `install.TestFetchArtifactExtract` |
 | zip slip/非法 scheme 拒绝 | `install.TestArtifactRejects` |
 | 在线更新(索引→artifact→Upgrade) | `install.TestUpdateFromRemote` |
-| CLI update -repo-url 在线更新 | `host/cli.TestUpdateRemote` |
+| CLI update -repo-url 在线更新 | `platform/host/cli.TestUpdateRemote` |
 | 安装锁:占用拒绝/结束后清理 | `install.TestInstallLock` |
 | 过期锁回收 | `install.TestInstallLockStale` |
 
 ## 8. 下一步
 
-1. 安装同意(能力清单展示 + CLI flag / 桌面确认),把 trust 灌进 `caps`。
+1. 把安装来源 trust 灌进 `caps`(当前清单 trust 仍是自述,见 [caps.md](caps.md) §3)。
 2. `$ADA_HOME/keys` 与 keyring;签名发布工具(生成 `plugin.sig.json`)。
-3. 索引/更新/回滚、并发安装锁。
-4. 在线仓库拉取与 digest 固定(供应链完整性)。
+3. 分布式安装锁与 Windows 长路径。
+4. 桌面确认框/逐项授权(替代 CLI 的 `-yes` 整体同意)。
 
 ## 9. 验证命令
 

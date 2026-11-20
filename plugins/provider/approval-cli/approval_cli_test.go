@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/adag/ada-go/v2/kernel"
+	"github.com/adag/ada-go/v2/platform/kernel"
 	approvalcli "github.com/adag/ada-go/v2/plugins/provider/approval-cli"
 	seamapproval "github.com/adag/ada-go/v2/plugins/seam/approval"
 )

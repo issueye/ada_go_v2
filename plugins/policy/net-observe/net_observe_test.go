@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/adag/ada-go/v2/kernel"
+	"github.com/adag/ada-go/v2/platform/kernel"
 	netobserve "github.com/adag/ada-go/v2/plugins/policy/net-observe"
 	nethttp "github.com/adag/ada-go/v2/plugins/provider/net-http"
 	seamnet "github.com/adag/ada-go/v2/plugins/seam/net"

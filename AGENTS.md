@@ -2,13 +2,13 @@
 
 > 给在本仓库工作的 AI 代理与人类协作者。**动代码之前先读这一份**；它与设计文档冲突时，以本文件的红线为准，并立刻提 issue 修正文档。
 
-**当前阶段:M1 内核、M2 执行层、M3 装配、M4 编排(`sched`/`quota`/`flow`(含 fanout/subflow)/`bundle`,内核回收 + 装配层 on-demand 延迟激活(含 onService/onCron/onEvent 触发 helper)+ jobs 跨进程锁)、M4.5 seam、M5 安全(`fs`/`fs-local`/`fs-sandbox`、`shell`/`shell-local`/`shell-guard`、`sandbox`/`sandbox-none`、`fs-redact` 脱敏、`fs-observe`/`shell-observe` 观察事件、`audit-log` 审计落盘、`shell-redact` 输出脱敏,且 fs/shell 策略已调用 sandbox.Resolve、可升级拒绝走 approval(含 CLI 交互审批)、caps 静态授权 + `caps-gate` 调用点强制(fs/shell)、install 校验/原子落盘/本机索引/CLI 安装同意、`host/cli`/`host/server`/`host/desktop`(视图映射骨架)/`host/registry`(只读仓库服务)宿主适配器(共享 `host/builtins` 内置插件)、`net.fetch`(seam/net + provider/net-http + net-guard 授权)、`secrets`(seam/secrets + provider/secrets-env + secrets-guard 授权)已落地**,M5 剩余 desktop 真实窗口/OS 级沙箱(Linux 后端;见 ADR 0001,复议 2027-01-15)。本文件始终生效:先用它约束设计,再用它约束实现。
+**当前阶段:M1 内核、M2 执行层、M3 装配、M4 编排(`sched`/`quota`/`flow`(含 fanout/subflow)/`bundle`,内核回收 + 装配层 on-demand 延迟激活(含 onService/onCron/onEvent 触发 helper)+ jobs 跨进程锁)、M4.5 Agent Core 第一刀(`prompts`/`llm`/`tools`/`agent-loop` + `provider/llm-openai`/`llm-replay` + `policy/approval-gate`/`llm-retry`/`tool-timeout` + 最小 preset,已跑通「用户消息 → 模型 → 工具 → 结果」的最小回路)、M5 安全(`fs`/`fs-local`/`fs-sandbox`、`shell`/`shell-local`/`shell-guard`、`sandbox`/`sandbox-none`、`fs-redact` 脱敏、`fs-observe`/`shell-observe` 观察事件、`audit-log` 审计落盘、`shell-redact` 输出脱敏,且 fs/shell 策略已调用 sandbox.Resolve、可升级拒绝走 approval(含 CLI 交互审批)、caps 静态授权 + `caps-gate` 调用点强制(fs/shell)、install 校验/原子落盘/本机索引/CLI 安装同意、`platform/host/cli`/`platform/host/server`/`platform/host/desktop`(视图映射骨架)/`platform/host/registry`(只读仓库服务)宿主适配器(共享 `platform/host/builtins` 内置插件)、`net.fetch`(seam/net + provider/net-http + net-guard 授权)、`secrets`(seam/secrets + provider/secrets-env + secrets-guard 授权)已落地**,M5 剩余 desktop 真实窗口/OS 级沙箱(Linux 后端;见 ADR 0001,复议 2027-01-15);C13 拒绝矩阵与 `ada inspect --chain` 已落地。本文件始终生效:先用它约束设计,再用它约束实现。
 
 ---
 
 ## 0. 五条红线（先看这个）
 
-1. **内核不许认识业务**。`kernel/` 里出现 `Turn`、`Message`、`ToolCall`、`Model`、`Session`、`Agent` 这些词，就是设计被腐蚀的开始。
+1. **内核不许认识业务**。`platform/kernel/` 里出现 `Turn`、`Message`、`ToolCall`、`Model`、`Session`、`Agent` 这些词，就是设计被腐蚀的开始。
 2. **一切功能都是插件，除非它符合「不是插件」的四类之一**（§2.2）。新增功能先问「它该是哪个插件」，而不是「加在哪个函数里」。
 3. **强制逻辑不许走事件**。安全边界只允许用装饰器/服务方法；事件是广播，不是门禁。
 4. **产品差异只来自 preset + host 适配器**。任何 `if product == "coder"`、任何按产品名硬编码的插件列表，一律拒绝。
@@ -28,13 +28,16 @@
 - 不是「先做成单体，以后再拆」。拆分的成本在第一天最低；之后再拆就是重写。
 - 不是 DSH 的克隆。我们借它的**作用域语义与 seam 划分**，但不复制它的包结构、不引入 Node。
 
+**目录结构**：`platform/` 是插件编排系统(kernel/assemble/plugin/loader/preset/bundle/caps/compile/jsrt/bridge/sched/quota/flow/expr/version/install/host);`plugins/` 是业务插件(seam/provider/policy/core/tool);`cmd/` 是入口;`docs/`、`examples/`、`scripts/` 是配套。
+
 **当前产物**（全部在 `docs/`）：
 
 | 文档 | 作用 |
 |---|---|
 | [plugin-kernel-design.md](docs/plugin-kernel-design.md) | 主设计：内核、执行层、编排、安全、宿主、里程碑 |
-| [milestone-status.md](docs/milestone-status.md) | M4/M5 验收矩阵与证据(含未完成/例外) |
+| [milestone-status.md](docs/milestone-status.md) | M4.5/M5 验收矩阵与证据(含未完成/例外) |
 | [seam-api.md](docs/seam-api.md) | 首批 seam 契约：llm / tools / session / prompts |
+| [m4.5-agent-core.md](docs/m4.5-agent-core.md) | M4.5 第一刀:prompts/llm/tools/agent-loop、最小 preset 与 golden |
 | [seam-api-security.md](docs/seam-api-security.md) | 安全 seam 契约：sandbox / fs / shell |
 | [kernel-api.md](docs/kernel-api.md) | M1 冻结的内核 API 与已知边界 |
 | [spikes.md](docs/spikes.md) | M0 验证报告（5 个已通过，7 个待做） |
@@ -45,12 +48,15 @@
 | [m4-flow.md](docs/m4-flow.md) | M4 流水线:声明式 flow、受限表达式、checkpoint/resume |
 | [m4-composition.md](docs/m4-composition.md) | M4 组合层:bundle / profile(整体替换与补丁) |
 | [version.md](docs/version.md) | 版本与引擎约束:semver 解析与 engine/engines 校验 |
-| [host-cli.md](docs/host-cli.md) | M5 宿主适配器第一刀:host/cli 命令实现与测试 |
-| [host-server.md](docs/host-server.md) | 第二宿主适配器:host/server 只读 HTTP API |
-| [host-desktop.md](docs/host-desktop.md) | 宿主适配器骨架:host/desktop 视图映射 |
-| [host-registry.md](docs/host-registry.md) | 在线仓库服务端:host/registry 只读 HTTP |
+| [host-cli.md](docs/host-cli.md) | M5 宿主适配器第一刀:platform/host/cli 命令实现与测试 |
+| [host-server.md](docs/host-server.md) | 第二宿主适配器:platform/host/server 只读 HTTP API |
+| [host-desktop.md](docs/host-desktop.md) | 宿主适配器骨架:platform/host/desktop 视图映射 |
+| [host-registry.md](docs/host-registry.md) | 在线仓库服务端:platform/host/registry 只读 HTTP |
 | [audit-log.md](docs/audit-log.md) | M5 审计落盘:policy/audit-log JSONL |
 | [adr/0001](docs/adr/0001-deferred-m5-scope.md) | ADR:OS 级沙箱与真实桌面窗口延期(复议 2027-01-15) |
+| [adr/0002](docs/adr/0002-host-budget-exception.md) | ADR:host 层代码预算例外 |
+| [adr/0003](docs/adr/0003-handler-context-and-timeout-gate.md) | ADR:监听器 ctx 与 waterfall 超时闸门 |
+| [adr/0004](docs/adr/0004-execution-layer-deps.md) | ADR:执行层引入 esbuild 与 moejs |
 | [seam-net.md](docs/seam-net.md) | M5 网络能力:seam/net 与 provider/net-http |
 | [seam-secrets.md](docs/seam-secrets.md) | M5 secret 能力:seam/secrets 与 provider/secrets-env |
 | [seam-fs.md](docs/seam-fs.md) | M5 安全第一刀:seam/fs、fs-local 实现与 fs-sandbox 策略 |
@@ -68,7 +74,7 @@
 
 | # | 原则 | 为什么 | 判据（怎么检查） |
 |---|---|---|---|
-| P1 | **内核无知** | 内核是被所有产品共享的机制；一旦认识业务，产品就开始分叉 | `kernel/` 无 agent 词汇（CI grep）；删掉任何插件内核仍能装配 |
+| P1 | **内核无知** | 内核是被所有产品共享的机制；一旦认识业务，产品就开始分叉 | `platform/kernel/` 无 agent 词汇（CI grep）；删掉任何插件内核仍能装配 |
 | P2 | **一切皆是插件** | 可替换、可禁用、可组合，才不会长成巨石 | 新功能能回答 §3 的插件准入测试 |
 | P3 | **三段式 seam / provider / policy** | 接口、实现、策略的生命周期不同，混在一起就无法独立替换 | 接口包里没有实现；策略以装饰器注册，不写进 provider |
 | P4 | **组合即产品** | 产品差异应当是数据差异，不是代码差异 | 换 preset 即换产品；没有 `if product` 分支 |
@@ -88,7 +94,7 @@
 | **内核** | Context / Fiber / Service / Effect / Event / Config / Registry / Provider 接口 | 只懂「作用域、服务、副作用、事件、配置」，不懂业务 |
 | **基础设施** | assemble / compile(esbuild) / jsrt(moejs) / plugin(清单/安装/签名) / caps(授权) / observe | 是「装载与执行机制」，没有领域语义 |
 | **组合数据** | preset / bundle / patch | 是数据不是代码 |
-| **宿主适配器** | `host/desktop`（mygo）、`host/cli`、`host/server` | 只做平台映射（窗口、协议、主线程、进程入口），不做业务 |
+| **宿主适配器** | `platform/host/desktop`（mygo）、`platform/host/cli`、`platform/host/server` | 只做平台映射（窗口、协议、主线程、进程入口），不做业务 |
 
 其余一切——平台能力（llm/tools/fs/shell/sandbox/storage/settings/secrets/jobs/schedule/telemetry/ui）、agent core（agent/agent-loop/session/system-prompt/context/compaction/approval/subagent/goal/plan/team/workflow）、工具、UI 贡献——**都是插件**。
 
@@ -106,7 +112,7 @@
 6. 它只观察、改写、通知、埋点、刷新 UI 吗？→ **事件监听**（仍写在某个插件里；改写用 waterfall，阻断用 guard/装饰器）
 7. 它是「装载、编译、执行、授权、日志」这类所有产品都要的机制吗？→ **L2 基础设施**（不是插件）
 8. 它是「作用域、服务、副作用、事件、配置」的机制吗？→ **L1 内核**（且必须无业务词汇）
-9. 它是某个平台的窗口/菜单/协议/主线程吗？→ **`host/*` 适配器**
+9. 它是某个平台的窗口/菜单/协议/主线程吗？→ **`platform/host/*` 适配器**
 10. 以上都不是 → 停下来，说明你还没想清楚边界；写一页设计再动手。
 
 > 经验法则：**如果一个功能需要「知道别的插件在干什么」，它就应该是服务或事件；如果它需要「阻止别人干什么」，它就是装饰器或 guard。**
@@ -129,13 +135,13 @@
 |---|---|---|---|
 | 1 | kernel 里出现 `if cfg.EnableX`、`if plugin.ID == "cron"` | 内核开始认识产品 | 能力做成插件；配置进 preset |
 | 2 | kernel 里加 `Session`/`Message` 类型 | 内核开始认识 agent | 放进 `plugins/core/session`；内核只留 `Event`/`Service` |
-| 3 | `host/desktop` 里做会话管理、模型调用、工具编排 | 宿主变成第二个内核，headless 无法复用 | 业务进 core 插件；host 只做窗口/协议/主线程映射 |
+| 3 | `platform/host/desktop` 里做会话管理、模型调用、工具编排 | 宿主变成第二个内核，headless 无法复用 | 业务进 core 插件；host 只做窗口/协议/主线程映射 |
 | 4 | seam 包里写了实现（`func (s *seam) Read(...)`） | 接口与实现焊死，无法替换 | seam 只放类型/错误/事件名；实现进 `provider/*` |
 | 5 | provider 里加重试、审批、截断、脱敏 | 策略无法被单独禁用 | 抽成 `policy/*`；provider 只做「一次调用」 |
 | 6 | policy 绕过装饰器，直接 `os.Open` / `cmd.Run` | 出现第二条不受控路径 | policy 必须在装饰器链内，禁止直接 syscall |
 | 7 | 插件 A `import` 插件 B 的 Go 包 | 装配顺序失效、无法隔离 | 经服务（`ctx.Service`）或事件；只 import `seam/*` 类型 |
 | 8 | 全局可变单例（`var registry = ...`） | 多实例/测试/重载互相污染 | 状态挂在 kernel `App` 或 fiber scope 上 |
-| 9 | preset 之外硬编码插件列表/顺序 | 产品分叉从代码开始 | 一律走 preset/patch；顺序由 `inject` 推导 |
+| 9 | preset 之外硬编码插件列表/顺序 | 产品分叉从代码开始 | 一律走 preset/bundle patch；顺序由 `inject` 推导 |
 | 10 | 用事件做「拒绝」（waterfall 不调 `next`） | 顺序依赖、可 panic、不可审计 | 用 `Guard`（同步拒绝）或装饰器 |
 | 11 | 「临时」分支、TODO 后门、常驻 feature flag | 临时的最持久 | 要么进 preset 配置，要么删；ADR 记录例外 |
 | 12 | UI 布局/文案/主题写进 Go，或插件自绘 UI | 破坏宿主统一与可替换 | 插件产数据；宿主渲染；文案走 i18n |
@@ -158,13 +164,13 @@
 ### 5.1 依赖禁令
 
 ```
-kernel/        ✗→ jsrt, compile, assemble, flow, sched, host/*, plugins/*
-               ✗→ 任何 agent 词汇（Turn/Message/ToolCall/Model/Session/Agent）
-seam/*         ✗→ provider/*, policy/*, host/*     （只允许 kernel + 标准库）
-provider/*     ✗→ policy/*, host/*                 （只允许 seam + kernel）
-policy/*       ✓→ seam/*，✗→ provider 内部实现
-plugins/*      ✗→ host/*
-host/*         ✓→ 全部
+platform/kernel/  ✗→ platform/jsrt, platform/compile, platform/assemble, platform/flow, platform/sched, platform/host/*, plugins/*
+                  ✗→ 任何 agent 词汇（Turn/Message/ToolCall/Model/Session/Agent）
+plugins/seam/*    ✗→ plugins/provider/*, plugins/policy/*, platform/host/*  （只允许 kernel + 标准库）
+plugins/provider/* ✗→ plugins/policy/*, platform/host/*                    （只允许 seam + kernel）
+plugins/policy/*  ✓→ plugins/seam/*，✗→ provider 内部实现
+plugins/*         ✗→ platform/host/*
+platform/host/*   ✓→ 全部
 ```
 
 ### 5.2 必跑的门禁
@@ -174,9 +180,9 @@ host/*         ✓→ 全部
 | `go build ./... && go vet ./...` | 基本正确性 |
 | `go test -race ./...` | 并发安全 |
 | `staticcheck ./...` | 静态问题 |
-| `grep -rn "Turn\|Message\|ToolCall\|Model\|Session" kernel/` | 必须无输出 |
-| `go list -deps ./kernel` | 不含 jsrt/compile/host |
-| `grep -rn "os/exec\|net/http\|os.Open" kernel/` | 必须无输出 |
+| `grep -rn "Turn\|Message\|ToolCall\|Model\|Session" platform/kernel/` | 必须无输出 |
+| `go list -deps ./platform/kernel` | 不含 `platform/jsrt`、`platform/compile`、`platform/host` |
+| `grep -rn "os/exec\|net/http\|os.Open" platform/kernel/` | 必须无输出 |
 | `ada check ./plugins/...` | 清单 + 编译 + 链接 + 能力 |
 | `ada test ./plugins/...` | 契约测试与 golden |
 | `ada inspect --chain` 快照 | 装饰器链未意外变化 |
@@ -190,8 +196,8 @@ host/*         ✓→ 全部
 
 | 范围 | 预算 | 理由 |
 |---|---|---|
-| `kernel/` | ≤ 3000 行 | 内核越厚，插件越难替换 |
-| `host/*` | ≤ 2500 行（每个适配器 ≤ 800；`host/cli` ≤ 1500，ADR 0002 临时例外） | 宿主只做映射；CLI 的参数解析/输出计入预算，拆分包后回滚例外 |
+| `platform/kernel/` | ≤ 3000 行 | 内核越厚，插件越难替换 |
+| `platform/host/*` | ≤ 2500 行（每个适配器 ≤ 800；`platform/host/cli` ≤ 1500，ADR 0002 临时例外） | 宿主只做映射；CLI 的参数解析/输出计入预算，拆分包后回滚例外 |
 | 单个插件 | ≤ 800 行，单一职责 | 混装说明该拆 |
 | 单个 seam 包 | ≤ 400 行（只有类型/错误/事件名） | 出现实现即违规 |
 
@@ -317,8 +323,7 @@ host/*         ✓→ 全部
 | M3 装配 | Plan/Graph/Assembler/Report/Profile | 不许硬编码插件列表；不许按产品分支 |
 | M4 编排 | flow / sched / 配额 / cron | 不许把编排写进 kernel；流线必须是数据 |
 | M4.5 Agent Core | session → prompts → llm → tools → loop → preset | 不许把循环逻辑放进 host；不许跳过契约测试 |
-| M5 安全与宿主 | sandbox/fs/shell、签名、CLI、mygo | 不许用事件做拒绝；不许把审批写进 tools |
-| M6 迁移生态 | 移植 v1 插件、SDK、示例 | 不许把 v1 的历史特例带进来（见 §11） |
+| M5 安全与宿主 | sandbox/fs/shell、签名、CLI、mygo、拒绝矩阵 | 不许用事件做拒绝；不许把审批写进 tools；不做 v1 插件迁移 |
 
 长期方向（写下来防止跑偏）：
 
@@ -342,6 +347,8 @@ v1 的 `AGENTS.md` 记录了 2026-11-10 的「能力位不决定装什么」与�
 | 插件顺序 | 声明顺序 + id 排序 | **依赖图拓扑序** | 顺序由依赖决定，不由配置决定 |
 
 > 读 v1 文档时记住：`docs/05-plugins.md`、`docs/06-plugin-runtime.md` 的部分口径已过期。
+>
+> **不迁移 v1 插件**：不提供 `ada migrate`，不移植 v1 官方插件；v1 只保留为行为参照与反例来源。
 
 ---
 

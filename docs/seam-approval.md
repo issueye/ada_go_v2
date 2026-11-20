@@ -47,10 +47,10 @@ fs-sandbox / shell-guard ──可选 inject "approval"──▶ 拒绝时 Ask()
 
 ## 4. 偏差与边界
 
-1. **只有默认拒绝审批人**:没有交互式 UI/CLI 审批人;`core/approval`(M4.5)未实现。
+1. **审批人**:`approval-deny`(默认拒绝)与 `approval-cli`(交互式 y/yes)已落地;桌面 UI 审批与 `core/approval`(M4.5)未实现。
 2. **`approval/requested` 已实现**:`Registry.SetNotifier` 在 `Ask` 等待决定前广播;没有审批人时不广播(fail-closed 先决)。
 3. **批准绕过沙箱判定**:批准后的放行由策略层决定,OS 级后端尚未实现「按批准临时提升模式」。
-4. **无 caps broker**:审批与能力授权仍分离;审批不是能力授权的替代。
+4. **caps 已存在、尚未与审批合并**:`caps-gate`/`shell-guard` 做静态能力授权,`approval` 做动态升级;两者仍是两条独立闸门,没有「批准后临时提权」的统一模型。
 5. **审批人选择**:默认按名字排序,没有「按 op/来源路由」的策略。
 6. **事件时机**:`approval/decided` 在装饰器内同步发出;事件派发失败不会回滚审批结果。
 
@@ -76,9 +76,9 @@ fs-sandbox / shell-guard ──可选 inject "approval"──▶ 拒绝时 Ask()
 
 ## 6. 下一步
 
-1. 审计字段补全会话 id 与目标摘要(当前只有 id/source/op/target/reason/plugin)。
-2. `core/approval` 交互式审批人(UI/CLI),与 preset 的 approval 策略联动。
-3. caps broker:静态能力授权先于动态沙箱/审批。
+1. 审计字段补全会话 id 与目标摘要;net 来源的 target 已脱敏,fs/shell 的通用 target 仍按原样进入审批/审计。
+2. `core/approval` 桌面 UI 审批人;CLI 审批人已由 `provider/approval-cli` 提供。
+3. `policy/approval-gate` 已接到 `tools/pre-execute`;caps 已由 `caps-gate`/`net-guard` 独立强制。
 4. 审批人路由(按 op/来源);批量审批与会话级「记住本次决定」。
 
 ## 7. 验证命令

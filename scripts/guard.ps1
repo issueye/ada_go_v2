@@ -15,7 +15,7 @@ function Fail($name, $detail) {
 }
 
 # 1. 内核不得出现 agent 词汇:出现即说明业务逻辑被塞进了内核。
-$hits = Get-ChildItem kernel -Recurse -Include *.go |
+$hits = Get-ChildItem platform/kernel -Recurse -Include *.go |
     Select-String -Pattern '\b(Turn|Message|ToolCall|Model|Session|Agent)\b'
 if ($hits) {
     Fail "kernel 无 agent 词汇" ($hits | ForEach-Object { "$($_.Path):$($_.LineNumber) $($_.Line.Trim())" })
@@ -24,7 +24,7 @@ if ($hits) {
 }
 
 # 2. 内核不得直接碰系统调用面:资源访问必须走 seam 与 caps。
-$hits = Get-ChildItem kernel -Recurse -Include *.go |
+$hits = Get-ChildItem platform/kernel -Recurse -Include *.go |
     Select-String -Pattern 'os/exec|net/http|os\.Open|os\.Create|syscall\.'
 if ($hits) {
     Fail "kernel 无 os/exec、net/http、os.Open" ($hits | ForEach-Object { "$($_.Path):$($_.LineNumber)" })
@@ -33,8 +33,8 @@ if ($hits) {
 }
 
 # 3. 内核不得依赖执行层 / 宿主 / 插件。
-$deps = go list -deps ./kernel 2>&1
-$bad = $deps | Where-Object { $_ -match 'ada-go/v2/(jsrt|compile|assemble|plugin|preset|loader|bridge|sched|quota|flow|host|plugins)' }
+$deps = go list -deps ./platform/kernel 2>&1
+$bad = $deps | Where-Object { $_ -match 'ada-go/v2/(platform/)?(jsrt|compile|assemble|plugin|preset|loader|bridge|sched|quota|flow|host|plugins)' }
 if ($bad) {
     Fail "kernel 依赖不含 jsrt/compile/assemble/plugin/preset/loader/bridge/sched/quota/flow/host/plugins" $bad
 } else {
@@ -107,9 +107,9 @@ if ($crossFail.Count -gt 0) {
 # 7. 代码预算(AGENTS §5.3):kernel ≤ 3000 行。
 #    只统计生产代码——预算是「内核越厚,插件越难替换」,测试不随二进制发布,
 #    但测试行数一并打印,避免有人用测试把真实增长藏起来。
-$prod = (Get-ChildItem kernel -Recurse -Include *.go |
+$prod = (Get-ChildItem platform/kernel -Recurse -Include *.go |
     Where-Object { $_.Name -notlike '*_test.go' } | Get-Content | Measure-Object -Line).Lines
-$test = (Get-ChildItem kernel -Recurse -Include *_test.go | Get-Content | Measure-Object -Line).Lines
+$test = (Get-ChildItem platform/kernel -Recurse -Include *_test.go | Get-Content | Measure-Object -Line).Lines
 if ($prod -gt 3000) {
     Fail "kernel 行数预算" @("生产代码 $prod 行,超过 3000(测试另有 $test 行)")
 } else {
@@ -117,8 +117,8 @@ if ($prod -gt 3000) {
 }
 
 # 7.1 host 预算(AGENTS §5.3;ADR 0002 临时例外:总 ≤2500,cli ≤1500,其它 ≤800)。
-$hostRoot = (Resolve-Path host).Path
-$hostFiles = Get-ChildItem host -Recurse -Include *.go |
+$hostRoot = (Resolve-Path platform/host).Path
+$hostFiles = Get-ChildItem platform/host -Recurse -Include *.go |
     Where-Object { $_.Name -notlike '*_test.go' }
 $hostTotal = ($hostFiles | Get-Content | Measure-Object -Line).Lines
 $perAdapter = @{}

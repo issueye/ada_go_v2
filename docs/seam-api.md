@@ -4,7 +4,7 @@
 
 | 项 | 值 |
 |---|---|
-| 状态 | 契约草案（v1），待评审冻结 |
+| 状态 | 契约 v1;session/prompts/llm/tools 第一刀已实现(llm 含 replay + OpenAI 兼容 provider,见 [m4.5-agent-core.md](m4.5-agent-core.md)) |
 | 适用版本 | `apiVersion: 2`、`engines.ada >=2.0.0` |
 | 依赖 | kernel（Service/Effect/Event/Config）、caps（授权）、compile/jsrt（无关） |
 | 参照 | DSH `dsh-llm` / `dsh-tools` / `dsh-session` / `dsh-system-prompt` 的 seam 划分 |
@@ -443,7 +443,7 @@ type Meta struct {
 | `step/start` / `step/end` | 步骤坐标、耗时 | agent-loop |
 | `compact/summary` | 被压缩范围 + 摘要事件 | `core/compaction` |
 | `error` | `Error`（可重试/不可重试） | 任意 |
-| `plugin/<id>/<kind>` | 插件自有，`Ignorable=true` | 插件 |
+| `platform/plugin/<id>/<kind>` | 插件自有，`Ignorable=true` | 插件 |
 
 > 约定：**模型可见的事件**只有 `user/message`、`assistant/message`、`tool/result`、`compact/summary`；其余是控制面，不拼进请求。
 

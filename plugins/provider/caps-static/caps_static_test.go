@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/adag/ada-go/v2/caps"
-	"github.com/adag/ada-go/v2/kernel"
+	"github.com/adag/ada-go/v2/platform/caps"
+	"github.com/adag/ada-go/v2/platform/kernel"
 	capsstatic "github.com/adag/ada-go/v2/plugins/provider/caps-static"
 )
 

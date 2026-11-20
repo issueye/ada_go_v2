@@ -1,0 +1,8 @@
+{
+  "name": "agent",
+  "plugins": ["plugins"],
+  "disable": ["llm-openai"],
+  "patch": {
+    "agent-loop": {"model": "replay", "maxSteps": 4}
+  }
+}

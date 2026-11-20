@@ -52,14 +52,14 @@ DSH 的做法正是把它们绑在一起：
 宿主绝对路径**不进**插件代码。路径是一等值类型：
 
 ```go
-type Path string   // 虚拟路径：/workspace/a.txt、/tmp/x、/plugin/<id>/...
+type Path string   // 虚拟路径：/workspace/a.txt、/tmp/x、/platform/plugin/<id>/...
 ```
 
 | 前缀 | 映射 | 读 | 写 | 说明 |
 |---|---|---|---|---|
 | `/workspace` | 会话工作区根 | ✓ | ✓（仅 workspace-write） | 主要工作面 |
 | `/tmp` | 会话私有临时目录 | ✓ | ✓ | 生命周期随会话 |
-| `/plugin/<id>` | 已安装插件目录 | ✓ | 仅插件自己（`fs.write.plugin`） | 代码与资产 |
+| `/platform/plugin/<id>` | 已安装插件目录 | ✓ | 仅插件自己（`fs.write.plugin`） | 代码与资产 |
 | `/user/...` | 宿主绝对路径（显式映射） | ✓（`fs.read.host`） | ✗ | 兼容「读宿主文件」，默认关闭 |
 | `/attachment/<id>` | `seam/storage` 资源 | ✓ | ✗ | 图片/附件 |
 
@@ -428,5 +428,7 @@ type Chunk struct {
 | C11 | `seam/shell` + `provider/shell-local` + `policy/shell-sandbox`/`shell-env` | C8 | 3 d |
 | C12 | 三平台后端（bwrap/landlock、seatbelt、Windows ACL） | C8–C11 | 5–8 d（可分批） |
 | C13 | 拒绝矩阵 + 审计 + `ada inspect --chain` | C8–C12 | 2 d |
+
+C13 已落地:`plugins/policy/securitymatrix`(fs/net/shell 矩阵)与 `ada inspect --chain`(fs/shell/net 装饰器优先级快照);caps 拒绝审计仍待补。
 
 合计 **17–23 人日**；C8 必须先做（判定矩阵是所有后端的共同契约），C12 可以按平台并行。

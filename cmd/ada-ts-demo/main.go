@@ -10,10 +10,10 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/adag/ada-go/v2/bridge"
-	"github.com/adag/ada-go/v2/compile"
-	"github.com/adag/ada-go/v2/jsrt"
-	"github.com/adag/ada-go/v2/kernel"
+	"github.com/adag/ada-go/v2/platform/bridge"
+	"github.com/adag/ada-go/v2/platform/compile"
+	"github.com/adag/ada-go/v2/platform/jsrt"
+	"github.com/adag/ada-go/v2/platform/kernel"
 )
 
 const pluginTS = `import { format } from "./src/util"

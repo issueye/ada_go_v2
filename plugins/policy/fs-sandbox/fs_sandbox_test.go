@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/adag/ada-go/v2/kernel"
+	"github.com/adag/ada-go/v2/platform/kernel"
 	fssandbox "github.com/adag/ada-go/v2/plugins/policy/fs-sandbox"
 	fslocal "github.com/adag/ada-go/v2/plugins/provider/fs-local"
 	sandboxnone "github.com/adag/ada-go/v2/plugins/provider/sandbox-none"

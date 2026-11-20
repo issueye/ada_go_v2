@@ -68,7 +68,7 @@ plugins/policy/net-observe/  策略:每次抓取后广播 net/observe(观察,不
 | 超时失败 | `nethttp.TestTimeout` |
 | 非法 scheme 拒绝 | `nethttp.TestBadScheme` |
 | 内核集成(seam + provider + consumer) | `nethttp.TestKernelIntegration` |
-| net-guard:host/通配授权、未授权/无身份、私网拒绝 | `netguard.TestAllowed`、`TestDenied`、`TestPrivateDenied` |
+| net-guard:platform/host/通配授权、未授权/无身份、私网拒绝 | `netguard.TestAllowed`、`TestDenied`、`TestPrivateDenied` |
 | net-guard 使用注入的 caps 服务 | `netguard.TestServiceBroker` |
 | net-guard:DNS 解析到私网拒绝 | `netguard.TestResolvedPrivateDenied` |
 | net-guard:DNS 解析公网放行 | `netguard.TestResolvedPublicAllowed` |
@@ -80,10 +80,10 @@ plugins/policy/net-observe/  策略:每次抓取后广播 net/observe(观察,不
 
 ## 6. 下一步
 
-1. `policy/net-guard`:按 `net.fetch.<host>` + principal 做授权(复用 caps.Broker);host 允许表与 deny 私有网段。
-2. 把 `caps-gate` 扩展为也装饰 `net` 服务。
-3. 请求体上限与流式响应。
-4. 审批升级(访问未知 host 时走 approval)。
+1. **重定向逐跳校验**:当前 `net-guard` 只校验初始 URL;公网 host 可 302 到私网。需要 `CheckRedirect` 逐跳校验或连接级 IP 校验。
+2. **请求体上限与流式响应**;代理/TLS/HTTP2 配置。
+3. **审批目标脱敏**:`net-guard` 已对审批 `Target` 去掉 userinfo 与 query(置换为 `REDACTED`);其它 source 的通用脱敏仍需统一。
+4. 把 `caps-gate` 扩展到 net(当前由 `net-guard` 承担)。
 
 ## 7. 验证命令
 

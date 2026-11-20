@@ -2,7 +2,7 @@
 
 > 配套 [plugin-kernel-design.md](plugin-kernel-design.md) §4–§8。本页是 M1 期间**唯一允许实现**的 API 面:只包含内核机制,不含任何 seam、jsrt、assemble。
 > 规则:本页先改,代码后改(AGENTS.md §7)。
-> 破坏性变更记录:[ADR 0001](adr/0001-handler-context-and-timeout-gate.md)(监听器签名与 waterfall 超时闸门)。
+> 破坏性变更记录:[ADR 0003](adr/0003-handler-context-and-timeout-gate.md)(监听器签名与 waterfall 超时闸门)。
 
 ## 0. 已拍板的六个决定
 
@@ -11,15 +11,15 @@
 | D1 | 模块路径 / Go 版本 | `github.com/adag/ada-go/v2`,`go 1.27` |
 | D2 | Schema 子集 | `type`、`properties`、`required`、`default`、`enum`、`const`、`items`、`minimum`、`maximum`、`minLength`、`maxLength`、`pattern`、`additionalProperties`、`oneOf`、`minItems`、`maxItems`、`$defs`/`$ref`(仅文档内) |
 | D3 | 服务表 API | 泛型 `Service[T](ctx, name)` + `TryService`;注册用 `Provide(name, any, opts...)`,值类型在解析时校验 |
-| D4 | 错误包位置 | `kernel/errors.go`:`Code` 枚举 + `*kernel.Error`;seam 各自定义自己的错误 |
+| D4 | 错误包位置 | `platform/kernel/errors.go`:`Code` 枚举 + `*kernel.Error`;seam 各自定义自己的错误 |
 | D5 | 日志 | `log/slog`,`ctx.Log()` 返回带 `plugin` 属性的 logger |
-| D6 | 监听器签名 | `Handler(ctx, *Context, args)`、`WaterfallHandler(ctx, *Context, input, Next)`;超时即取消,waterfall 超时后拒绝 `Next`(ADR 0001) |
+| D6 | 监听器签名 | `Handler(ctx, *Context, args)`、`WaterfallHandler(ctx, *Context, input, Next)`;超时即取消,waterfall 超时后拒绝 `Next`(ADR 0003) |
 
 ## 1. M1 的范围(与不做)
 
 做:Context 派生、Fiber 六态、Service 表、Effect 栈、五种事件分发、Config、Schema、App/Inspect、Go 插件演示、生命周期测试。
 
-不做:`plugins/seam/*`、`provider/*`、`policy/*`、`compile`、`jsrt`、`assemble`、`flow`、`sched`、`host/*`;不引入任何第三方依赖。
+不做:`plugins/seam/*`、`provider/*`、`policy/*`、`compile`、`jsrt`、`assemble`、`flow`、`sched`、`platform/host/*`;不引入任何第三方依赖。
 
 **并发模型(M1 明确假设)**:生命周期操作(挂载/卸载/重载/派发)在**单一控制协程**调用,与设计 §3.2 的 kernel goroutine 一致;`-race` 只需覆盖「注册表读取 vs 控制协程写入」这一层。跨协程调用在 M2 接入执行层时统一加锁。
 
@@ -152,11 +152,11 @@ type EffectInfo struct{ Fiber, Plugin, Label string }
 - waterfall 超时后下游不执行;监听器在超时时收到 ctx 取消;
 - `Inspect` 能列出 fiber/服务/effect 标签,卸载后立即消失;
 - `go test -race ./...` 全绿;
-- `kernel/` 无 agent 词汇、无 `os/exec|net/http|os.Open`、生产代码 ≤ 3000 行(gofmt、交叉编译同属门禁)。
+- `platform/kernel/` 无 agent 词汇、无 `os/exec|net/http|os.Open`、生产代码 ≤ 3000 行(gofmt、交叉编译同属门禁)。
 
 ## 6. M1 实现状态(2026-11-19)
 
-已落地:`kernel/`(生产 2396 行,测试 1062 行)+ `kernel/schema` + `cmd/ada-demo` + `scripts/guard.ps1` + `docs/adr/0001`。
+已落地:`platform/kernel/`(生产 2396 行,测试 1062 行)+ `platform/kernel/schema` + `cmd/ada-demo` + `scripts/guard.ps1` + `docs/adr/0003-handler-context-and-timeout-gate.md`。
 
 ```powershell
 go test -race -count=1 -timeout 120s ./...   # 29 + 7 个用例全绿
@@ -190,7 +190,7 @@ pwsh scripts/bench.ps1                       # 性能预算:≤20 μs/次、50 �
 | fiber 注册表只增不减 | `TestDisposedFiberLeavesRegistry` |
 | `Intercept` 合并方向相反 | `TestInterceptNearestWins` |
 | `Stop` 后仍派发事件 | `TestStopSealsEventsAndRegistry` |
-| schema 嵌套关键字/type 静默放行、`$ref` 不解析 | `kernel/schema` 7 个用例 |
+| schema 嵌套关键字/type 静默放行、`$ref` 不解析 | `platform/kernel/schema` 7 个用例 |
 
 已知边界(文档化而非隐藏):
 

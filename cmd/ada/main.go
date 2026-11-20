@@ -4,7 +4,7 @@ package main
 import (
 	"os"
 
-	"github.com/adag/ada-go/v2/host/cli"
+	"github.com/adag/ada-go/v2/platform/host/cli"
 )
 
 func main() {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/adag/ada-go/v2/kernel"
+	"github.com/adag/ada-go/v2/platform/kernel"
 	secretsenv "github.com/adag/ada-go/v2/plugins/provider/secrets-env"
 	seamsecrets "github.com/adag/ada-go/v2/plugins/seam/secrets"
 )

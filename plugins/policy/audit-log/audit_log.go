@@ -1,6 +1,6 @@
 // Package auditlog 是审计落盘策略:把观察/审批事件追加为 JSONL。
 //
-// 只记录事件 payload(观察事件本身已约定不含 body/secret);不做脱敏/轮转/上报。
+// 只记录事件 payload(观察事件本身已约定不含 body/secret);不做脱敏/上报,按大小轮转。
 package auditlog
 
 import (
@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/adag/ada-go/v2/kernel"
+	"github.com/adag/ada-go/v2/platform/kernel"
 	seamapproval "github.com/adag/ada-go/v2/plugins/seam/approval"
 	seamfs "github.com/adag/ada-go/v2/plugins/seam/fs"
 	seamnet "github.com/adag/ada-go/v2/plugins/seam/net"

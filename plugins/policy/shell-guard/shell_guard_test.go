@@ -5,8 +5,8 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/adag/ada-go/v2/caps"
-	"github.com/adag/ada-go/v2/kernel"
+	"github.com/adag/ada-go/v2/platform/caps"
+	"github.com/adag/ada-go/v2/platform/kernel"
 	shellguard "github.com/adag/ada-go/v2/plugins/policy/shell-guard"
 	sandboxnone "github.com/adag/ada-go/v2/plugins/provider/sandbox-none"
 	shelllocal "github.com/adag/ada-go/v2/plugins/provider/shell-local"

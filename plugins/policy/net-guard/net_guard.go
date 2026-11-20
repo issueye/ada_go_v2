@@ -9,8 +9,8 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/adag/ada-go/v2/caps"
-	"github.com/adag/ada-go/v2/kernel"
+	"github.com/adag/ada-go/v2/platform/caps"
+	"github.com/adag/ada-go/v2/platform/kernel"
 	seamapproval "github.com/adag/ada-go/v2/plugins/seam/approval"
 	seamnet "github.com/adag/ada-go/v2/plugins/seam/net"
 )
@@ -100,7 +100,7 @@ func (g *guard) Do(ctx context.Context, req seamnet.Request) (seamnet.Response, 
 		}
 		dec, aerr := seamapproval.Ask(ctx, g.approval, "", seamapproval.Request{
 			ID: "net:" + req.Method + ":" + host, Source: "net", Op: req.Method,
-			Target: req.URL, Reason: "未授权的 net.fetch host: " + host,
+			Target: redactTarget(req.URL), Reason: "未授权的 net.fetch host: " + host,
 		})
 		if aerr != nil || !dec.Allow {
 			return seamnet.Response{}, seamnet.Denied("审批未通过: " + host)
@@ -119,6 +119,20 @@ func isPrivateHost(host string) bool {
 		return false
 	}
 	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified()
+}
+
+// redactTarget 去掉审批目标里的 userinfo 与 query,避免 token 进入审批提示/审计。
+func redactTarget(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	u.User = nil
+	u.Fragment = ""
+	if u.RawQuery != "" {
+		u.RawQuery = "REDACTED"
+	}
+	return u.String()
 }
 
 type config struct {

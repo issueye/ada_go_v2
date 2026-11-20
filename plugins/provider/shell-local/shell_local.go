@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/adag/ada-go/v2/kernel"
+	"github.com/adag/ada-go/v2/platform/kernel"
 	"github.com/adag/ada-go/v2/plugins/seam/seamerr"
 	seamshell "github.com/adag/ada-go/v2/plugins/seam/shell"
 )
@@ -142,6 +142,8 @@ func (s *Shell) exec(ctx context.Context, cmd seamshell.Command, onChunk func(se
 		command.Stdin = bytes.NewReader(cmd.Stdin)
 	}
 	configure(command)
+	// 进程退出/超时后,子进程可能仍持有 stdout/stderr 管道;WaitDelay 让 Wait 不被无限拖住。
+	command.WaitDelay = 2 * time.Second
 
 	stdoutPipe, err := command.StdoutPipe()
 	if err != nil {
@@ -256,17 +258,37 @@ func (s *Shell) resolveDir(p seamshell.Path) (string, error) {
 		return "", seamshell.Denied("sandbox", fmt.Sprintf("不支持的虚拟根: %s", clean))
 	}
 	host := filepath.Join(root, filepath.FromSlash(strings.TrimPrefix(rel, "/")))
-	info, err := os.Stat(host)
+	resolvedRoot := root
+	if v, err := filepath.EvalSymlinks(root); err == nil {
+		resolvedRoot = v
+	}
+	target, err := filepath.EvalSymlinks(host)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", &seamerr.Error{Code: seamshell.CodeNotFound, Provider: ProviderName, Message: fmt.Sprintf("工作目录不存在: %s", p)}
 		}
 		return "", err
 	}
+	if !withinDir(resolvedRoot, target) {
+		return "", seamshell.Denied("sandbox", fmt.Sprintf("工作目录符号链接指向根外: %s", p))
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		return "", err
+	}
 	if !info.IsDir() {
 		return "", seamshell.Invalid(fmt.Sprintf("shell-local: Dir 不是目录: %s", p))
 	}
-	return host, nil
+	return target, nil
+}
+
+// withinDir 判断 target 是否在 root 内(两者都应是已解析的真实路径)。
+func withinDir(root, target string) bool {
+	rel, err := filepath.Rel(root, target)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 // buildEnv 只允许受管变量与 ADA_* 前缀的变量。

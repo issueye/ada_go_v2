@@ -5,10 +5,10 @@
 ## 1. 范围
 
 ```
-bundle/  L2 组合数据:bundle(插件条目)+ profile(bundle 列表 + 按 id 补丁)
+platform/bundle/  L2 组合数据:bundle(插件条目)+ profile(bundle 列表 + 按 id 补丁)
 ```
 
-与 M3 的 `preset/` 的分工:
+与 M3 的 `platform/preset/` 的分工:
 
 | | preset | bundle / profile |
 |---|---|---|
@@ -52,7 +52,8 @@ bundle/  L2 组合数据:bundle(插件条目)+ profile(bundle 列表 + 按 id �
 - 同一个 id 在多个 bundle 里重复 → **报错**;
 - `entry.config` / `patch.config` **整体替换**清单里的 config(不是深合并);
 - `patch.disabled` 可覆盖 bundle 的 disabled(`*bool` 区分「没写」与 `false`);
-- `when`(entry/patch 都可写)是受限表达式(复用 `expr/` 包);为假时 entry 跳过/patch 不生效;\n- `insertBefore/After` 只产生 warning,不影响顺序(顺序由依赖图决定);
+- `when`(entry/patch 都可写)是受限表达式(复用 `platform/expr/` 包);为假时 entry 跳过/patch 不生效;
+- `insertBefore/After` 只产生 warning,不影响顺序(顺序由依赖图决定);
 - `patch.id` 指向不存在的插件 → **报错**(静默忽略会让作者以为配置生效了)。
 
 ## 3. API
@@ -63,7 +64,8 @@ p, err := bundle.LoadProfile("my.profile.json")
 manifests, warnings, err := p.Expand()
 ```
 
-- `Parse` / `ParseProfile`:严格 JSON(未知字段报错,`when` 语法解析期校验);\n- `ExpandWithEnv(env map[string]any)`:表达式环境由调用方组装(约定命名空间 `env/os/profile/features`;缺失路径视为 null);
+- `Parse` / `ParseProfile`:严格 JSON(未知字段报错,`when` 语法解析期校验);
+- `ExpandWithEnv(env map[string]any)`:表达式环境由调用方组装(约定命名空间 `env/os/profile/features`;缺失路径视为 null);
 - `Expand`:加载 bundle → 应用 entry config/disabled → 应用 profile patch → 返回清单与警告;
 - 返回值可直接交给 `assemble.Plan` / `assemble.Up`。
 

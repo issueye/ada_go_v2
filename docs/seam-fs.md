@@ -45,17 +45,19 @@ policy/fs-sandbox ──inject "fs"──▶ Chain.Decorate(沙箱包装,priorit
 
 ## 4. 偏差与已知风险(必须写清楚)
 
-1. **TOCTOU 窗口**:当前是「先 `EvalSymlinks` 复核,再按路径打开」。打开时未使用
-   `O_NOFOLLOW` / 逐段 `openat`(Windows 未用 `FILE_FLAG_OPEN_REPARSE_POINT`),
-   因此链接在复核与打开之间被替换的理论窗口仍存在。修复需要平台专用打开标志,
-   列入下一刀(不能假装已解决)。
+1. **TOCTOU 窗口**:当前是「解析最深已存在祖先(含父目录符号链接),再按真实路径打开」。
+   打开时未使用 `O_NOFOLLOW` / 逐段 `openat`(Windows 未用 `FILE_FLAG_OPEN_REPARSE_POINT`),
+   因此链接在解析与打开之间被替换的理论窗口仍存在。修复需要平台专用打开标志,
+   列入下一刀(不能假装已解决)。父目录符号链接写逃逸已修复并有回归用例
+   `TestWriteThroughSymlinkParent`。
 2. **版本哈希是有界的**:文件超过 1 MiB 时,版本只由前 1 MiB + mtime + size 组成,
    与契约的「内容哈希」有偏差;足以检测常规编辑,但理论上可构造同前缀碰撞。
-3. **只有 `/workspace` 与 `/tmp`**:`/plugin/<id>`、`/user/...`、`/attachment/*` 未实现。
+3. **只有 `/workspace` 与 `/tmp`**:`/platform/plugin/<id>`、`/user/...`、`/attachment/*` 未实现。
 4. **`Search` 未实现**:返回 `EUNIMPLEMENTED`。
 5. **沙箱判定已接到 `sandbox.Resolve`**:`fs-sandbox` 每次操作先问 sandbox 后端(模式来自后端配置);设计要求的
    「模式变更写 session 事件、回放后判定一致」仍未做。
-6. **审批已接入可升级拒绝**:`fs-sandbox` 在 sandbox 判定 `Escalatable` 时调用 `seam/approval`(默认审批人拒绝);caps broker 仍未实现。
+6. **审批已接入可升级拒绝**:`fs-sandbox` 在 sandbox 判定 `Escalatable` 时调用 `seam/approval`(默认审批人拒绝);
+   能力授权由独立的 `policy/caps-gate` 强制,`fs-sandbox` 不重复做 caps。
 7. **Windows 特性未覆盖**:盘符/UNC/8.3 短名/ADS/保留名/大小写不敏感越界/路径长度。
 8. **redact / observe 已实现**:`policy/fs-redact` 对读结果做正则脱敏;`policy/fs-observe` 每次操作后广播 `fs/observe` 事件(payload 含 op/path/bytes/plugin/error)。「读后写表」的持久化投影仍未实现。
 

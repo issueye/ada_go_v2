@@ -5,10 +5,11 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
-	"github.com/adag/ada-go/v2/caps"
-	"github.com/adag/ada-go/v2/kernel"
+	"github.com/adag/ada-go/v2/platform/caps"
+	"github.com/adag/ada-go/v2/platform/kernel"
 	netguard "github.com/adag/ada-go/v2/plugins/policy/net-guard"
 	capsstatic "github.com/adag/ada-go/v2/plugins/provider/caps-static"
 	nethttp "github.com/adag/ada-go/v2/plugins/provider/net-http"
@@ -198,6 +199,20 @@ func TestEscalationAllow(t *testing.T) {
 	}
 	if !fake.called {
 		t.Fatalf("放行时应调用底层")
+	}
+}
+
+func TestEscalationTargetRedacted(t *testing.T) {
+	reg := approvalRegistry(t, true)
+	var got string
+	reg.SetNotifier(func(_ context.Context, req seamapproval.Request) { got = req.Target })
+	g := netguard.NewWithEscalation(&fakeClient{}, brokerWith(t, nil), true, nil, reg, true)
+	if _, err := g.Do(kernel.WithPrincipal(context.Background(), "p1"),
+		seamnet.Request{URL: "http://example.com/x?token=SECRET"}); err != nil {
+		t.Fatalf("批准后应放行: %v", err)
+	}
+	if strings.Contains(got, "SECRET") || !strings.Contains(got, "REDACTED") {
+		t.Fatalf("审批 target 未脱敏: %q", got)
 	}
 }
 

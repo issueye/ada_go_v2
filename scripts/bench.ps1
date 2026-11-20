@@ -22,7 +22,7 @@ $budget = [ordered]@{
     "BenchmarkMountFiftyPlugins"    = 150000000   # 150 ms:AGENTS §6.3 冷启动
 }
 
-$out = & go test -run xxx -bench . -benchmem -count=1 ./kernel 2>&1
+$out = & go test -run xxx -bench . -benchmem -count=1 ./platform/kernel 2>&1
 $out | Write-Host
 if ($LASTEXITCODE -ne 0) {
     Write-Host "基准执行失败。" -ForegroundColor Red

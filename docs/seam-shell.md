@@ -37,19 +37,24 @@ plugins/policy/shell-guard/     策略:只读白名单、shell 模式默认拒�
 
 ## 4. 偏差与边界(诚实记录)
 
-1. **Windows 进程树未实现**:只 `Process.Kill()` 父进程,未用 Job Object;超时后子进程可能残留
-   (测试用单进程 sleep 规避,但这正是缺口)。POSIX 已用 `Setpgid` + `kill(-pgid)`。
-2. **`Facts` 是 shell 本地类型**:`sandbox` seam 未落地,`Enforced` 恒为 false、`Backend="none"`。
-   设计要求的「Facts 来自 sandbox」未满足。
+1. **Windows 进程树已接 Job Object**(`process_windows.go`:CreateJobObject + KILL_ON_JOB_CLOSE),
+   POSIX 用 `Setpgid` + `kill(-pgid)`;另加 `exec.Cmd.WaitDelay=2s`,避免进程退出后管道被残留子进程拖住
+   (`TestTimeout` 曾在整机负载下偶发 6s,现已降低该风险)。
+2. **`Facts` 是 shell 本地类型**:sandbox seam 已落地,但 `Facts` 还没有从 `sandbox.Facts` 回填,
+   `Enforced` 恒为 false、`Backend="none"`;设计要求的「Facts 来自 sandbox」未满足。
 3. **没有事件**:`shell/start`、`shell/exited`、`shell/denied` 尚未发出(观测/审计缺口)。
 4. **没有 `shell-env` 策略**:provider 自身限制 env;独立策略文件未做。
 5. **沙箱判定已接到 `sandbox.Resolve`**:`shell-guard` 先问 sandbox(操作/程序),再做 shell 门与白名单;程序级 jail 仍靠 OS 级后端(未实现)。
 6. **能力位可选、审批已实现**:注入 `caps` 服务时,`shell-guard` 要求 principal + `exec` 能力(fail-closed);`approval` 升级已有;`allowShell` 仍是配置开关。
 7. **流式顺序**:stdout/stderr 由两个 reader 并发推送,`Seq` 只保证每路递增,不保证两路全序。
 8. **后台任务**:超过 30s 的命令被拒绝(未接 jobs seam)。
-9. **Windows 路径特性**(盘符/UNC/保留名)未覆盖。
+9. **Windows 路径特性**(盘符/UNC/保留名)未覆盖;`Dir` 的符号链接已解析并校验 root(`TestDirSymlinkEscape`)。
 
-### 4.1 脱敏限制\n\n`shell-redact` 按**块**脱敏:若密钥被拆到两个流式块里仍可能漏;完整结果(stdout/stderr)在结束时统一脱敏。\n\n### 4.2 `shell/observe` 事件
+### 4.1 脱敏限制
+
+`shell-redact` 按**块**脱敏:若密钥被拆到两个流式块里仍可能漏;完整结果(stdout/stderr)在结束时统一脱敏。
+
+### 4.2 `shell/observe` 事件
 
 `policy/shell-observe` 在每次 Run/Stream 后 `Emit("shell/observe", payload)`:
 

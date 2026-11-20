@@ -11,12 +11,12 @@ AGENTS §5.3 规定 `host/*` ≤ 1500 行、单适配器 ≤ 800 行。当前实
 
 | 适配器 | 行数 |
 |---|---|
-| `host/cli`(含 check/serve/serve-repo 等命令) | 1228 |
-| `host/server` | 384 |
-| `host/registry` | 172 |
+| `host/cli`(含 check/serve/serve-repo/agent 等命令) | 1405 |
+| `host/server` | 404 |
+| `host/registry` | 232 |
 | `host/desktop` | 120 |
-| `host/builtins`(共享注册表) | 98 |
-| **合计** | **2002** |
+| `host/builtins`(共享注册表) | 120 |
+| **合计** | **2281** |
 
 超出预算的原因:
 
@@ -43,7 +43,7 @@ AGENTS §5.3 规定 `host/*` ≤ 1500 行、单适配器 ≤ 800 行。当前实
 
 ## 4. 影响面
 
-- 预算检查会覆盖 host 各适配器;当前数字通过(2002 ≤ 2500,1228 ≤ 1500)。
+- 预算检查会覆盖 host 各适配器;当前数字通过(2281 ≤ 2500,1405 ≤ 1500)。
 - 不改任何运行时行为。
 - AGENTS §5.3 表格需要标注本例外并引用本 ADR。
 

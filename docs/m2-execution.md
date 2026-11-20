@@ -1,6 +1,6 @@
 # M2 执行层(第一刀 + 双向 ctx 桥)
 
-> 配套 [plugin-kernel-design.md](plugin-kernel-design.md) §10–§11 与 [ADR 0002](adr/0002-execution-layer-deps.md)。
+> 配套 [plugin-kernel-design.md](plugin-kernel-design.md) §10–§11 与 [ADR 0004](adr/0004-execution-layer-deps.md)。
 > 本页描述**已实现**的部分与**已知边界**;未实现的部分明确列在 §5,不假装存在。
 
 ## 1. 范围
@@ -121,7 +121,7 @@ out, err := svc.Call(ctx, "render")        // 方法调用转发到 JS worker
 | 运行期写 | 只允许广播(`emit`);改服务表/监听器表/依赖图的操作仍限 apply 期间 |
 | 自回调防死锁 | `inHost` 守卫:worker 正在回调宿主时,宿主不得再要求同一运行时执行回调 |
 | 反向调用(读方向) | 内核 → worker → `CallFunction`;只读不写内核 |
-| 内核无知 | `kernel/` 不 import `compile`/`jsrt`/`bridge`(guard 的 `go list -deps` 强制) |
+| 内核无知 | `platform/kernel/` 不 import `compile`/`jsrt`/`bridge`(guard 的 `go list -deps` 强制) |
 
 ## 4. 测试矩阵(M2 DoD 的 12 类 fixture)
 
