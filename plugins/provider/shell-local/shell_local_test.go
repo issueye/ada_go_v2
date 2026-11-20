@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	shelllocal "github.com/adag/ada-go/v2/plugins/provider/shell-local"
-	"github.com/adag/ada-go/v2/plugins/seam/seamerr"
-	seamshell "github.com/adag/ada-go/v2/plugins/seam/shell"
+	shelllocal "github.com/issueye/ada_go_v2/plugins/provider/shell-local"
+	"github.com/issueye/ada_go_v2/plugins/seam/seamerr"
+	seamshell "github.com/issueye/ada_go_v2/plugins/seam/shell"
 )
 
 func errCode(err error) seamerr.Code {

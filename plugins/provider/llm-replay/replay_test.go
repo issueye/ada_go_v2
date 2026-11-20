@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"testing"
 
-	replay "github.com/adag/ada-go/v2/plugins/provider/llm-replay"
-	"github.com/adag/ada-go/v2/plugins/seam/llm"
-	"github.com/adag/ada-go/v2/plugins/seam/seamerr"
+	replay "github.com/issueye/ada_go_v2/plugins/provider/llm-replay"
+	"github.com/issueye/ada_go_v2/plugins/seam/llm"
+	"github.com/issueye/ada_go_v2/plugins/seam/seamerr"
 )
 
 func TestReplayCompleteStreamAndToolCall(t *testing.T) {

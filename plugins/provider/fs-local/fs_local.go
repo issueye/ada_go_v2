@@ -17,9 +17,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
-	seamfs "github.com/adag/ada-go/v2/plugins/seam/fs"
-	"github.com/adag/ada-go/v2/plugins/seam/seamerr"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	seamfs "github.com/issueye/ada_go_v2/plugins/seam/fs"
+	"github.com/issueye/ada_go_v2/plugins/seam/seamerr"
 )
 
 // ProviderName 是 provider 名与插件 id。

@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
-	seamapproval "github.com/adag/ada-go/v2/plugins/seam/approval"
-	"github.com/adag/ada-go/v2/plugins/seam/seamerr"
-	"github.com/adag/ada-go/v2/plugins/seam/tools"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	seamapproval "github.com/issueye/ada_go_v2/plugins/seam/approval"
+	"github.com/issueye/ada_go_v2/plugins/seam/seamerr"
+	"github.com/issueye/ada_go_v2/plugins/seam/tools"
 )
 
 // PolicyName 是插件 id。

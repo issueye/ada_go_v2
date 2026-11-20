@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/adag/ada-go/v2/platform/version"
+	"github.com/issueye/ada_go_v2/platform/version"
 )
 
 // ArtifactLimit 是插件 zip 的最大字节数(16 MiB)。

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
-	"github.com/adag/ada-go/v2/platform/kernel/schema"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	"github.com/issueye/ada_go_v2/platform/kernel/schema"
 )
 
 func newApp(t *testing.T) *kernel.App {

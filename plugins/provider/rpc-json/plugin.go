@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
-	seamrpc "github.com/adag/ada-go/v2/plugins/seam/rpc"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	seamrpc "github.com/issueye/ada_go_v2/plugins/seam/rpc"
 )
 
 // 默认值(与 docs/seam-rpc.md 对齐)。

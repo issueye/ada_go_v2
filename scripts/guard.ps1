@@ -34,7 +34,7 @@ if ($hits) {
 
 # 3. 内核不得依赖执行层 / 宿主 / 插件。
 $deps = go list -deps ./platform/kernel 2>&1
-$bad = $deps | Where-Object { $_ -match 'ada-go/v2/(platform/)?(jsrt|compile|assemble|plugin|preset|loader|bridge|sched|quota|flow|host|plugins)' }
+$bad = $deps | Where-Object { $_ -match 'ada_go_v2/(platform/)?(jsrt|compile|assemble|plugin|preset|loader|bridge|sched|quota|flow|host|plugins)' }
 if ($bad) {
     Fail "kernel 依赖不含 jsrt/compile/assemble/plugin/preset/loader/bridge/sched/quota/flow/host/plugins" $bad
 } else {

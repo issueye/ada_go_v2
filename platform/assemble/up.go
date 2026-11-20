@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
-	"github.com/adag/ada-go/v2/platform/plugin"
-	"github.com/adag/ada-go/v2/platform/sched"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	"github.com/issueye/ada_go_v2/platform/plugin"
+	"github.com/issueye/ada_go_v2/platform/sched"
 )
 
 // CodeUp 是装配执行层的错误码。

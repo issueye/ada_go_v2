@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/plugin"
-	"github.com/adag/ada-go/v2/platform/preset"
+	"github.com/issueye/ada_go_v2/platform/plugin"
+	"github.com/issueye/ada_go_v2/platform/preset"
 )
 
 func writePlugin(t *testing.T, root, id, extra string) {

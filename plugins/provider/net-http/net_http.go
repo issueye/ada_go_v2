@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
-	seamnet "github.com/adag/ada-go/v2/plugins/seam/net"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	seamnet "github.com/issueye/ada_go_v2/plugins/seam/net"
 )
 
 // ProviderName 是插件 id。

@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
-	nethttp "github.com/adag/ada-go/v2/plugins/provider/net-http"
-	seamnet "github.com/adag/ada-go/v2/plugins/seam/net"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	nethttp "github.com/issueye/ada_go_v2/plugins/provider/net-http"
+	seamnet "github.com/issueye/ada_go_v2/plugins/seam/net"
 )
 
 // 1. 200 响应:状态/头/体。

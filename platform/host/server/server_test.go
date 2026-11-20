@@ -21,8 +21,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/adag/ada-go/v2/platform/host/server"
-	"github.com/adag/ada-go/v2/platform/install"
+	"github.com/issueye/ada_go_v2/platform/host/server"
+	"github.com/issueye/ada_go_v2/platform/install"
 )
 
 func newHandler(t *testing.T, root string) http.Handler {

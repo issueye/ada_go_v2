@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
+	"github.com/issueye/ada_go_v2/platform/kernel"
 )
 
 // 本文件是缺陷回归:每条用例对应一个曾经真实存在、且已经复现过的行为。

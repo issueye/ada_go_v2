@@ -10,14 +10,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/adag/ada-go/v2/platform/host/builtins"
-	"github.com/adag/ada-go/v2/platform/kernel"
-	agentloop "github.com/adag/ada-go/v2/plugins/core/agent-loop"
-	replay "github.com/adag/ada-go/v2/plugins/provider/llm-replay"
-	"github.com/adag/ada-go/v2/plugins/seam/llm"
-	"github.com/adag/ada-go/v2/plugins/seam/seamerr"
-	"github.com/adag/ada-go/v2/plugins/seam/session"
-	"github.com/adag/ada-go/v2/plugins/seam/tools"
+	"github.com/issueye/ada_go_v2/platform/host/builtins"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	agentloop "github.com/issueye/ada_go_v2/plugins/core/agent-loop"
+	replay "github.com/issueye/ada_go_v2/plugins/provider/llm-replay"
+	"github.com/issueye/ada_go_v2/plugins/seam/llm"
+	"github.com/issueye/ada_go_v2/plugins/seam/seamerr"
+	"github.com/issueye/ada_go_v2/plugins/seam/session"
+	"github.com/issueye/ada_go_v2/plugins/seam/tools"
 )
 
 // 投影存在且超过 contextBudget 时,agent 必须返回 ECONTEXT,而不是把超长请求发给模型。

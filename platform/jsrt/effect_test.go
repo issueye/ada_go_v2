@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/jsrt"
+	"github.com/issueye/ada_go_v2/platform/jsrt"
 )
 
 // 11. ctx.effect:清理函数登记到宿主,由宿主决定何时(逆序)调用。

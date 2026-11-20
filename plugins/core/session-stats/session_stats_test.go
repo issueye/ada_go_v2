@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
-	sessionstats "github.com/adag/ada-go/v2/plugins/core/session-stats"
-	memory "github.com/adag/ada-go/v2/plugins/provider/session-memory"
-	"github.com/adag/ada-go/v2/plugins/seam/session"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	sessionstats "github.com/issueye/ada_go_v2/plugins/core/session-stats"
+	memory "github.com/issueye/ada_go_v2/plugins/provider/session-memory"
+	"github.com/issueye/ada_go_v2/plugins/seam/session"
 )
 
 func TestApplyStats(t *testing.T) {

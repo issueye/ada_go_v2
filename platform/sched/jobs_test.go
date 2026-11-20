@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/adag/ada-go/v2/platform/sched"
+	"github.com/issueye/ada_go_v2/platform/sched"
 )
 
 func mustStore(t *testing.T, last time.Time) *sched.MemoryJobStore {

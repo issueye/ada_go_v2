@@ -5,11 +5,11 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
-	capsgate "github.com/adag/ada-go/v2/plugins/policy/caps-gate"
-	fsobserve "github.com/adag/ada-go/v2/plugins/policy/fs-observe"
-	fslocal "github.com/adag/ada-go/v2/plugins/provider/fs-local"
-	seamfs "github.com/adag/ada-go/v2/plugins/seam/fs"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	capsgate "github.com/issueye/ada_go_v2/plugins/policy/caps-gate"
+	fsobserve "github.com/issueye/ada_go_v2/plugins/policy/fs-observe"
+	fslocal "github.com/issueye/ada_go_v2/plugins/provider/fs-local"
+	seamfs "github.com/issueye/ada_go_v2/plugins/seam/fs"
 )
 
 type fakeFS struct {

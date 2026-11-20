@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/caps"
-	"github.com/adag/ada-go/v2/platform/kernel"
-	capsstatic "github.com/adag/ada-go/v2/plugins/provider/caps-static"
+	"github.com/issueye/ada_go_v2/platform/caps"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	capsstatic "github.com/issueye/ada_go_v2/plugins/provider/caps-static"
 )
 
 // caps-static 提供 *caps.Broker 服务,grants 来自配置。

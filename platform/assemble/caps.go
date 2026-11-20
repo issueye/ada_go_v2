@@ -4,8 +4,8 @@ package assemble
 import (
 	"fmt"
 
-	"github.com/adag/ada-go/v2/platform/caps"
-	"github.com/adag/ada-go/v2/platform/plugin"
+	"github.com/issueye/ada_go_v2/platform/caps"
+	"github.com/issueye/ada_go_v2/platform/plugin"
 )
 
 // GrantManifests 按清单的 caps/trust 为插件授予能力。

@@ -14,9 +14,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/adag/ada-go/v2/platform/expr"
-	"github.com/adag/ada-go/v2/platform/plugin"
-	"github.com/adag/ada-go/v2/platform/version"
+	"github.com/issueye/ada_go_v2/platform/expr"
+	"github.com/issueye/ada_go_v2/platform/plugin"
+	"github.com/issueye/ada_go_v2/platform/version"
 )
 
 // Bundle 是一组插件条目。

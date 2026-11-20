@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
-	secretsenv "github.com/adag/ada-go/v2/plugins/provider/secrets-env"
-	seamsecrets "github.com/adag/ada-go/v2/plugins/seam/secrets"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	secretsenv "github.com/issueye/ada_go_v2/plugins/provider/secrets-env"
+	seamsecrets "github.com/issueye/ada_go_v2/plugins/seam/secrets"
 )
 
 // 1. 白名单内的 secret 从环境读取。

@@ -1,6 +1,6 @@
 package kernel
 
-import "github.com/adag/ada-go/v2/platform/kernel/schema"
+import "github.com/issueye/ada_go_v2/platform/kernel/schema"
 
 // Inject 声明插件的依赖。
 //

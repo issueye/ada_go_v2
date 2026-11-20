@@ -8,11 +8,11 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
-	sessionstats "github.com/adag/ada-go/v2/plugins/core/session-stats"
-	"github.com/adag/ada-go/v2/plugins/seam/seamerr"
-	"github.com/adag/ada-go/v2/plugins/seam/session"
-	"github.com/adag/ada-go/v2/plugins/seam/session/sessiontest"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	sessionstats "github.com/issueye/ada_go_v2/plugins/core/session-stats"
+	"github.com/issueye/ada_go_v2/plugins/seam/seamerr"
+	"github.com/issueye/ada_go_v2/plugins/seam/session"
+	"github.com/issueye/ada_go_v2/plugins/seam/session/sessiontest"
 )
 
 func newTestProvider(t *testing.T) *Provider {

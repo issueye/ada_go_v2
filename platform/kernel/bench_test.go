@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
+	"github.com/issueye/ada_go_v2/platform/kernel"
 )
 
 // 性能基准(AGENTS.md §6.3:单次调用开销 ≤ 20 µs)。

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
+	"github.com/issueye/ada_go_v2/platform/kernel"
 )
 
 // JobPolicy 是停机/重启后对错过的触发的处理策略。

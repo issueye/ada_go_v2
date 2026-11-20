@@ -3,7 +3,7 @@ package rpc
 import (
 	"context"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
+	"github.com/issueye/ada_go_v2/platform/kernel"
 )
 
 const pluginID = "seam-rpc"

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	seamfs "github.com/adag/ada-go/v2/plugins/seam/fs"
+	seamfs "github.com/issueye/ada_go_v2/plugins/seam/fs"
 )
 
 // base 是最内层的假实现。

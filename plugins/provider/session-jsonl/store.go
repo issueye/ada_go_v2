@@ -8,9 +8,9 @@
 package jsonl
 
 import (
-	"github.com/adag/ada-go/v2/plugins/provider/session-jsonl/file"
-	"github.com/adag/ada-go/v2/plugins/provider/session-jsonl/journal"
-	"github.com/adag/ada-go/v2/plugins/seam/seamerr"
+	"github.com/issueye/ada_go_v2/plugins/provider/session-jsonl/file"
+	"github.com/issueye/ada_go_v2/plugins/provider/session-jsonl/journal"
+	"github.com/issueye/ada_go_v2/plugins/seam/seamerr"
 )
 
 const (

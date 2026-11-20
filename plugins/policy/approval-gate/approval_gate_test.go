@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
-	approvalgate "github.com/adag/ada-go/v2/plugins/policy/approval-gate"
-	seamapproval "github.com/adag/ada-go/v2/plugins/seam/approval"
-	seamtools "github.com/adag/ada-go/v2/plugins/seam/tools"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	approvalgate "github.com/issueye/ada_go_v2/plugins/policy/approval-gate"
+	seamapproval "github.com/issueye/ada_go_v2/plugins/seam/approval"
+	seamtools "github.com/issueye/ada_go_v2/plugins/seam/tools"
 )
 
 type approver struct {

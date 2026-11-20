@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
-	tooltimeout "github.com/adag/ada-go/v2/plugins/policy/tool-timeout"
-	seamtools "github.com/adag/ada-go/v2/plugins/seam/tools"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	tooltimeout "github.com/issueye/ada_go_v2/plugins/policy/tool-timeout"
+	seamtools "github.com/issueye/ada_go_v2/plugins/seam/tools"
 )
 
 func TestTightensToolTimeout(t *testing.T) {

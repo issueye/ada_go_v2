@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/adag/ada-go/v2/platform/plugin"
+	"github.com/issueye/ada_go_v2/platform/plugin"
 )
 
 // 问题类别。报告要能被人直接读懂,所以类别是稳定字符串。

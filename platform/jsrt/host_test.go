@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/jsrt"
+	"github.com/issueye/ada_go_v2/platform/jsrt"
 )
 
 //  6. ctx 的宿主能力:log/provide/emit 都要落在调用方给的回调上,

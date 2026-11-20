@@ -11,9 +11,9 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
-	"github.com/adag/ada-go/v2/plugins/seam/llm"
-	"github.com/adag/ada-go/v2/plugins/seam/seamerr"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	"github.com/issueye/ada_go_v2/plugins/seam/llm"
+	"github.com/issueye/ada_go_v2/plugins/seam/seamerr"
 )
 
 // Scope 是 section 的生命周期范围。

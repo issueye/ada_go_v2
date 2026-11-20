@@ -8,13 +8,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/caps"
-	"github.com/adag/ada-go/v2/platform/kernel"
-	netguard "github.com/adag/ada-go/v2/plugins/policy/net-guard"
-	capsstatic "github.com/adag/ada-go/v2/plugins/provider/caps-static"
-	nethttp "github.com/adag/ada-go/v2/plugins/provider/net-http"
-	seamapproval "github.com/adag/ada-go/v2/plugins/seam/approval"
-	seamnet "github.com/adag/ada-go/v2/plugins/seam/net"
+	"github.com/issueye/ada_go_v2/platform/caps"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	netguard "github.com/issueye/ada_go_v2/plugins/policy/net-guard"
+	capsstatic "github.com/issueye/ada_go_v2/plugins/provider/caps-static"
+	nethttp "github.com/issueye/ada_go_v2/plugins/provider/net-http"
+	seamapproval "github.com/issueye/ada_go_v2/plugins/seam/approval"
+	seamnet "github.com/issueye/ada_go_v2/plugins/seam/net"
 )
 
 func brokerWith(t *testing.T, grants map[string][]string) *caps.Broker {

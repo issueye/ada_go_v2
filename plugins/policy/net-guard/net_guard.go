@@ -9,10 +9,10 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/adag/ada-go/v2/platform/caps"
-	"github.com/adag/ada-go/v2/platform/kernel"
-	seamapproval "github.com/adag/ada-go/v2/plugins/seam/approval"
-	seamnet "github.com/adag/ada-go/v2/plugins/seam/net"
+	"github.com/issueye/ada_go_v2/platform/caps"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	seamapproval "github.com/issueye/ada_go_v2/plugins/seam/approval"
+	seamnet "github.com/issueye/ada_go_v2/plugins/seam/net"
 )
 
 // PolicyName 是插件 id。

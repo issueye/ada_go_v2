@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/assemble"
-	"github.com/adag/ada-go/v2/platform/kernel"
-	"github.com/adag/ada-go/v2/platform/plugin"
+	"github.com/issueye/ada_go_v2/platform/assemble"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	"github.com/issueye/ada_go_v2/platform/plugin"
 )
 
 func newApp(t *testing.T) *kernel.App {

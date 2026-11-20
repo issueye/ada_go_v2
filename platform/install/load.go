@@ -10,8 +10,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/adag/ada-go/v2/platform/caps"
-	"github.com/adag/ada-go/v2/platform/plugin"
+	"github.com/issueye/ada_go_v2/platform/caps"
+	"github.com/issueye/ada_go_v2/platform/plugin"
 )
 
 // LoadDir 加载安装根目录下的最新已安装插件,并用索引里的 trust 覆盖清单自述。

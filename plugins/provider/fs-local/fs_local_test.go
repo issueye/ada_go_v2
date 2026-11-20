@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	fslocal "github.com/adag/ada-go/v2/plugins/provider/fs-local"
-	seamfs "github.com/adag/ada-go/v2/plugins/seam/fs"
-	"github.com/adag/ada-go/v2/plugins/seam/seamerr"
+	fslocal "github.com/issueye/ada_go_v2/plugins/provider/fs-local"
+	seamfs "github.com/issueye/ada_go_v2/plugins/seam/fs"
+	"github.com/issueye/ada_go_v2/plugins/seam/seamerr"
 )
 
 func newFS(t *testing.T) (*fslocal.FS, string) {

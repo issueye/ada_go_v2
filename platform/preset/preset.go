@@ -16,7 +16,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/adag/ada-go/v2/platform/plugin"
+	"github.com/issueye/ada_go_v2/platform/plugin"
 )
 
 // CodePreset 是 preset 层的错误码。

@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/assemble"
-	"github.com/adag/ada-go/v2/platform/caps"
-	"github.com/adag/ada-go/v2/platform/plugin"
+	"github.com/issueye/ada_go_v2/platform/assemble"
+	"github.com/issueye/ada_go_v2/platform/caps"
+	"github.com/issueye/ada_go_v2/platform/plugin"
 )
 
 // GrantManifests:按 caps/trust 授予;trust 不足整批失败。

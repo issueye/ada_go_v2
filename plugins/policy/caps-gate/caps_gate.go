@@ -10,10 +10,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/adag/ada-go/v2/platform/caps"
-	"github.com/adag/ada-go/v2/platform/kernel"
-	seamfs "github.com/adag/ada-go/v2/plugins/seam/fs"
-	seamshell "github.com/adag/ada-go/v2/plugins/seam/shell"
+	"github.com/issueye/ada_go_v2/platform/caps"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	seamfs "github.com/issueye/ada_go_v2/plugins/seam/fs"
+	seamshell "github.com/issueye/ada_go_v2/plugins/seam/shell"
 )
 
 // PolicyName 是插件 id。

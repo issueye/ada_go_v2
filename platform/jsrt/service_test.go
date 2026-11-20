@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/jsrt"
+	"github.com/issueye/ada_go_v2/platform/jsrt"
 )
 
 // 10. JS 服务对象上的函数成员变成 Go 可调用的方法,且 this 绑定到服务对象。

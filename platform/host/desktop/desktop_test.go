@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/host/desktop"
-	"github.com/adag/ada-go/v2/platform/kernel"
-	seamfs "github.com/adag/ada-go/v2/plugins/seam/fs"
+	"github.com/issueye/ada_go_v2/platform/host/desktop"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	seamfs "github.com/issueye/ada_go_v2/plugins/seam/fs"
 )
 
 type fakeRenderer struct {

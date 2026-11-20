@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	shellredact "github.com/adag/ada-go/v2/plugins/policy/shell-redact"
-	seamshell "github.com/adag/ada-go/v2/plugins/seam/shell"
+	shellredact "github.com/issueye/ada_go_v2/plugins/policy/shell-redact"
+	seamshell "github.com/issueye/ada_go_v2/plugins/seam/shell"
 )
 
 type fakeShell struct {

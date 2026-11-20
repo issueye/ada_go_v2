@@ -13,8 +13,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
-	"github.com/adag/ada-go/v2/plugins/seam/approval"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	"github.com/issueye/ada_go_v2/plugins/seam/approval"
 )
 
 // ProviderName 是插件 id。

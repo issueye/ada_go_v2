@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/jsrt"
+	"github.com/issueye/ada_go_v2/platform/jsrt"
 )
 
 //  8. ctx.on:内核 → JS 的反向调用。注册后,宿主可以在任意 goroutine 上触发;

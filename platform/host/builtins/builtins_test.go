@@ -3,8 +3,8 @@ package builtins_test
 import (
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/host/builtins"
-	"github.com/adag/ada-go/v2/platform/plugin"
+	"github.com/issueye/ada_go_v2/platform/host/builtins"
+	"github.com/issueye/ada_go_v2/platform/plugin"
 )
 
 // 内置 Go 插件注册表包含安全栈关键 id。

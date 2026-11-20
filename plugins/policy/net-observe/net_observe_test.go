@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
-	netobserve "github.com/adag/ada-go/v2/plugins/policy/net-observe"
-	nethttp "github.com/adag/ada-go/v2/plugins/provider/net-http"
-	seamnet "github.com/adag/ada-go/v2/plugins/seam/net"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	netobserve "github.com/issueye/ada_go_v2/plugins/policy/net-observe"
+	nethttp "github.com/issueye/ada_go_v2/plugins/provider/net-http"
+	seamnet "github.com/issueye/ada_go_v2/plugins/seam/net"
 )
 
 type fakeClient struct {

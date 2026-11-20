@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
-	seamrpc "github.com/adag/ada-go/v2/plugins/seam/rpc"
-	"github.com/adag/ada-go/v2/plugins/seam/seamerr"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	seamrpc "github.com/issueye/ada_go_v2/plugins/seam/rpc"
+	"github.com/issueye/ada_go_v2/plugins/seam/seamerr"
 )
 
 // memTransport 是测试用传输:不占端口,用 net.Pipe 配对。

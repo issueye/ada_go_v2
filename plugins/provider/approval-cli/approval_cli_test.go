@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
-	approvalcli "github.com/adag/ada-go/v2/plugins/provider/approval-cli"
-	seamapproval "github.com/adag/ada-go/v2/plugins/seam/approval"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	approvalcli "github.com/issueye/ada_go_v2/plugins/provider/approval-cli"
+	seamapproval "github.com/issueye/ada_go_v2/plugins/seam/approval"
 )
 
 func approve(t *testing.T, input string) seamapproval.Decision {

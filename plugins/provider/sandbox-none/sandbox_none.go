@@ -9,9 +9,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
-	seamsandbox "github.com/adag/ada-go/v2/plugins/seam/sandbox"
-	"github.com/adag/ada-go/v2/plugins/seam/seamerr"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	seamsandbox "github.com/issueye/ada_go_v2/plugins/seam/sandbox"
+	"github.com/issueye/ada_go_v2/plugins/seam/seamerr"
 )
 
 // ProviderName 是后端名与插件 id。

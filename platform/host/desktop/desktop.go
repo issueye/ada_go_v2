@@ -8,7 +8,7 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
+	"github.com/issueye/ada_go_v2/platform/kernel"
 )
 
 // Renderer 由桌面宿主实现:把 View 画到窗口。

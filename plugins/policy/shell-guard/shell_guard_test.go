@@ -5,14 +5,14 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/caps"
-	"github.com/adag/ada-go/v2/platform/kernel"
-	shellguard "github.com/adag/ada-go/v2/plugins/policy/shell-guard"
-	sandboxnone "github.com/adag/ada-go/v2/plugins/provider/sandbox-none"
-	shelllocal "github.com/adag/ada-go/v2/plugins/provider/shell-local"
-	seamapproval "github.com/adag/ada-go/v2/plugins/seam/approval"
-	seamsandbox "github.com/adag/ada-go/v2/plugins/seam/sandbox"
-	seamshell "github.com/adag/ada-go/v2/plugins/seam/shell"
+	"github.com/issueye/ada_go_v2/platform/caps"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	shellguard "github.com/issueye/ada_go_v2/plugins/policy/shell-guard"
+	sandboxnone "github.com/issueye/ada_go_v2/plugins/provider/sandbox-none"
+	shelllocal "github.com/issueye/ada_go_v2/plugins/provider/shell-local"
+	seamapproval "github.com/issueye/ada_go_v2/plugins/seam/approval"
+	seamsandbox "github.com/issueye/ada_go_v2/plugins/seam/sandbox"
+	seamshell "github.com/issueye/ada_go_v2/plugins/seam/shell"
 )
 
 type mapEnv map[string]string

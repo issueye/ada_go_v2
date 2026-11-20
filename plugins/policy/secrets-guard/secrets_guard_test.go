@@ -4,12 +4,12 @@ import (
 	"context"
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/caps"
-	"github.com/adag/ada-go/v2/platform/kernel"
-	secretsguard "github.com/adag/ada-go/v2/plugins/policy/secrets-guard"
-	capsstatic "github.com/adag/ada-go/v2/plugins/provider/caps-static"
-	secretsenv "github.com/adag/ada-go/v2/plugins/provider/secrets-env"
-	seamsecrets "github.com/adag/ada-go/v2/plugins/seam/secrets"
+	"github.com/issueye/ada_go_v2/platform/caps"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	secretsguard "github.com/issueye/ada_go_v2/plugins/policy/secrets-guard"
+	capsstatic "github.com/issueye/ada_go_v2/plugins/provider/caps-static"
+	secretsenv "github.com/issueye/ada_go_v2/plugins/provider/secrets-env"
+	seamsecrets "github.com/issueye/ada_go_v2/plugins/seam/secrets"
 )
 
 type fakeGetter struct{ value string }

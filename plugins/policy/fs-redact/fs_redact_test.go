@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
-	fsredact "github.com/adag/ada-go/v2/plugins/policy/fs-redact"
-	fsloc "github.com/adag/ada-go/v2/plugins/provider/fs-local"
-	seamfs "github.com/adag/ada-go/v2/plugins/seam/fs"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	fsredact "github.com/issueye/ada_go_v2/plugins/policy/fs-redact"
+	fsloc "github.com/issueye/ada_go_v2/plugins/provider/fs-local"
+	seamfs "github.com/issueye/ada_go_v2/plugins/seam/fs"
 )
 
 type fakeFS struct {

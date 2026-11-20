@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/compile"
+	"github.com/issueye/ada_go_v2/platform/compile"
 )
 
 const decoratorSrc = `function sealed(target: any) {}

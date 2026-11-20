@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/compile"
-	"github.com/adag/ada-go/v2/platform/jsrt"
+	"github.com/issueye/ada_go_v2/platform/compile"
+	"github.com/issueye/ada_go_v2/platform/jsrt"
 )
 
 // 5. ESM 循环依赖:两个模块互相 import,Link 与执行都要正常(S9 回归)。

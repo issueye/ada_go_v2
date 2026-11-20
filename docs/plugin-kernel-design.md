@@ -1926,7 +1926,7 @@ func TestReadFile(t *testing.T) {
 
 ```
 ada_go_v2/
-  go.mod                      module github.com/adag/ada（v2）
+  go.mod                      module github.com/issueye/ada_go_v2
   platform/kernel/                     ← 纯 Go，不依赖 moejs / mygo
     app.go                    App：根 Context、代际、生命周期
     context.go                Context 派生（Extend/Isolate/Intercept）

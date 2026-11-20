@@ -16,10 +16,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
-	"github.com/adag/ada-go/v2/plugins/seam/llm"
-	"github.com/adag/ada-go/v2/plugins/seam/seamerr"
-	seamsecrets "github.com/adag/ada-go/v2/plugins/seam/secrets"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	"github.com/issueye/ada_go_v2/plugins/seam/llm"
+	"github.com/issueye/ada_go_v2/plugins/seam/seamerr"
+	seamsecrets "github.com/issueye/ada_go_v2/plugins/seam/secrets"
 )
 
 // ProviderName 是 provider 与插件 id。

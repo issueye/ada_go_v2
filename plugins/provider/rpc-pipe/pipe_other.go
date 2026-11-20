@@ -5,7 +5,7 @@ package rpcpipe
 import (
 	"context"
 
-	seamrpc "github.com/adag/ada-go/v2/plugins/seam/rpc"
+	seamrpc "github.com/issueye/ada_go_v2/plugins/seam/rpc"
 )
 
 type noTransport struct{}

@@ -17,10 +17,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/adag/ada-go/v2/platform/caps"
-	"github.com/adag/ada-go/v2/platform/compile"
-	"github.com/adag/ada-go/v2/platform/install"
-	"github.com/adag/ada-go/v2/platform/loader"
+	"github.com/issueye/ada_go_v2/platform/caps"
+	"github.com/issueye/ada_go_v2/platform/compile"
+	"github.com/issueye/ada_go_v2/platform/install"
+	"github.com/issueye/ada_go_v2/platform/loader"
 )
 
 const tsPluginSource = `type Ctx = { log: (m: string) => void }

@@ -4,8 +4,8 @@ import (
 	"context"
 	"sync"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
-	"github.com/adag/ada-go/v2/plugins/seam/seamerr"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	"github.com/issueye/ada_go_v2/plugins/seam/seamerr"
 )
 
 // ProjectionTurnStats 是默认轮次统计投影的稳定名字。

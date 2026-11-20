@@ -5,8 +5,8 @@
 package capsstatic
 
 import (
-	"github.com/adag/ada-go/v2/platform/caps"
-	"github.com/adag/ada-go/v2/platform/kernel"
+	"github.com/issueye/ada_go_v2/platform/caps"
+	"github.com/issueye/ada_go_v2/platform/kernel"
 )
 
 // ProviderName 是插件 id 与服务提供者名。

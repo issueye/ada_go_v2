@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/host/cli"
-	"github.com/adag/ada-go/v2/platform/install"
+	"github.com/issueye/ada_go_v2/platform/host/cli"
+	"github.com/issueye/ada_go_v2/platform/install"
 )
 
 func run(args ...string) (int, string, string) {

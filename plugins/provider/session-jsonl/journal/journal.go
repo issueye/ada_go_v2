@@ -7,7 +7,7 @@ package journal
 import (
 	"context"
 
-	"github.com/adag/ada-go/v2/plugins/seam/session"
+	"github.com/issueye/ada_go_v2/plugins/seam/session"
 )
 
 // ProviderName 同时是 provider 名与插件 id。

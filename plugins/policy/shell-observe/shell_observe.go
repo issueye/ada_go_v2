@@ -7,8 +7,8 @@ package shellobserve
 import (
 	"context"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
-	seamshell "github.com/adag/ada-go/v2/plugins/seam/shell"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	seamshell "github.com/issueye/ada_go_v2/plugins/seam/shell"
 )
 
 // PolicyName 是插件 id。

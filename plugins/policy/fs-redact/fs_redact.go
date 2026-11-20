@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"regexp"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
-	seamfs "github.com/adag/ada-go/v2/plugins/seam/fs"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	seamfs "github.com/issueye/ada_go_v2/plugins/seam/fs"
 )
 
 // PolicyName 是插件 id。

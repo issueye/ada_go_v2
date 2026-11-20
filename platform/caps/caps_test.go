@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/caps"
+	"github.com/issueye/ada_go_v2/platform/caps"
 )
 
 // 1. 能力名语法:未知命名空间/层级错误/空名一律非法。

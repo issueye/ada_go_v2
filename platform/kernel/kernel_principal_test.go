@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
+	"github.com/issueye/ada_go_v2/platform/kernel"
 )
 
 // 1. 插件上下文能给出调用者身份,并携带在 Context() 的 context 里。

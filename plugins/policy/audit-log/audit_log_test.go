@@ -8,13 +8,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/adag/ada-go/v2/platform/caps"
-	"github.com/adag/ada-go/v2/platform/kernel"
-	auditlog "github.com/adag/ada-go/v2/plugins/policy/audit-log"
-	capsstatic "github.com/adag/ada-go/v2/plugins/provider/caps-static"
-	seamfs "github.com/adag/ada-go/v2/plugins/seam/fs"
-	seamnet "github.com/adag/ada-go/v2/plugins/seam/net"
-	seamshell "github.com/adag/ada-go/v2/plugins/seam/shell"
+	"github.com/issueye/ada_go_v2/platform/caps"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	auditlog "github.com/issueye/ada_go_v2/plugins/policy/audit-log"
+	capsstatic "github.com/issueye/ada_go_v2/plugins/provider/caps-static"
+	seamfs "github.com/issueye/ada_go_v2/plugins/seam/fs"
+	seamnet "github.com/issueye/ada_go_v2/plugins/seam/net"
+	seamshell "github.com/issueye/ada_go_v2/plugins/seam/shell"
 )
 
 // 1. 事件被写成一行 JSON。

@@ -14,10 +14,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/adag/ada-go/v2/platform/bridge"
-	"github.com/adag/ada-go/v2/platform/compile"
-	"github.com/adag/ada-go/v2/platform/kernel"
-	"github.com/adag/ada-go/v2/platform/plugin"
+	"github.com/issueye/ada_go_v2/platform/bridge"
+	"github.com/issueye/ada_go_v2/platform/compile"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	"github.com/issueye/ada_go_v2/platform/plugin"
 )
 
 // Options 控制装载行为。

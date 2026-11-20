@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/adag/ada-go/v2/platform/flow"
-	"github.com/adag/ada-go/v2/platform/kernel"
+	"github.com/issueye/ada_go_v2/platform/flow"
+	"github.com/issueye/ada_go_v2/platform/kernel"
 )
 
 // fakeRT 是可脚本化的 Runtime:记录调用,回调决定结果。

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/kernel/schema"
+	"github.com/issueye/ada_go_v2/platform/kernel/schema"
 )
 
 // numEqual 比较数值:Parse 用 UseNumber,默认值可能是 json.Number 而非 float64。

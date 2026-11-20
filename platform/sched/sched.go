@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
+	"github.com/issueye/ada_go_v2/platform/kernel"
 )
 
 // Clock 是调度用到的全部时间来源。

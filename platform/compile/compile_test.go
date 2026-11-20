@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/compile"
+	"github.com/issueye/ada_go_v2/platform/compile"
 )
 
 // 1. TS 的运行时语义(enum、构造器参数属性)必须被真正降级。

@@ -18,7 +18,7 @@ import (
 	"github.com/MoeForge/moejs"
 	"github.com/MoeForge/moejs/engine"
 
-	"github.com/adag/ada-go/v2/platform/compile"
+	"github.com/issueye/ada_go_v2/platform/compile"
 )
 
 // interruptGrace 是取消后等待 worker 收尾的上限。

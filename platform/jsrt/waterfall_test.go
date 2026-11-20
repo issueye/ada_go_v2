@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/jsrt"
+	"github.com/issueye/ada_go_v2/platform/jsrt"
 )
 
 type wfInvoke func(ctx context.Context, input any, next func(any) (any, error)) (any, error)

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
+	"github.com/issueye/ada_go_v2/platform/kernel"
 )
 
 // Cron 是解析后的 5 段 cron 表达式(分 时 日 月 周)。

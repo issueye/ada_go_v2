@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/adag/ada-go/v2/platform/host/builtins"
-	"github.com/adag/ada-go/v2/platform/kernel"
-	agentloop "github.com/adag/ada-go/v2/plugins/core/agent-loop"
-	"github.com/adag/ada-go/v2/plugins/seam/session"
+	"github.com/issueye/ada_go_v2/platform/host/builtins"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	agentloop "github.com/issueye/ada_go_v2/plugins/core/agent-loop"
+	"github.com/issueye/ada_go_v2/plugins/seam/session"
 )
 
 // TestRealAgentTurn 是显式的真实模型端到端测试:只在设置

@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/adag/ada-go/v2/platform/host/registry"
+	"github.com/issueye/ada_go_v2/platform/host/registry"
 )
 
 func setup(t *testing.T) (http.Handler, string) {

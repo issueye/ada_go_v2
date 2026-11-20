@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/jsrt"
+	"github.com/issueye/ada_go_v2/platform/jsrt"
 )
 
 // 15. 运行期 ctx.emit:宿主同步派发时若绕回本运行时的处理器,必须快速失败而不是死锁。

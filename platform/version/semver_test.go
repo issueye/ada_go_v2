@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/version"
+	"github.com/issueye/ada_go_v2/platform/version"
 )
 
 // 1. 解析与比较:预发布段的排序符合 semver。

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/bundle"
-	"github.com/adag/ada-go/v2/platform/plugin"
+	"github.com/issueye/ada_go_v2/platform/bundle"
+	"github.com/issueye/ada_go_v2/platform/plugin"
 )
 
 func writeFile(t *testing.T, path, body string) {

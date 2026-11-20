@@ -17,10 +17,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/adag/ada-go/v2/platform/compile"
-	"github.com/adag/ada-go/v2/platform/jsrt"
-	"github.com/adag/ada-go/v2/platform/kernel"
-	"github.com/adag/ada-go/v2/platform/kernel/schema"
+	"github.com/issueye/ada_go_v2/platform/compile"
+	"github.com/issueye/ada_go_v2/platform/jsrt"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	"github.com/issueye/ada_go_v2/platform/kernel/schema"
 )
 
 // applyTimeout 是装配预算。装配只做编译 + 加载 + 一次 apply,

@@ -17,8 +17,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
-	"github.com/adag/ada-go/v2/plugins/seam/seamerr"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	"github.com/issueye/ada_go_v2/plugins/seam/seamerr"
 )
 
 // 标准事件类型(seam-api §4.3)。

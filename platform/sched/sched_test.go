@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/adag/ada-go/v2/platform/sched"
+	"github.com/issueye/ada_go_v2/platform/sched"
 )
 
 func startClock() *sched.FakeClock {

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	openai "github.com/adag/ada-go/v2/plugins/provider/llm-openai"
-	"github.com/adag/ada-go/v2/plugins/seam/llm"
+	openai "github.com/issueye/ada_go_v2/plugins/provider/llm-openai"
+	"github.com/issueye/ada_go_v2/plugins/seam/llm"
 )
 
 // TestRealOpenAI 是显式的真实端点冒烟测试:没有 ADA_LLM_ENDPOINT/ADA_LLM_API_KEY 时跳过。

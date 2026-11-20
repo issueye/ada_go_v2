@@ -1,4 +1,4 @@
-module github.com/adag/ada-go/v2
+module github.com/issueye/ada_go_v2
 
 go 1.27
 

@@ -11,11 +11,11 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/adag/ada-go/v2/platform/assemble"
-	"github.com/adag/ada-go/v2/platform/caps"
-	"github.com/adag/ada-go/v2/platform/host/registry"
-	"github.com/adag/ada-go/v2/platform/host/server"
-	"github.com/adag/ada-go/v2/platform/install"
+	"github.com/issueye/ada_go_v2/platform/assemble"
+	"github.com/issueye/ada_go_v2/platform/caps"
+	"github.com/issueye/ada_go_v2/platform/host/registry"
+	"github.com/issueye/ada_go_v2/platform/host/server"
+	"github.com/issueye/ada_go_v2/platform/install"
 )
 
 // checkResult 是 `ada check` 的结构化结果。

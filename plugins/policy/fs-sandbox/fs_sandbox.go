@@ -9,10 +9,10 @@ import (
 	"context"
 	"strings"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
-	seamapproval "github.com/adag/ada-go/v2/plugins/seam/approval"
-	seamfs "github.com/adag/ada-go/v2/plugins/seam/fs"
-	seamsandbox "github.com/adag/ada-go/v2/plugins/seam/sandbox"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	seamapproval "github.com/issueye/ada_go_v2/plugins/seam/approval"
+	seamfs "github.com/issueye/ada_go_v2/plugins/seam/fs"
+	seamsandbox "github.com/issueye/ada_go_v2/plugins/seam/sandbox"
 )
 
 // PolicyName 是插件 id。

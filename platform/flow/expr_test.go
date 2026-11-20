@@ -3,7 +3,7 @@ package flow_test
 import (
 	"testing"
 
-	"github.com/adag/ada-go/v2/platform/flow"
+	"github.com/issueye/ada_go_v2/platform/flow"
 )
 
 // 1. 路径、比较、逻辑与字面量。

@@ -8,7 +8,7 @@
 
 | # | 决定 | 取值 |
 |---|---|---|
-| D1 | 模块路径 / Go 版本 | `github.com/adag/ada-go/v2`,`go 1.27` |
+| D1 | 模块路径 / Go 版本 | `github.com/issueye/ada_go_v2`,`go 1.27` |
 | D2 | Schema 子集 | `type`、`properties`、`required`、`default`、`enum`、`const`、`items`、`minimum`、`maximum`、`minLength`、`maxLength`、`pattern`、`additionalProperties`、`oneOf`、`minItems`、`maxItems`、`$defs`/`$ref`(仅文档内) |
 | D3 | 服务表 API | 泛型 `Service[T](ctx, name)` + `TryService`;注册用 `Provide(name, any, opts...)`,值类型在解析时校验 |
 | D4 | 错误包位置 | `platform/kernel/errors.go`:`Code` 枚举 + `*kernel.Error`;seam 各自定义自己的错误 |

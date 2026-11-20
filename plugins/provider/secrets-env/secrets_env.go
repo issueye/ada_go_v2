@@ -8,8 +8,8 @@ import (
 	"context"
 	"os"
 
-	"github.com/adag/ada-go/v2/platform/kernel"
-	seamsecrets "github.com/adag/ada-go/v2/plugins/seam/secrets"
+	"github.com/issueye/ada_go_v2/platform/kernel"
+	seamsecrets "github.com/issueye/ada_go_v2/plugins/seam/secrets"
 )
 
 // ProviderName 是插件 id。
