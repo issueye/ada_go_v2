@@ -2,7 +2,7 @@
 
 > 本文件把里程碑验收项映射到**实现位置、证据命令与已知边界**。口径来源:
 > [plugin-kernel-design.md](plugin-kernel-design.md) §17、AGENTS §10。
-> 最近更新:2026-11-20(444 个 Test + 4 个 Benchmark;不做 v1 插件迁移)。
+> 最近更新:2026-11-20(446 个 Test + 4 个 Benchmark;不做 v1 插件迁移)。
 
 ## 0. 结论速览
 
@@ -47,15 +47,15 @@
 | 审批实现 | `approval-deny`,`approval-cli` | `approval-cli`(5) | CLI y/yes 交互 |
 | 静态能力授权 | `plugins/provider/caps-static`,`platform/caps/` | `caps`(7)、`caps-static`(1) | 安装根按 index trust 回填;普通磁盘目录 third-party |
 | 调用点强制 | `policy/caps-gate` | `caps-gate`(4) | fs/shell 调用点 |
-| 网络升级审批 | `policy/net-guard` | `net-guard`(13) | 每次未授权都重新审批 |
+| 网络升级审批 | `policy/net-guard` | `net-guard`(14) | 每次未授权都重新审批 |
 | C13 拒绝矩阵 | `plugins/policy/securitymatrix` | `TestFSMatrix`、`TestFSNoCapDenied`、`TestNetMatrix`、`TestShellMatrix` | 覆盖 fs/net/shell;caps 拒绝已入审计;通用 payload 脱敏待补 |
 
 ### 2.3 网络与 secret
 
 | 验收项 | 实现位置 | 证据 | 已知边界 |
 |---|---|---|---|
-| net seam/provider | `seam/net`,`provider/net-http` | `net-http`(7) | 超时/8MiB/重定向≤5/http(s) |
-| net 授权/私网拒绝 | `policy/net-guard` | `net-guard`(13) | 重定向逐跳校验;校验与请求解析仍有 TOCTOU |
+| net seam/provider | `seam/net`,`provider/net-http` | `net-http`(8) | 超时/8MiB/重定向≤5/http(s) |
+| net 授权/私网拒绝 | `policy/net-guard` | `net-guard`(14) | 重定向逐跳 + 连接级 IP 校验;无 DNS TOCTOU |
 | net 观察 | `policy/net-observe` | `net-observe`(4) | error 已脱敏 query;不含 body |
 | secrets seam/provider | `seam/secrets`,`provider/secrets-env` | `secrets-env`(5) | 白名单空=拒绝;`ADA_SECRET_*` |
 | secrets 授权 | `policy/secrets-guard` | `secrets-guard`(3) | 名称正则 + principal |
@@ -86,7 +86,7 @@ go run ./cmd/ada inspect --chain --preset examples/agent/agent.preset.json
 
 当前实测:
 
-- 测试 **444 个 Test + 4 个 Benchmark**,`go test -race ./...` 全绿;
+- 测试 **446 个 Test + 4 个 Benchmark**,`go test -race ./...` 全绿;
 - kernel 生产 **2396 / 3000** 行;
 - host 生产 **2298 / 2500**(cli 1410 / 1500,其它最大 408 / 800);
 - bench:ServiceResolve 58ns、Emit 1.61μs、waterfall 5.55μs、50 插件 348μs;
@@ -97,6 +97,6 @@ go run ./cmd/ada inspect --chain --preset examples/agent/agent.preset.json
 1. **OS 级沙箱强制**(landlock/seatbelt/Job Object 级 fs/shell):当前只有 policy-only;
 2. **真实桌面窗口(mygo)**:只有 Renderer/View/Subscribe/OpenPage 骨架;
 3. **M4.5 基础已落地**;剩余摘要质量评估、检查点持久化与 `core/agent` 拆分;
-4. **安全 P0 缺口**:连接级 IP 校验(TOCTOU)。
+4. **无剩余安全 P0**;M5 剩余 OS 级沙箱与真实桌面窗口(ADR 0001)。
 
 前两项记录在 [ADR 0001](adr/0001-deferred-m5-scope.md),复议日期 2027-01-15;在此之前 **不得宣称 M5 完成**。

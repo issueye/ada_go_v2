@@ -79,6 +79,8 @@ func (g *guard) Do(ctx context.Context, req seamnet.Request) (seamnet.Response, 
 		if err != nil {
 			return seamnet.Response{}, err
 		}
+		// 让 provider 在拨号前再校验一次已解析 IP,消除 DNS 校验与拨号之间的 TOCTOU。
+		current.DialCheck = g.dialCheck
 		// 让 provider 返回 3xx,由这里逐跳校验后再跟随;否则 provider 会直接跳到私网。
 		current.NoRedirect = true
 		resp, err := g.inner.Do(ctx, current)
@@ -146,6 +148,19 @@ func (g *guard) check(ctx context.Context, req seamnet.Request) (*url.URL, error
 		}
 	}
 	return u, nil
+}
+
+func (g *guard) dialCheck(_ string, _ string, ip net.IP) error {
+	if ip == nil {
+		return seamnet.Denied("连接地址为空")
+	}
+	if g.allowPrivate {
+		return nil
+	}
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
+		return seamnet.Denied("连接地址是私有/本地: " + ip.String())
+	}
+	return nil
 }
 
 func isRedirect(status int) bool {

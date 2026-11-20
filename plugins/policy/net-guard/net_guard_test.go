@@ -122,6 +122,34 @@ func TestServiceBroker(t *testing.T) {
 	}
 }
 
+type captureClient struct{ req seamnet.Request }
+
+func (f *captureClient) Do(_ context.Context, req seamnet.Request) (seamnet.Response, error) {
+	f.req = req
+	return seamnet.Response{Status: 200, Body: []byte("ok")}, nil
+}
+
+// 13. net-guard 必须把连接级 DialCheck 交给 provider。
+func TestSetsDialCheck(t *testing.T) {
+	f := &captureClient{}
+	b := brokerWith(t, map[string][]string{"p1": {"net.fetch.example.com"}})
+	g := netguard.NewWithResolver(f, b, false, func(context.Context, string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("93.184.216.34")}, nil
+	})
+	if _, err := g.Do(kernel.WithPrincipal(context.Background(), "p1"), seamnet.Request{URL: "http://example.com/x"}); err != nil {
+		t.Fatalf("放行失败: %v", err)
+	}
+	if f.req.DialCheck == nil {
+		t.Fatalf("net-guard 未注入 DialCheck")
+	}
+	if err := f.req.DialCheck("tcp", "example.com:80", net.ParseIP("10.0.0.1")); err == nil {
+		t.Fatalf("连接级校验应拒绝私网 IP")
+	}
+	if err := f.req.DialCheck("tcp", "example.com:80", net.ParseIP("93.184.216.34")); err != nil {
+		t.Fatalf("连接级校验应放行公网 IP: %v", err)
+	}
+}
+
 type redirectClient struct {
 	target string
 	calls  int

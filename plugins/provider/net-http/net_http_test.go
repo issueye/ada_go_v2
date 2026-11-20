@@ -2,6 +2,7 @@ package nethttp_test
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -62,6 +63,38 @@ func TestNoRedirect(t *testing.T) {
 	}
 	if resp.Status != http.StatusOK || string(resp.Body) != "target" {
 		t.Fatalf("默认跟随结果不正确: %+v", resp)
+	}
+}
+
+// 1.2 DialCheck 在拨号前逐 IP 校验;拒绝则不建立连接。
+func TestDialCheck(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+	c := nethttp.New(5*time.Second, 1024)
+
+	_, err := c.Do(context.Background(), seamnet.Request{
+		URL: srv.URL,
+		DialCheck: func(string, string, net.IP) error {
+			return seamnet.Denied("测试拒绝")
+		},
+	})
+	if err == nil {
+		t.Fatalf("DialCheck 拒绝时不应建立连接")
+	}
+
+	resp, err := c.Do(context.Background(), seamnet.Request{
+		URL: srv.URL,
+		DialCheck: func(string, string, net.IP) error {
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("DialCheck 放行时应成功: %v", err)
+	}
+	if resp.Status != http.StatusOK || string(resp.Body) != "ok" {
+		t.Fatalf("响应不正确: %+v", resp)
 	}
 }
 

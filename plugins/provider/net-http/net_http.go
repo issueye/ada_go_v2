@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -85,14 +86,20 @@ func (c *client) Do(ctx context.Context, req seamnet.Request) (seamnet.Response,
 		hreq.Header.Set(k, v)
 	}
 
-	hc := c.http
+	hc := *c.http
 	if req.NoRedirect {
 		// http.Client 不能按请求改 CheckRedirect;复制一份,Transport 仍共享。
-		cp := *c.http
-		cp.CheckRedirect = func(*http.Request, []*http.Request) error {
+		hc.CheckRedirect = func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		}
-		hc = &cp
+	}
+	if req.DialCheck != nil {
+		tr, err := checkedTransport(req.DialCheck)
+		if err != nil {
+			return seamnet.Response{}, err
+		}
+		hc.Transport = tr
+		defer tr.CloseIdleConnections()
 	}
 	resp, err := hc.Do(hreq)
 	if err != nil {
@@ -123,6 +130,54 @@ func (c *client) Do(ctx context.Context, req seamnet.Request) (seamnet.Response,
 		Status: resp.StatusCode, Headers: headers, Body: data,
 		URL: urlStr, Truncated: truncated,
 	}, nil
+}
+
+// checkedTransport 构造一个逐地址校验的 Transport:先解析,再对每个 IP 调 DialCheck,
+// 最后直接拨已校验的 IP(而不是让 Transport 再解析一次,避免 TOCTOU)。
+func checkedTransport(check seamnet.DialCheck) (*http.Transport, error) {
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return nil, fmt.Errorf("net-http: 默认 Transport 类型不支持连接级校验")
+	}
+	tr := base.Clone()
+	tr.Proxy = nil
+	tr.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, fmt.Errorf("net-http: 地址非法 %q: %w", address, err)
+		}
+		var ips []net.IP
+		if ip := net.ParseIP(host); ip != nil {
+			ips = []net.IP{ip}
+		} else {
+			addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+			if err != nil {
+				return nil, fmt.Errorf("net-http: 解析 %s 失败: %w", host, err)
+			}
+			for _, a := range addrs {
+				if a.IP != nil {
+					ips = append(ips, a.IP)
+				}
+			}
+		}
+		var last error
+		for _, ip := range ips {
+			if err := check(network, address, ip); err != nil {
+				last = err
+				continue
+			}
+			conn, err := (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+			if err == nil {
+				return conn, nil
+			}
+			last = err
+		}
+		if last == nil {
+			last = seamnet.Denied("没有可连接的地址: " + host)
+		}
+		return nil, fmt.Errorf("net-http: 连接失败: %w", last)
+	}
+	return tr, nil
 }
 
 // Plugin 返回 net-http 插件:inject net seam,Install 底座实现。

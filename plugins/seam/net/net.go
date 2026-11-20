@@ -6,12 +6,17 @@ package net
 
 import (
 	"context"
+	"net"
 	"sort"
 	"sync"
 
 	"github.com/adag/ada-go/v2/platform/kernel"
 	"github.com/adag/ada-go/v2/plugins/seam/seamerr"
 )
+
+// DialCheck 在拨号前拿到已解析的 IP;返回错误即拒绝该地址。
+// address 是 "host:port" 形式,ip 是解析/字面地址;由 provider 在连接级调用。
+type DialCheck func(network, address string, ip net.IP) error
 
 // Request 是一次抓取请求。
 type Request struct {
@@ -23,6 +28,10 @@ type Request struct {
 	// NoRedirect 让 provider 不跟随重定向,由外层策略逐跳校验并自行跟随。
 	// 它是控制面标记,不进 JSON 配置。
 	NoRedirect bool `json:"-"`
+
+	// DialCheck 是连接级地址校验;nil 表示 provider 使用默认拨号。
+	// 它用于消除「DNS 校验」与「实际拨号」之间的 TOCTOU。
+	DialCheck DialCheck `json:"-"`
 }
 
 // Response 是抓取结果。

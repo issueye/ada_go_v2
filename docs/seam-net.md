@@ -18,7 +18,7 @@ plugins/policy/net-observe/  策略:每次抓取后广播 net/observe(观察,不
 
 | 类型/方法 | 语义 |
 |---|---|
-| `Request{Method,URL,Headers,Body,NoRedirect}` | Method 空 = GET;只允许 http/https;`NoRedirect=true` 让 provider 返回 3xx |
+| `Request{Method,URL,Headers,Body,NoRedirect,DialCheck}` | Method 空 = GET;只允许 http/https;`NoRedirect=true` 让 provider 返回 3xx;`DialCheck` 在拨号前校验已解析 IP |
 | `Response{Status,Headers,Body,URL,Truncated}` | 非 2xx **原样返回**,不自动报错 |
 | `Chain.Install(base)` | provider 安装底座;重复安装报错 |
 | `Chain.Decorate(fn, priority)` | policy 叠加;priority 越大越靠外 |
@@ -30,6 +30,8 @@ plugins/policy/net-observe/  策略:每次抓取后广播 net/observe(观察,不
 - 响应上限:`maxBytes`(默认 8 MiB),超出截断并置 `Truncated=true`;
 - 重定向:默认最多 5 次,之后返回最后一次响应;`Request.NoRedirect=true` 时不跟随,
   原样返回 3xx 与 `Location`,由 `net-guard` 逐跳校验后自行跟随;
+- 连接级校验:`Request.DialCheck` 存在时,provider 先解析 host,对每个 IP 调用检查,
+  再直接拨已校验的 IP,避免 Transport 二次解析;
 - 请求头逐项设置;响应头用 `", "` 合并多值;
 - 非法 URL/scheme → 参数错误(`EINVALID`)。
 
@@ -41,8 +43,8 @@ plugins/policy/net-observe/  策略:每次抓取后广播 net/observe(观察,不
 4. **没有代理/证书/HTTP2 配置**;用默认 Transport。
 5. **没有重试/退避**;一次失败即返回。
 6. **SSRF 防护在 policy 层**:`net-guard` 拒绝字面私网与解析后的私网 IP,并对重定向逐跳
-   重新校验 host/私网/授权;仍存在 **TOCTOU**(校验时解析与请求时解析可能不同),且
-   provider 直接用默认 Transport,不做连接级地址校验。
+   重新校验 host/私网/授权;同时通过 `DialCheck` 在拨号前校验实际 IP 并直接拨该 IP,
+   不再存在「校验后重新解析」的 TOCTOU。provider 的 `DialCheck` 是可选控制面钩子。
 7. **重定向由 net-guard 跟随**:`net-guard` 给 provider 设 `NoRedirect=true`,收到 3xx 后
    校验 `Location` 与下一跳,再发起请求;最多 5 跳。`Response.URL` 是最后一跳。
 
@@ -72,6 +74,8 @@ plugins/policy/net-observe/  策略:每次抓取后广播 net/observe(观察,不
 | 超时失败 | `nethttp.TestTimeout` |
 | 非法 scheme 拒绝 | `nethttp.TestBadScheme` |
 | `NoRedirect` 返回 3xx、默认跟随 | `nethttp.TestNoRedirect` |
+| 连接级 `DialCheck` 拒绝/放行 | `nethttp.TestDialCheck` |
+| net-guard 注入 DialCheck | `netguard.TestSetsDialCheck` |
 | net-guard:重定向到私网/未授权 host 拒绝 | `netguard.TestRedirectPrivateDenied`、`TestRedirectUnauthorizedDenied` |
 | net-guard:两跳均已授权时跟随 | `netguard.TestRedirectAllowed` |
 | 内核集成(seam + provider + consumer) | `nethttp.TestKernelIntegration` |
@@ -91,7 +95,7 @@ plugins/policy/net-observe/  策略:每次抓取后广播 net/observe(观察,不
 2. **审批目标脱敏**:`net-guard` 已对审批 `Target` 去掉 userinfo 与 query(置换为 `REDACTED`);
    其它 source 的通用脱敏仍需统一。
 3. 把 `caps-gate` 扩展到 net(当前由 `net-guard` 承担)。
-4. **连接级 IP 校验**:消除解析与拨号之间的 TOCTOU。
+4. **代理/TLS/HTTP2 配置**;连接级校验当前禁用环境代理。
 
 ## 7. 验证命令
 
