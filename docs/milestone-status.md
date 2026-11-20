@@ -2,7 +2,7 @@
 
 > 本文件把里程碑验收项映射到**实现位置、证据命令与已知边界**。口径来源:
 > [plugin-kernel-design.md](plugin-kernel-design.md) §17、AGENTS §10。
-> 最近更新:2026-11-20(471 个 Test + 4 个 Benchmark;不做 v1 插件迁移)。
+> 最近更新:2026-11-20(473 个 Test + 4 个 Benchmark;不做 v1 插件迁移)。
 
 ## 0. 结论速览
 
@@ -74,6 +74,7 @@
 | 桌面映射骨架 | `platform/host/desktop` | `desktop`(4) | **无真实窗口(mygo),见 ADR 0001** |
 | 审计落盘 | `policy/audit-log` | `audit-log`(7) | 无 fsync;大小轮转 |
 | `ada inspect --chain` | `platform/host/cli` | `cli.TestInspectChain` | 只显示 fs/shell/net 优先级 |
+| 内置栈接线 | `platform/host/builtins` | `builtins.TestBuiltinGoPlugins`、`cli.TestUpNetStack`/`TestUpSecretsStack` | net/secrets 已接入宿主;其它 Go 插件仍需编译时注册 |
 
 ### 2.5 RPC 通讯(P0–P2,新增能力)
 
@@ -98,7 +99,7 @@ go run ./cmd/ada inspect --chain --preset examples/agent/agent.preset.json
 
 当前实测:
 
-- 测试 **471 个 Test + 4 个 Benchmark**,`go test -race ./...` 全绿;
+- 测试 **473 个 Test + 4 个 Benchmark**,`go test -race ./...` 全绿;
 - kernel 生产 **2396 / 3000** 行;
 - host 生产 **2306 / 2500**(cli 1410 / 1500,其它最大 408 / 800);
 - bench:ServiceResolve 58ns、Emit 1.61μs、waterfall 5.55μs、50 插件 348μs;

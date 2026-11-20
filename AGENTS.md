@@ -39,6 +39,8 @@
 | [seam-api.md](docs/seam-api.md) | 首批 seam 契约：llm / tools / session / prompts |
 | [m4.5-agent-core.md](docs/m4.5-agent-core.md) | M4.5 第一刀:prompts/llm/tools/agent-loop、最小 preset 与 golden |
 | [seam-api-security.md](docs/seam-api-security.md) | 安全 seam 契约：sandbox / fs / shell |
+| [seam-rpc.md](docs/seam-rpc.md) | RPC 通讯:seam/rpc + provider/rpc-json/net/pipe(P3/P4 待做) |
+| [ui-framework.md](docs/ui-framework.md) | 提案:无 Node 的插件化 SPA(未实现) |
 | [kernel-api.md](docs/kernel-api.md) | M1 冻结的内核 API 与已知边界 |
 | [spikes.md](docs/spikes.md) | M0 验证报告（5 个已通过，7 个待做） |
 | [m2-execution.md](docs/m2-execution.md) | M2 执行层第一刀:compile / jsrt / bridge 的契约、测试矩阵与已知边界 |
@@ -57,6 +59,12 @@
 | [adr/0002](docs/adr/0002-host-budget-exception.md) | ADR:host 层代码预算例外 |
 | [adr/0003](docs/adr/0003-handler-context-and-timeout-gate.md) | ADR:监听器 ctx 与 waterfall 超时闸门 |
 | [adr/0004](docs/adr/0004-execution-layer-deps.md) | ADR:执行层引入 esbuild 与 moejs |
+| [adr/0005](docs/adr/0005-ui-infrastructure.md) | ADR(提案):UI 编译器/运行时归 L2 |
+| [adr/0006](docs/adr/0006-custom-ui-components.md) | ADR(提案):受控自定义 UI 组件 |
+| [adr/0007](docs/adr/0007-host-web-budget.md) | ADR(提案):host/web 与 host 预算例外 |
+| [adr/0008](docs/adr/0008-desktop-webview-shell.md) | ADR(提案):桌面只做 WebView 壳 |
+| [adr/0009](docs/adr/0009-rpc-json-budget.md) | ADR:rpc-json 单插件预算例外 |
+| [adr/0010](docs/adr/0010-session-jsonl-budget.md) | ADR:session-jsonl 单插件预算例外 |
 | [seam-net.md](docs/seam-net.md) | M5 网络能力:seam/net 与 provider/net-http |
 | [seam-secrets.md](docs/seam-secrets.md) | M5 secret 能力:seam/secrets 与 provider/secrets-env |
 | [seam-fs.md](docs/seam-fs.md) | M5 安全第一刀:seam/fs、fs-local 实现与 fs-sandbox 策略 |
@@ -198,7 +206,7 @@ platform/host/*   ✓→ 全部
 |---|---|---|
 | `platform/kernel/` | ≤ 3000 行 | 内核越厚，插件越难替换 |
 | `platform/host/*` | ≤ 2500 行（每个适配器 ≤ 800；`platform/host/cli` ≤ 1500，ADR 0002 临时例外） | 宿主只做映射；CLI 的参数解析/输出计入预算，拆分包后回滚例外 |
-| 单个插件 | ≤ 800 行，单一职责 | 混装说明该拆 |
+| 单个插件 | ≤ 800 行，单一职责（例外:`rpc-json` ≤ 1200，ADR 0009;`session-jsonl` ≤ 1000，ADR 0010） | 混装说明该拆;例外有复议日期 |
 | 单个 seam 包 | ≤ 400 行（只有类型/错误/事件名） | 出现实现即违规 |
 
 ### 5.4 命名与结构约定

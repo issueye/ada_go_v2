@@ -53,7 +53,7 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 5. **发布物不带 esbuild**：编译发生在安装期/开发期，产物是 `plugin.artifact.json`（JS + sourcemap + 摘要 + 签名）。
 6. **编排分三层**：装配编排产出依赖图与事务报告；交互编排产出服务调用、事件链与可声明流水线；调度编排产出激活事件、配额与闲置回收。
 7. **mygo 是宿主之一**：内核不 import mygo；桌面适配器负责窗口、协议、类型化事件与主线程切换。
-8. **迁移而非重写**：v1 的虚拟模块表、贡献事务、预算/熔断、十类沙箱、签名逻辑可搬；重写的是「一次性装配 + 冻结」模型。
+8. **v1 只作参照，不做迁移**：v1 的经验与反例用于设计；不提供 `ada migrate`，不移植 v1 官方插件。
 
 ## 文档结构
 
@@ -79,7 +79,7 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 | [version.md](docs/version.md) | 版本与引擎约束:semver 解析与 engine/engines 校验 |
 | [host-cli.md](docs/host-cli.md) | M5 宿主适配器第一刀:platform/host/cli 命令实现与测试 |
 | [host-server.md](docs/host-server.md) | 第二宿主适配器:platform/host/server 只读 HTTP API |
-| [host-desktop.md](docs/host-desktop.md) | 宿主适配器骨架:platform/host/desktop 视图映射(已被 WebView 壳方案取代,见 ui-framework §11.3/ADR 0008) |
+| [host-desktop.md](docs/host-desktop.md) | 宿主适配器骨架:platform/host/desktop 视图映射(WebView 壳见 ADR 0008 提案;当前仍是 native 骨架) |
 | [host-registry.md](docs/host-registry.md) | 在线仓库服务端:platform/host/registry 只读 HTTP |
 | [audit-log.md](docs/audit-log.md) | M5 审计落盘:policy/audit-log JSONL |
 | [adr/0001](docs/adr/0001-deferred-m5-scope.md) | ADR:延迟 OS 级沙箱与真实桌面窗口(复议 2027-01-15) |
@@ -90,7 +90,8 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 | [adr/0006](docs/adr/0006-custom-ui-components.md) | ADR(提案):受控自定义 UI 组件(反转「插件不画 UI」) |
 | [adr/0007](docs/adr/0007-host-web-budget.md) | ADR(提案):platform/host/web 与 host 总行数预算例外 |
 | [adr/0008](docs/adr/0008-desktop-webview-shell.md) | ADR(提案):桌面只做 WebView 壳(mygo WebView2/Electron)，不做 native UI |
-| [adr/0009](docs/adr/0009-rpc-json-budget.md) | ADR(提案):rpc-json 单插件预算例外 |
+| [adr/0009](docs/adr/0009-rpc-json-budget.md) | ADR:rpc-json 单插件预算例外(已接受) |
+| [adr/0010](docs/adr/0010-session-jsonl-budget.md) | ADR:session-jsonl 单插件预算例外(已接受) |
 | [seam-rpc.md](docs/seam-rpc.md) | RPC 通讯:P0–P2 已实现(tcp/unix/Windows 命名管道、帧协议、握手与取消) |
 | [seam-net.md](docs/seam-net.md) | M5 网络能力:seam/net 与 provider/net-http |
 | [seam-secrets.md](docs/seam-secrets.md) | M5 secret 能力:seam/secrets 与 provider/secrets-env |
@@ -118,7 +119,7 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 ## 当前状态:M1 内核 + M2 执行层 + M3 装配 + M4 编排 + M4.5 Agent Core 第一刀 + M5 安全与宿主
 
 ```powershell
-go test -race -count=1 -timeout 300s ./...   # 417 个 Test + 4 个 Benchmark
+go test -race -count=1 -timeout 300s ./...   # 473 个 Test + 4 个 Benchmark
 go run ./cmd/ada-demo                        # 依赖门控 + 级联重载演示
 pwsh scripts/guard.ps1                       # 门禁:词汇/依赖/gofmt/build/vet/staticcheck/race/交叉编译/预算
 go run ./cmd/ada-ts-demo                     # M2:TS 插件编译→加载→提供服务/派发事件→内核消费
@@ -129,6 +130,8 @@ go run ./cmd/ada up --preset examples/agent/agent.preset.json     # M4.5:挂载 
 go run ./cmd/ada inspect --chain --preset examples/agent/agent.preset.json  # M5:装饰器链快照
 go run ./cmd/ada up --preset examples/agent/real.preset.json               # M4.5:真实 OpenAI 兼容端点(需 env)
 go run ./cmd/ada agent --preset examples/agent/agent.preset.json -message "读取 a.txt 并总结"  # M4.5:跑一轮
+go run ./cmd/ada up --preset examples/net/net.preset.json       # M5:net 栈(seam-net+net-http+net-observe)
+go run ./cmd/ada up --preset examples/secrets/secrets.preset.json # M5:secrets 栈(seam-secrets+secrets-env)
 go run ./cmd/ada plan --preset examples/presets/base.preset.json   # M3:preset(多目录/disabled/patch)
 go run ./cmd/ada inspect --preset examples/presets/ts-only.preset.json  # M3:诊断快照(fiber/服务/effect)
 go run ./cmd/ada verify examples/plugins-ts/hello-ts  # M5:清单/摘要/验签/信任
@@ -144,7 +147,7 @@ pwsh scripts/bench.ps1                       # 性能预算:≤20 μs/次、50 �
 
 已完成:`platform/kernel/`、`platform/kernel/schema`、`cmd/ada`、`cmd/ada-demo`、`cmd/ada-ts-demo`、`platform/compile/`、`platform/jsrt/`、`platform/bridge/`、`platform/plugin/`、`platform/preset/`、`platform/assemble/`(含延迟激活)、`platform/loader/`、`platform/sched/`、`platform/quota/`、`platform/flow/`、`platform/bundle/`、`platform/expr/`、`plugins/seam/session` + `provider/session-memory`、`plugins/seam/prompts` + `core/system-prompt`、`plugins/seam/llm` + `provider/llm-replay`/`provider/llm-openai`、`plugins/seam/tools` + `tool/fs`、`policy/approval-gate`/`policy/llm-retry`/`policy/tool-timeout`、`core/agent-loop`、`examples/agent`(最小 preset + 回放脚本)、`plugins/seam/fs` + `provider/fs-local` + `policy/fs-sandbox`、`plugins/seam/shell` + `provider/shell-local` + `policy/shell-guard`、`plugins/policy/fs-redact`/`fs-observe`/`shell-observe`/`shell-redact`、`plugins/seam/sandbox` + `provider/sandbox-none`、`plugins/seam/approval` + `provider/approval-deny`/`approval-cli`、`platform/caps/`、`platform/install/`、`platform/host/cli`、`platform/host/server`、`platform/host/builtins`、`platform/host/desktop`(视图映射骨架)、`platform/host/registry`、`scripts/guard.ps1`、`scripts/bench.ps1`、`docs/m4.5-agent-core.md`、`docs/kernel-api.md`、`docs/m2-execution.md`、`docs/m3-assembly.md`、`docs/m4-orchestration.md`、`docs/m4-flow.md`、`docs/seam-session.md`、`docs/seam-fs.md`、`docs/seam-shell.md`、`docs/seam-sandbox.md`、`docs/seam-approval.md`、`docs/adr/0001-deferred-m5-scope.md`、`docs/adr/0002-host-budget-exception.md`。
 
-未开始 / 剩余:`session-jsonl` + projection、`core/agent` 与 `core/agent-loop` 拆分、compaction/上下文预算、并行工具、`llm-deepseek` 专用适配(当前是 OpenAI 兼容通用 provider);M5 剩余 OS 级沙箱后端与真实桌面窗口(ADR 0001)。**不做 v1 插件迁移。**
+剩余:M4.5 的 token 计数、投影检查点持久化、`core/agent` 拆分与摘要质量评估;M5 的 OS 级沙箱与真实桌面窗口(ADR 0001);RPC P3/P4(授权/审计/TLS);UI 框架仍为提案。**不做 v1 插件迁移。**
 
 本轮修复了 M1 评审中复现的缺陷(waterfall 超时幽灵执行、兄弟插件被误拆、failed 不可复活、卸载错误被吞、fiber 注册表泄漏、Intercept 合并反向、Stop 后仍派发、schema 静默放行),每条都有回归用例;清单见 [kernel-api.md §6](docs/kernel-api.md)。
 
