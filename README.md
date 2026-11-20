@@ -79,13 +79,17 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 | [version.md](docs/version.md) | 版本与引擎约束:semver 解析与 engine/engines 校验 |
 | [host-cli.md](docs/host-cli.md) | M5 宿主适配器第一刀:platform/host/cli 命令实现与测试 |
 | [host-server.md](docs/host-server.md) | 第二宿主适配器:platform/host/server 只读 HTTP API |
-| [host-desktop.md](docs/host-desktop.md) | 宿主适配器骨架:platform/host/desktop 视图映射 |
+| [host-desktop.md](docs/host-desktop.md) | 宿主适配器骨架:platform/host/desktop 视图映射(已被 WebView 壳方案取代,见 ui-framework §11.3/ADR 0008) |
 | [host-registry.md](docs/host-registry.md) | 在线仓库服务端:platform/host/registry 只读 HTTP |
 | [audit-log.md](docs/audit-log.md) | M5 审计落盘:policy/audit-log JSONL |
 | [adr/0001](docs/adr/0001-deferred-m5-scope.md) | ADR:延迟 OS 级沙箱与真实桌面窗口(复议 2027-01-15) |
 | [adr/0002](docs/adr/0002-host-budget-exception.md) | ADR:host 层代码预算例外(CLI 适配器) |
 | [adr/0003](docs/adr/0003-handler-context-and-timeout-gate.md) | ADR:监听器 ctx 与 waterfall 超时闸门 |
 | [adr/0004](docs/adr/0004-execution-layer-deps.md) | ADR:执行层引入 esbuild 与 moejs |
+| [adr/0005](docs/adr/0005-ui-infrastructure.md) | ADR(提案):UI 编译器与浏览器运行时归入 L2 基础设施 |
+| [adr/0006](docs/adr/0006-custom-ui-components.md) | ADR(提案):受控自定义 UI 组件(反转「插件不画 UI」) |
+| [adr/0007](docs/adr/0007-host-web-budget.md) | ADR(提案):platform/host/web 与 host 总行数预算例外 |
+| [adr/0008](docs/adr/0008-desktop-webview-shell.md) | ADR(提案):桌面只做 WebView 壳(mygo WebView2/Electron)，不做 native UI |
 | [seam-net.md](docs/seam-net.md) | M5 网络能力:seam/net 与 provider/net-http |
 | [seam-secrets.md](docs/seam-secrets.md) | M5 secret 能力:seam/secrets 与 provider/secrets-env |
 | [seam-session.md](docs/seam-session.md) | seam/session 与 session-memory |
@@ -95,6 +99,7 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 | [seam-approval.md](docs/seam-approval.md) | M5:seam/approval、approval-deny 与升级审批 |
 | [caps.md](docs/caps.md) | M5 能力授权:caps 语法、信任等级与 Broker |
 | [install.md](docs/install.md) | M5 安装与签名:清单/摘要/Ed25519/原子安装 |
+| [ui-framework.md](docs/ui-framework.md) | 提案:无 Node 的插件化 SPA 前端框架（组件/组件包即一项功能 / Go 编译 / 远程加载 / 信任模型） |
 | [spikes.md](docs/spikes.md) | M0 验证报告（S1/S2/S6/S8/S9 通过） |
 
 ## 实测基线（Go 1.27.1 / windows/amd64 / CGO=0）

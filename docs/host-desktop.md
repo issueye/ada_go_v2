@@ -1,5 +1,7 @@
 # host/desktop(视图映射骨架)
 
+> **状态说明(2026-11-20)**:产品前提已改为桌面只做 WebView 壳(mygo WebView2 或 Electron)，不做 native UI。本文件的 native Renderer/View 映射骨架**不再是桌面方向**;新的桌面契约见 [ui-framework.md](ui-framework.md) §11.3 与 [ADR 0008](adr/0008-desktop-webview-shell.md)。保留本文件只作为既有实现与历史背景。
+>
 > 配套 [plugin-kernel-design.md](plugin-kernel-design.md) §12(宿主)与 AGENTS §2.2(宿主适配器)。
 
 ## 1. 范围

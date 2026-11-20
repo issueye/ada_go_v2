@@ -25,6 +25,7 @@
 | S10 | 闲置回收后再激活 | M4 | M4 开工前 |
 | S11 | 拒绝矩阵 + 审计 | M5 | M5 开工前 |
 | S12 | Windows 路径沙箱 | M5 | M5 开工前 |
+| S13 | UI 运行时 harness（moejs 直跑 + OpAdapter；不可行则 chromedp，需新依赖 ADR） | U0（[ui-framework.md](ui-framework.md) §14） | U0 第 1 周 |
 
 ## 对方案的修正
 
@@ -39,4 +40,3 @@
 ## 对 M0 的判定
 
 M0 的交付物是「spike 报告 + 一页 API 摘要」：本文件 + [kernel-api.md](kernel-api.md)。gate 已关闭，进入 M1。
-
