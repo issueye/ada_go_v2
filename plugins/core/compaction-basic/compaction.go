@@ -24,14 +24,19 @@ const PluginName = "compaction-basic"
 const ServiceName = "compaction"
 
 type config struct {
-	KeepRecent     int `json:"keepRecent,omitempty"`
-	MaxSummaryRune int `json:"maxSummaryRune,omitempty"`
+	KeepRecent     int    `json:"keepRecent,omitempty"`
+	MaxSummaryRune int    `json:"maxSummaryRune,omitempty"`
+	UseModel       bool   `json:"useModel,omitempty"`
+	Model          string `json:"model,omitempty"`
 }
 
 // Compactor 生成摘要并追加 compact/summary。
 type Compactor struct {
 	keepRecent int
 	maxRune    int
+	useModel   bool
+	model      string
+	bus        *kernel.Context
 }
 
 // New 构造压缩器;keepRecent 默认 8,最大摘要默认 4096 字符。
@@ -67,6 +72,15 @@ func (c *Compactor) Compact(ctx context.Context, sess session.Session, _ any) er
 	if text == "" {
 		text = fmt.Sprintf("已压缩 %d 条早期事件", cut)
 	}
+	if c.useModel && c.bus != nil {
+		if s, err := c.modelSummary(ctx, text); err == nil && strings.TrimSpace(s) != "" {
+			text = s
+		}
+	}
+	if utf8.RuneCountInString(text) > c.maxRune {
+		r := []rune(text)
+		text = string(r[:c.maxRune])
+	}
 	data, err := json.Marshal(map[string]any{
 		"upTo": upTo, "summary": text, "events": cut,
 		// 与 turn-stats 使用同一估算口径,投影据此扣减已压缩前缀的 token。
@@ -80,6 +94,47 @@ func (c *Compactor) Compact(ctx context.Context, sess session.Session, _ any) er
 		Data:   data,
 		Source: "core/compaction-basic",
 	})
+}
+
+func (c *Compactor) modelSummary(ctx context.Context, text string) (string, error) {
+	v, ok := c.bus.TryService("llm")
+	if !ok {
+		return "", fmt.Errorf("未挂载 llm 服务")
+	}
+	reg, ok := v.(*llm.Registry)
+	if !ok {
+		return "", fmt.Errorf("llm 服务类型不正确")
+	}
+	models, err := reg.Models(ctx, "")
+	if err != nil {
+		return "", err
+	}
+	model := ""
+	for _, m := range models {
+		if c.model == "" || m.ID == c.model {
+			model = m.ID
+			break
+		}
+	}
+	if model == "" {
+		return "", fmt.Errorf("没有可用模型: %s", c.model)
+	}
+	provider, err := reg.Get("")
+	if err != nil {
+		return "", err
+	}
+	resp, err := provider.Complete(ctx, llm.Request{
+		Model: model,
+		Messages: []llm.Message{
+			{Role: llm.RoleSystem, Content: []llm.Block{{Kind: llm.BlockText, Text: "你是会话压缩器。只输出摘要,保留事实、决定和未完成事项,不要调用工具。"}}},
+			{Role: llm.RoleUser, Content: []llm.Block{{Kind: llm.BlockText, Text: "请总结以下早期对话:\n\n" + text}}},
+		},
+		MaxTokens: 512,
+	})
+	if err != nil {
+		return "", err
+	}
+	return resp.Message.Text(), nil
 }
 
 func (c *Compactor) summary(events []session.Event, after uint64) string {
@@ -197,11 +252,15 @@ func compactedTo(events []session.Event) uint64 {
 // Plugin 返回 compaction-basic 插件:provide "compaction" 服务。
 func Plugin() kernel.Plugin {
 	return kernel.Func(PluginName, func(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, error) {
-		var c config
-		if err := cfg.Decode(&c); err != nil {
+		var conf config
+		if err := cfg.Decode(&conf); err != nil {
 			return nil, kernel.Fail(kernel.CodeInvalid, "compaction-basic: 解析配置失败: %v", err)
 		}
-		_, err := ctx.Provide(ServiceName, New(c.KeepRecent, c.MaxSummaryRune),
+		c := New(conf.KeepRecent, conf.MaxSummaryRune)
+		c.useModel = conf.UseModel
+		c.model = conf.Model
+		c.bus = ctx
+		_, err := ctx.Provide(ServiceName, c,
 			kernel.WithVersion(1), kernel.WithKind("object"))
 		return nil, err
 	}).WithProvide(ServiceName)

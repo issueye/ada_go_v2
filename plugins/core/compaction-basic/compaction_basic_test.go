@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/adag/ada-go/v2/platform/kernel"
 	compaction "github.com/adag/ada-go/v2/plugins/core/compaction-basic"
+	replay "github.com/adag/ada-go/v2/plugins/provider/llm-replay"
 	memory "github.com/adag/ada-go/v2/plugins/provider/session-memory"
+	"github.com/adag/ada-go/v2/plugins/seam/llm"
 	"github.com/adag/ada-go/v2/plugins/seam/session"
 )
 
@@ -50,6 +53,75 @@ func TestCompactAppendsSummary(t *testing.T) {
 	}
 	if payload.UpTo == 0 || payload.Summary == "" {
 		t.Fatalf("摘要内容不完整: %+v", payload)
+	}
+}
+
+func TestCompactWithModelSummary(t *testing.T) {
+	ctx := context.Background()
+	app := kernel.New(kernel.Options{})
+	t.Cleanup(func() { _ = app.Stop(ctx) })
+	mount := func(p kernel.Plugin, cfg map[string]any) {
+		t.Helper()
+		f, err := app.Plugin(p, kernel.NewConfig(cfg))
+		if err != nil {
+			t.Fatalf("挂载插件失败: %v", err)
+		}
+		if err := f.Ready(ctx); err != nil {
+			t.Fatalf("插件未就绪: %v", err)
+		}
+	}
+	mount(session.Plugin(), nil)
+	mount(memory.Plugin(), nil)
+	mount(llm.Plugin(), nil)
+	mount(replay.Plugin(), map[string]any{
+		"steps": []replay.Step{{Response: llm.Response{
+			Message: llm.Message{Role: llm.RoleAssistant, Content: []llm.Block{{Kind: llm.BlockText, Text: "MODEL SUMMARY"}}},
+			Finish:  llm.FinishStop,
+		}}},
+		"models":       []llm.ModelInfo{{ID: "summary"}},
+		"defaultModel": "summary",
+	})
+	mount(compaction.Plugin(), map[string]any{
+		"keepRecent": 4, "useModel": true, "model": "summary",
+	})
+
+	registry, err := kernel.Service[*session.Registry](app.Root(), "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := registry.Open(ctx, "", session.Meta{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 12; i++ {
+		if _, err := s.Append(session.Event{
+			Type: session.TypeUserMessage,
+			Data: []byte(`{"role":"user","content":[{"kind":"text","text":"history"}]}`),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw, err := app.Root().Service(compaction.ServiceName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, ok := raw.(*compaction.Compactor)
+	if !ok {
+		t.Fatalf("compaction 服务类型不对: %T", raw)
+	}
+	if err := c.Compact(ctx, s, nil); err != nil {
+		t.Fatalf("模型摘要压缩失败: %v", err)
+	}
+	events, _ := s.Events(0, 0)
+	last := events[len(events)-1]
+	var payload struct {
+		Summary string `json:"summary"`
+	}
+	if err := json.Unmarshal(last.Data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Summary != "MODEL SUMMARY" {
+		t.Fatalf("摘要应来自模型,实际 %q", payload.Summary)
 	}
 }
 

@@ -149,6 +149,7 @@ type Projection interface {
 | 投影统计/增量重放 | `sessionstats.TestApplyStats`、`TestProjectionThroughKernel` |
 | 未注册投影 | `sessionstats.TestProjectionUnregistered` |
 | 压缩摘要 | `compaction.TestCompactAppendsSummary`、`TestCompactNoopWhenShort` |
+| 模型摘要 | `compaction.TestCompactWithModelSummary` |
 | memory provider 经内核装配 | `memory.TestSeamAndProviderThroughKernel` |
 | 无 provider 时返回 `EUNIMPLEMENTED` | `memory.TestRegistryWithoutProvider` |
 
