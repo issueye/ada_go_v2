@@ -18,3 +18,6 @@ go.work.sum
 
 # 本机基准基线(机器相关,按需生成)
 /bench-baseline.txt
+
+# 本地会话日志
+examples/agent/sessions/

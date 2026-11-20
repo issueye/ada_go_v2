@@ -27,6 +27,7 @@ import (
 	openai "github.com/adag/ada-go/v2/plugins/provider/llm-openai"
 	replay "github.com/adag/ada-go/v2/plugins/provider/llm-replay"
 	sandboxnone "github.com/adag/ada-go/v2/plugins/provider/sandbox-none"
+	sessionjsonl "github.com/adag/ada-go/v2/plugins/provider/session-jsonl"
 	memory "github.com/adag/ada-go/v2/plugins/provider/session-memory"
 	shelllocal "github.com/adag/ada-go/v2/plugins/provider/shell-local"
 	seamapproval "github.com/adag/ada-go/v2/plugins/seam/approval"
@@ -69,6 +70,7 @@ func Plugins() map[string]func() kernel.Plugin {
 		"approval-cli":   approvalcli.Plugin,
 		"seam-session":   seamsession.Plugin,
 		"session-memory": memory.Plugin,
+		"session-jsonl":  sessionjsonl.Plugin,
 		"caps-static":    capsstatic.Plugin,
 		"caps-gate":      capsgate.Plugin,
 		"fs-redact":      fsredact.Plugin,

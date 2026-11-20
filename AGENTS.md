@@ -2,7 +2,7 @@
 
 > 给在本仓库工作的 AI 代理与人类协作者。**动代码之前先读这一份**；它与设计文档冲突时，以本文件的红线为准，并立刻提 issue 修正文档。
 
-**当前阶段:M1 内核、M2 执行层、M3 装配、M4 编排(`sched`/`quota`/`flow`(含 fanout/subflow)/`bundle`,内核回收 + 装配层 on-demand 延迟激活(含 onService/onCron/onEvent 触发 helper)+ jobs 跨进程锁)、M4.5 Agent Core 第一刀(`prompts`/`llm`/`tools`/`agent-loop` + `provider/llm-openai`/`llm-replay` + `policy/approval-gate`/`llm-retry`/`tool-timeout` + 最小 preset,已跑通「用户消息 → 模型 → 工具 → 结果」的最小回路)、M5 安全(`fs`/`fs-local`/`fs-sandbox`、`shell`/`shell-local`/`shell-guard`、`sandbox`/`sandbox-none`、`fs-redact` 脱敏、`fs-observe`/`shell-observe` 观察事件、`audit-log` 审计落盘、`shell-redact` 输出脱敏,且 fs/shell 策略已调用 sandbox.Resolve、可升级拒绝走 approval(含 CLI 交互审批)、caps 静态授权 + `caps-gate` 调用点强制(fs/shell)、install 校验/原子落盘/本机索引/CLI 安装同意、`platform/host/cli`/`platform/host/server`/`platform/host/desktop`(视图映射骨架)/`platform/host/registry`(只读仓库服务)宿主适配器(共享 `platform/host/builtins` 内置插件)、`net.fetch`(seam/net + provider/net-http + net-guard 授权)、`secrets`(seam/secrets + provider/secrets-env + secrets-guard 授权)已落地**,M5 剩余 desktop 真实窗口/OS 级沙箱(Linux 后端;见 ADR 0001,复议 2027-01-15);C13 拒绝矩阵与 `ada inspect --chain` 已落地。本文件始终生效:先用它约束设计,再用它约束实现。
+**当前阶段:M1 内核、M2 执行层、M3 装配、M4 编排(`sched`/`quota`/`flow`(含 fanout/subflow)/`bundle`,内核回收 + 装配层 on-demand 延迟激活(含 onService/onCron/onEvent 触发 helper)+ jobs 跨进程锁)、M4.5 Agent Core 第一刀(`prompts`/`llm`/`tools`/`agent-loop` + `provider/llm-openai`/`llm-replay` + `provider/session-jsonl`(每会话 actor) + `policy/approval-gate`/`llm-retry`/`tool-timeout` + 最小 preset,已跑通「用户消息 → 模型 → 工具 → 结果」的最小回路)、M5 安全(`fs`/`fs-local`/`fs-sandbox`、`shell`/`shell-local`/`shell-guard`、`sandbox`/`sandbox-none`、`fs-redact` 脱敏、`fs-observe`/`shell-observe` 观察事件、`audit-log` 审计落盘、`shell-redact` 输出脱敏,且 fs/shell 策略已调用 sandbox.Resolve、可升级拒绝走 approval(含 CLI 交互审批)、caps 静态授权 + `caps-gate` 调用点强制(fs/shell)、install 校验/原子落盘/本机索引/CLI 安装同意、`platform/host/cli`/`platform/host/server`/`platform/host/desktop`(视图映射骨架)/`platform/host/registry`(只读仓库服务)宿主适配器(共享 `platform/host/builtins` 内置插件)、`net.fetch`(seam/net + provider/net-http + net-guard 授权)、`secrets`(seam/secrets + provider/secrets-env + secrets-guard 授权)已落地**,M5 剩余 desktop 真实窗口/OS 级沙箱(Linux 后端;见 ADR 0001,复议 2027-01-15);C13 拒绝矩阵与 `ada inspect --chain` 已落地。本文件始终生效:先用它约束设计,再用它约束实现。
 
 ---
 
@@ -43,7 +43,7 @@
 | [spikes.md](docs/spikes.md) | M0 验证报告（5 个已通过，7 个待做） |
 | [m2-execution.md](docs/m2-execution.md) | M2 执行层第一刀:compile / jsrt / bridge 的契约、测试矩阵与已知边界 |
 | [m3-assembly.md](docs/m3-assembly.md) | M3 装配层:清单、依赖图、preset、事务化装配与 `ada plan`/`up`/`inspect` |
-| [seam-session.md](docs/seam-session.md) | seam/session 与 session-memory:契约、契约测试与已知边界 |
+| [seam-session.md](docs/seam-session.md) | seam/session、session-memory 与 session-jsonl:契约、并发语义、契约测试与已知边界 |
 | [m4-orchestration.md](docs/m4-orchestration.md) | M4 编排:sched(时钟/cron/周期与定时任务)与 quota(配额与回压) |
 | [m4-flow.md](docs/m4-flow.md) | M4 流水线:声明式 flow、受限表达式、checkpoint/resume |
 | [m4-composition.md](docs/m4-composition.md) | M4 组合层:bundle / profile(整体替换与补丁) |

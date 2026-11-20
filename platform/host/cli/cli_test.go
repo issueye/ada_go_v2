@@ -129,6 +129,25 @@ func TestAgentReplay(t *testing.T) {
 	}
 }
 
+// 6.3 plan:jsonl session preset 必须可装配,且选中 session-jsonl。
+func TestPlanJSONLPreset(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir("../../.."); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(cwd) }()
+	code, out, errOut := run("plan", "--preset", "examples/agent/agent-jsonl.preset.json")
+	if code != 0 {
+		t.Fatalf("jsonl preset 应可装配,code=%d err=%s", code, errOut)
+	}
+	if !strings.Contains(out, "session-jsonl") || !strings.Contains(out, "可装配") {
+		t.Fatalf("plan 输出不正确:\n%s", out)
+	}
+}
+
 // 7. up:挂载后停止。
 func TestUp(t *testing.T) {
 	code, out, errOut := run("up", "--preset", "../../../examples/presets/ts-only.preset.json")

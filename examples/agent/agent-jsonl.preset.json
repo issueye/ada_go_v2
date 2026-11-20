@@ -1,0 +1,9 @@
+{
+  "name": "agent-jsonl",
+  "plugins": ["plugins"],
+  "disable": ["llm-openai", "session-memory"],
+  "patch": {
+    "agent-loop": {"model": "replay", "maxSteps": 4},
+    "session-jsonl": {"dir": "examples/agent/sessions", "sync": true}
+  }
+}
