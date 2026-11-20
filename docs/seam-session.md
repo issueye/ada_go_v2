@@ -1,4 +1,4 @@
-# seam/session、session-memory 与 session-jsonl
+# seam/session、session-memory/jsonl、session-stats 与 compaction
 
 > 契约来源:[seam-api.md](seam-api.md) §4。本页记录**已实现子集**、与契约的偏差、以及 provider 的约定;
 > 未实现的部分明确列在 §5。
@@ -13,6 +13,8 @@ plugins/provider/session-memory/ 内存 provider + 内核插件
 plugins/provider/session-jsonl/  文件 provider:一个会话一个 JSONL + 每会话 actor
 plugins/provider/session-jsonl/journal/ 持久化抽象(Store / Journal)
 plugins/provider/session-jsonl/file/    JSONL 文件后端
+plugins/core/session-stats/     turn-stats 投影:轮次/消息/工具/token 统计
+plugins/core/compaction-basic/  确定性摘要 + compact/summary
 ```
 
 装载方式(kernel 服务模型):
@@ -38,6 +40,7 @@ type Session interface {
     Turn() TurnInfo
     Fork(at uint64) (Session, kernel.Dispose, error)
     Compact(ctx context.Context, upTo uint64, summary Event) error
+    Project(name string) (any, error)
 }
 ```
 
@@ -46,6 +49,26 @@ type Session interface {
 - `PluginEvent(id, kind)` 生成 `plugin:<id>/<kind>` 事件名;契约要求这类事件 `Ignorable=true`。
 - `Registry` 的选择规则**与注册顺序无关**:默认取名字排序后的第一个 provider。
   「后注册覆盖先注册」会让装配顺序决定行为,这是装配层最忌讳的随机性。
+- `Registry.Projections()` 持有投影注册表;provider 实现 `ProjectionBinder` 时,
+  `Registry.Register` 会把投影表注入 provider,`Session.Project` 才能工作。
+
+## 2.1 投影(projection)
+
+```go
+type Projection interface {
+    Name() string
+    Version() int
+    Apply(state any, ev Event) (next any, changed bool)
+    View(state any) any
+}
+```
+
+- `Apply` 是纯函数、同步执行,不得有副作用;`changed=false` 表示状态不变。
+- 投影缓存按 `(sessionID, projection)` 隔离,每次只重放上次 `seq` 之后的事件。
+- `Version` 变化时缓存整体作废并重放。
+- 投影未注册时 `Session.Project` 返回 `EUNIMPLEMENTED`;已注册但读事件失败则原样返回错误。
+- `core/session-stats` 注册 `turn-stats`:轮次、消息、工具调用、token 估算、已压缩边界。
+- 投影状态目前只在内存缓存,检查点持久化仍是下一刀。
 
 ## 3. session-memory
 
@@ -96,8 +119,8 @@ type Session interface {
 
 ## 5. 与 seam-api §4 的偏差(有意,不是遗漏)
 
-1. **`Project` / `Projection` 未实现**:接口仍不包含 `Project`;投影需要注册面与检查点,
-   属于下一刀。
+1. **`Project` 已实现,但检查点未持久化**:投影缓存只在内存;版本变化会重放,
+   但跨进程恢复仍需 `seam/storage` 检查点。
 2. **`Fork` 重新编号 seq**:子会话保持「seq 从 1 连续」,坐标来源由 `Meta.Parent` 表达。
 3. **单写者由 actor 串行,不是拒绝**:session 契约的「单写者」是逻辑语义;
    `Append` 可以来自多个 goroutine,但会被 actor 串行化。provider 只拒绝同一 id 的第二个 `Open`。
@@ -122,6 +145,10 @@ type Session interface {
 | 半行崩溃恢复 | `jsonl.TestTornTailRecovery` |
 | 路径穿越 id 拒绝 | `jsonl.TestRejectBadID` |
 | 经内核装配 | `jsonl.TestPluginThroughKernel` |
+| jsonl 投影 | `jsonl.TestProjectionWithJSONL` |
+| 投影统计/增量重放 | `sessionstats.TestApplyStats`、`TestProjectionThroughKernel` |
+| 未注册投影 | `sessionstats.TestProjectionUnregistered` |
+| 压缩摘要 | `compaction.TestCompactAppendsSummary`、`TestCompactNoopWhenShort` |
 | memory provider 经内核装配 | `memory.TestSeamAndProviderThroughKernel` |
 | 无 provider 时返回 `EUNIMPLEMENTED` | `memory.TestRegistryWithoutProvider` |
 
@@ -136,10 +163,11 @@ pwsh scripts/guard.ps1
 
 ## 8. 已知边界与下一步
 
-1. 投影(`Projection` + `Project` + 检查点)。
+1. 投影检查点持久化(`seam/storage`),冷启动只重放尾段。
 2. `core/session`:把 session 包装成 agent core 插件(轮次生命周期、compaction 触发)。
-3. 多进程租约与跨进程恢复。
-4. 日志裁剪/归档策略(当前只追加摘要)。
-5. TS 侧访问:JS 插件目前没有 `ada:session` 模块;需要先把 seam 服务暴露给 bridge。
-6. 版本协商:消费者声明期望的 seam 版本,provider 版本不足时应在 `Registry.Open` 阶段拒绝
+3. `core/compaction-basic`:超预算时生成摘要并写 `compact/summary`。
+4. 多进程租约与跨进程恢复。
+5. 日志裁剪/归档策略(当前只追加摘要)。
+6. TS 侧访问:JS 插件目前没有 `ada:session` 模块;需要先把 seam 服务暴露给 bridge。
+7. 版本协商:消费者声明期望的 seam 版本,provider 版本不足时应在 `Registry.Open` 阶段拒绝
    (现在只比较 `Provider.Version()`,没有消费者侧期望)。

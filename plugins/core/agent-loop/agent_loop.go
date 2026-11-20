@@ -13,6 +13,7 @@ import (
 	"github.com/adag/ada-go/v2/platform/kernel"
 	"github.com/adag/ada-go/v2/plugins/seam/llm"
 	"github.com/adag/ada-go/v2/plugins/seam/prompts"
+	"github.com/adag/ada-go/v2/plugins/seam/seamerr"
 	"github.com/adag/ada-go/v2/plugins/seam/session"
 	"github.com/adag/ada-go/v2/plugins/seam/tools"
 )
@@ -24,10 +25,11 @@ const PluginName = "agent-loop"
 const DefaultMaxSteps = 8
 
 type config struct {
-	Model        string `json:"model,omitempty"`
-	MaxSteps     int    `json:"maxSteps,omitempty"`
-	MaxTokens    int    `json:"maxTokens,omitempty"`
-	PromptBudget int    `json:"promptBudget,omitempty"`
+	Model         string `json:"model,omitempty"`
+	MaxSteps      int    `json:"maxSteps,omitempty"`
+	MaxTokens     int    `json:"maxTokens,omitempty"`
+	PromptBudget  int    `json:"promptBudget,omitempty"`
+	ContextBudget int    `json:"contextBudget,omitempty"`
 }
 
 // Agent 是对外服务值:创建会话并跑一轮。
@@ -114,6 +116,9 @@ func (a *Agent) Run(ctx context.Context, sess session.Session, userText string) 
 			return a.abort(sess, turn, res, err)
 		}
 
+		if err := a.checkContext(ctx, sess); err != nil {
+			return a.abort(sess, turn, res, err)
+		}
 		req := llm.Request{
 			Model: model.ID, Messages: a.render(sess),
 			Tools: a.toolSchemas(ctx), SessionID: sess.ID(), TurnID: turn.ID, StepID: stepID,
@@ -211,6 +216,71 @@ func (a *Agent) Run(ctx context.Context, sess session.Session, userText string) 
 	return a.finish(sess, turn, res)
 }
 
+// checkContext 用 turn-stats 投影估算上下文;超预算时尝试 compaction 服务。
+// 投影未挂载时保持旧行为。
+func (a *Agent) checkContext(ctx context.Context, sess session.Session) error {
+	if a.conf.ContextBudget <= 0 {
+		return nil
+	}
+	ts, err := a.stats(sess)
+	if err != nil {
+		return err
+	}
+	if ts == nil || ts.TokenCount() <= a.conf.ContextBudget {
+		return nil
+	}
+	if a.bus != nil {
+		if raw, ok := a.bus.TryService("compaction"); ok {
+			if c, ok := raw.(interface {
+				Compact(context.Context, session.Session, any) error
+			}); ok {
+				if err := c.Compact(ctx, sess, ts); err != nil {
+					return err
+				}
+				ts, err = a.stats(sess)
+				if err != nil {
+					return err
+				}
+				if ts != nil && ts.TokenCount() <= a.conf.ContextBudget {
+					return nil
+				}
+			}
+		}
+	}
+	tokens := 0
+	if ts != nil {
+		tokens = ts.TokenCount()
+	}
+	return seamerr.New(seamerr.ErrContext, "agent-loop",
+		fmt.Sprintf("上下文估算 %d tokens 超过预算 %d", tokens, a.conf.ContextBudget), false)
+}
+
+func (a *Agent) stats(sess session.Session) (interface{ TokenCount() int }, error) {
+	v, err := sess.Project(session.ProjectionTurnStats)
+	if err != nil {
+		if seamerr.Is(err, seamerr.ErrUnimplemented) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	ts, ok := v.(interface{ TokenCount() int })
+	if !ok {
+		return nil, nil
+	}
+	return ts, nil
+}
+
+func (a *Agent) compactedTo(sess session.Session) uint64 {
+	v, err := sess.Project(session.ProjectionTurnStats)
+	if err != nil {
+		return 0
+	}
+	if s, ok := v.(interface{ CompactedToSeq() uint64 }); ok {
+		return s.CompactedToSeq()
+	}
+	return 0
+}
+
 func (a *Agent) finish(sess session.Session, turn session.TurnInfo, res TurnResult) (TurnResult, error) {
 	turn.State = session.TurnDone
 	if _, err := sess.Append(session.Event{
@@ -284,7 +354,11 @@ func (a *Agent) render(sess session.Session) []llm.Message {
 		return nil
 	}
 	out := make([]llm.Message, 0, len(evs))
+	boundary := a.compactedTo(sess)
 	for _, ev := range evs {
+		if ev.Seq <= boundary && ev.Type != session.TypeCompactSummary {
+			continue
+		}
 		switch ev.Type {
 		case session.TypeUserMessage:
 			var m llm.Message

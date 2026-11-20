@@ -19,10 +19,11 @@ import (
 //   - 不同 Session 各有自己的 actor,不共享锁;
 //   - 读(turn/events/subscribe)走 RWMutex,不经过 actor,不阻塞写入。
 type Session struct {
-	owner   *Provider
-	id      string
-	meta    session.Meta
-	journal Journal
+	owner       *Provider
+	id          string
+	meta        session.Meta
+	journal     Journal
+	projections *session.ProjectionRegistry
 
 	cmds    chan any
 	closeCh chan struct{}
@@ -54,21 +55,22 @@ type compactCmd struct {
 	ack     chan error
 }
 
-func newSession(owner *Provider, id string, meta session.Meta, j Journal) (*Session, error) {
+func newSession(owner *Provider, id string, meta session.Meta, j Journal, projections *session.ProjectionRegistry) (*Session, error) {
 	events, err := j.ReadAll()
 	if err != nil {
 		return nil, err
 	}
 	s := &Session{
-		owner:   owner,
-		id:      id,
-		meta:    meta,
-		journal: j,
-		cmds:    make(chan any, 64),
-		closeCh: make(chan struct{}),
-		done:    make(chan struct{}),
-		subs:    make(map[chan session.Event]struct{}),
-		events:  events,
+		owner:       owner,
+		id:          id,
+		meta:        meta,
+		journal:     j,
+		projections: projections,
+		cmds:        make(chan any, 64),
+		closeCh:     make(chan struct{}),
+		done:        make(chan struct{}),
+		subs:        make(map[chan session.Event]struct{}),
+		events:      events,
 	}
 	for i := range events {
 		s.restore(&events[i])
@@ -162,6 +164,14 @@ func (s *Session) Turn() session.TurnInfo {
 // Fork 复制 at 为止的历史为子会话。
 func (s *Session) Fork(at uint64) (session.Session, kernel.Dispose, error) {
 	return s.owner.fork(s, at)
+}
+
+// Project 返回命名投影的当前视图。
+func (s *Session) Project(name string) (any, error) {
+	if s.projections == nil {
+		return nil, seamerr.Unimplemented(ProviderName, "未绑定投影注册表")
+	}
+	return s.projections.Project(s, name)
 }
 
 // Compact 把 upTo 之前的范围标记为已压缩,并追加摘要事件。

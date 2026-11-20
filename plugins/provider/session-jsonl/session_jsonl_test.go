@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/adag/ada-go/v2/platform/kernel"
+	sessionstats "github.com/adag/ada-go/v2/plugins/core/session-stats"
 	"github.com/adag/ada-go/v2/plugins/seam/seamerr"
 	"github.com/adag/ada-go/v2/plugins/seam/session"
 	"github.com/adag/ada-go/v2/plugins/seam/session/sessiontest"
@@ -233,6 +234,32 @@ func TestRejectBadID(t *testing.T) {
 		} else {
 			t.Fatalf("id %q 应被拒绝", id)
 		}
+	}
+}
+
+// jsonl 会话也要支持投影:注册表注入后,Project 走同一套缓存/重放。
+func TestProjectionWithJSONL(t *testing.T) {
+	p := New(NewFileStore(t.TempDir(), true))
+	defer p.CloseAll()
+	reg := session.NewProjectionRegistry()
+	p.BindProjections(reg)
+	if _, err := reg.Register(sessionstats.New()); err != nil {
+		t.Fatalf("注册投影失败: %v", err)
+	}
+	s := openTest(t, p, session.Meta{})
+	if _, err := s.Append(
+		session.Event{Type: session.TypeTurnStart, Data: []byte(`{"id":"t1","index":1}`)},
+		session.Event{Type: session.TypeUserMessage, Data: []byte(`{"role":"user","content":[{"kind":"text","text":"hello"}]}`)},
+	); err != nil {
+		t.Fatalf("写入失败: %v", err)
+	}
+	v, err := s.Project(sessionstats.ProjectionName)
+	if err != nil {
+		t.Fatalf("投影失败: %v", err)
+	}
+	st, ok := v.(*sessionstats.Stats)
+	if !ok || st.Turns != 1 || st.Messages != 1 || st.Tokens == 0 {
+		t.Fatalf("投影结果不正确: %T %+v", v, v)
 	}
 }
 

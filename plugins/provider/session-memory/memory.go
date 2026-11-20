@@ -23,9 +23,10 @@ const ProviderName = "session-memory"
 
 // Provider 是会话工厂:每个 Open 产生一个相互独立的会话。
 type Provider struct {
-	mu       sync.Mutex
-	sessions map[string]*memorySession
-	seq      atomic.Uint64
+	mu          sync.Mutex
+	sessions    map[string]*memorySession
+	seq         atomic.Uint64
+	projections *session.ProjectionRegistry
 }
 
 // New 构造内存 provider。
@@ -35,6 +36,11 @@ func New() *Provider {
 
 // Name 返回 provider 名。
 func (p *Provider) Name() string { return ProviderName }
+
+// BindProjections 由 session.Registry 在注册时调用,把投影表注入 provider。
+func (p *Provider) BindProjections(r *session.ProjectionRegistry) {
+	p.projections = r
+}
 
 // Version 返回契约主版本。
 func (p *Provider) Version() int { return 1 }
@@ -46,10 +52,11 @@ func (p *Provider) Open(ctx context.Context, meta session.Meta) (session.Session
 	}
 	id := fmt.Sprintf("mem-%d", p.seq.Add(1))
 	s := &memorySession{
-		owner: p,
-		id:    id,
-		meta:  meta,
-		subs:  make(map[chan session.Event]struct{}),
+		owner:       p,
+		id:          id,
+		meta:        meta,
+		subs:        make(map[chan session.Event]struct{}),
+		projections: p.projections,
 	}
 	p.mu.Lock()
 	p.sessions[id] = s
@@ -65,9 +72,10 @@ func (p *Provider) Sessions() int {
 }
 
 type memorySession struct {
-	owner *Provider
-	id    string
-	meta  session.Meta
+	owner       *Provider
+	id          string
+	meta        session.Meta
+	projections *session.ProjectionRegistry
 
 	mu          sync.Mutex
 	events      []session.Event
@@ -181,10 +189,11 @@ func (s *memorySession) Fork(at uint64) (session.Session, kernel.Dispose, error)
 
 	id := fmt.Sprintf("%s-fork-%d", s.id, s.owner.seq.Add(1))
 	child := &memorySession{
-		owner: s.owner,
-		id:    id,
-		meta:  s.meta,
-		subs:  make(map[chan session.Event]struct{}),
+		owner:       s.owner,
+		id:          id,
+		meta:        s.meta,
+		subs:        make(map[chan session.Event]struct{}),
+		projections: s.projections,
 	}
 	child.meta.Parent = s.id
 
@@ -209,6 +218,14 @@ func (s *memorySession) Fork(at uint64) (session.Session, kernel.Dispose, error)
 	s.owner.mu.Unlock()
 
 	return child, func(context.Context) error { return nil }, nil
+}
+
+// Project 返回命名投影的当前视图。
+func (s *memorySession) Project(name string) (any, error) {
+	if s.projections == nil {
+		return nil, seamerr.Unimplemented(ProviderName, "未绑定投影注册表")
+	}
+	return s.projections.Project(s, name)
 }
 
 // Compact 标记 upTo 之前的范围已压缩,并追加一条摘要事件。

@@ -2,25 +2,25 @@
 
 > 本文件把里程碑验收项映射到**实现位置、证据命令与已知边界**。口径来源:
 > [plugin-kernel-design.md](plugin-kernel-design.md) §17、AGENTS §10。
-> 最近更新:2026-11-20(423 个 Test + 4 个 Benchmark;不做 v1 插件迁移)。
+> 最近更新:2026-11-20(431 个 Test + 4 个 Benchmark;不做 v1 插件迁移)。
 
 ## 0. 结论速览
 
 | 里程碑 | 状态 | 说明 |
 |---|---|---|
 | M4 编排 | ✅ 完成(文档口径) | platform/sched/platform/quota/platform/flow/platform/bundle/回收/延迟激活/jobs 锁 |
-| M4.5 Agent Core | ⚠️ 第一刀完成 | prompts/llm/tools/agent-loop + 最小 preset + memory/jsonl session;真实端点与策略已落地,缺 projection/compaction/并行工具 |
+| M4.5 Agent Core | ⚠️ 第一刀完成 | prompts/llm/tools/agent-loop + 最小 preset + memory/jsonl session + turn-stats 投影 + compaction-basic;真实端点与策略已落地,缺模型摘要/并行工具 |
 | M5 安全与宿主 | ⚠️ 部分完成 | 安全 seam/caps/install/宿主/C13/inspect chain 已落地;仅剩 **OS 级沙箱强制** 与 **真实桌面窗口** |
 
 ## 1. M4.5 验收矩阵
 
 | 任务 | 实现位置 | 证据 | 已知边界 |
 |---|---|---|---|
-| C1 session seam + memory/jsonl | `plugins/seam/session`、`plugins/provider/session-memory`/`session-jsonl` | `session` 单测、`sessiontest`;jsonl 契约/重开/并发/半行恢复 | 无 projection、`Session.Project` 未实现;jsonl 无多进程租约 |
+| C1 session seam + memory/jsonl | `plugins/seam/session`、`plugins/provider/session-memory`/`session-jsonl`、`plugins/core/session-stats` | `session` 单测、`sessiontest`;jsonl 契约/重开/并发/半行恢复;`sessionstats` 投影 | 投影检查点未持久化;jsonl 无多进程租约 |
 | C2 prompts seam + system-prompt | `plugins/seam/prompts`、`plugins/core/system-prompt` | `prompts` 3 个用例 | 引擎在 seam 内,未拆 provider;预算为字符估算 |
 | C3 llm seam + provider | `plugins/seam/llm`、`plugins/provider/llm-replay`/`llm-openai` | `replay` 2 个用例、`openai` wire/真实端点(可选) | OpenAI 兼容端点已实测;stream 改写结果未回传;无 deepseek 专用适配 |
 | C4 tools seam + tool/fs | `plugins/seam/tools`、`plugins/tool/fs` | `tools` 2 个用例 | `tools/execute` 不能包裹 handler;无 approval-gate |
-| C5 agent-loop | `plugins/core/agent-loop` | `agentloop.TestTurnWithReplayAndTool` | 串行工具;无 compaction/预算;无 core/agent 拆分 |
+| C5 agent-loop | `plugins/core/agent-loop` | `agentloop.TestTurnWithReplayAndTool`、`TestContextBudgetReturnsECONTEXT`、`TestCompactionFitsBudget` | 串行工具;contextBudget + compaction-basic;无模型摘要;无 core/agent 拆分 |
 | C6 最小 preset + golden | `examples/agent` | `ada plan/up --preset examples/agent/agent.preset.json`;事件序列 golden;`TestRealAgentTurn` 实测真实端点 tool call | 默认回放模型;真实端点需 env |
 | C7 策略桩 | `plugins/policy/approval-gate`、`llm-retry`、`tool-timeout` | approval-gate 2、llm-retry 3、tool-timeout 1 | 全部落地;后续可加 tool-repeat-guard 等 |
 
@@ -86,17 +86,17 @@ go run ./cmd/ada inspect --chain --preset examples/agent/agent.preset.json
 
 当前实测:
 
-- 测试 **423 个 Test + 4 个 Benchmark**,`go test -race ./...` 全绿;
+- 测试 **431 个 Test + 4 个 Benchmark**,`go test -race ./...` 全绿;
 - kernel 生产 **2396 / 3000** 行;
-- host 生产 **2283 / 2500**(cli 1405 / 1500,其它最大 404 / 800);
-- bench:ServiceResolve 55ns、Emit 1.50μs、waterfall 4.85μs、50 插件 322μs;
+- host 生产 **2287 / 2500**(cli 1405 / 1500,其它最大 404 / 800);
+- bench:ServiceResolve 56ns、Emit 1.55μs、waterfall 5.08μs、50 插件 333μs;
 - 本机 `staticcheck 2025.1.1` 与 Go 1.27 export data 不兼容,guard 会在该环境报工具错误(CI 用 `@latest`)。
 
 ## 4. 明确未完成项
 
 1. **OS 级沙箱强制**(landlock/seatbelt/Job Object 级 fs/shell):当前只有 policy-only;
 2. **真实桌面窗口(mygo)**:只有 Renderer/View/Subscribe/OpenPage 骨架;
-3. **M4.5 基础已落地**;剩余 `Projection`/`Session.Project`、compaction、并行工具与 `core/agent` 拆分;
+3. **M4.5 基础已落地**;剩余模型摘要、并行工具、检查点持久化与 `core/agent` 拆分;
 4. **安全 P0 缺口**:安装 trust 未灌入 caps、net 重定向逐跳校验、审批/审计通用脱敏。
 
 前两项记录在 [ADR 0001](adr/0001-deferred-m5-scope.md),复议日期 2027-01-15;在此之前 **不得宣称 M5 完成**。

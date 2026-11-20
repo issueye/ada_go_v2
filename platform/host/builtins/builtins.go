@@ -9,6 +9,8 @@ import (
 	"github.com/adag/ada-go/v2/platform/kernel"
 	"github.com/adag/ada-go/v2/platform/plugin"
 	agentloop "github.com/adag/ada-go/v2/plugins/core/agent-loop"
+	compaction "github.com/adag/ada-go/v2/plugins/core/compaction-basic"
+	sessionstats "github.com/adag/ada-go/v2/plugins/core/session-stats"
 	systemprompt "github.com/adag/ada-go/v2/plugins/core/system-prompt"
 	approvalgate "github.com/adag/ada-go/v2/plugins/policy/approval-gate"
 	capsgate "github.com/adag/ada-go/v2/plugins/policy/caps-gate"
@@ -46,37 +48,39 @@ import (
 // 第三方 Go 插件仍需宿主编译时注册;这里只放仓库内置的参考实现。
 func Plugins() map[string]func() kernel.Plugin {
 	return map[string]func() kernel.Plugin{
-		"seam-llm":       seamllm.Plugin,
-		"llm-replay":     replay.Plugin,
-		"llm-openai":     openai.Plugin,
-		"seam-prompts":   seamprompts.Plugin,
-		"system-prompt":  systemprompt.Plugin,
-		"seam-tools":     seamtools.Plugin,
-		"tool-fs":        toolfs.Plugin,
-		"agent-loop":     agentloop.Plugin,
-		"approval-gate":  approvalgate.Plugin,
-		"llm-retry":      llmretry.Plugin,
-		"tool-timeout":   tooltimeout.Plugin,
-		"seam-fs":        seamfs.Plugin,
-		"fs-local":       fslocal.Plugin,
-		"fs-sandbox":     fssandbox.Plugin,
-		"seam-shell":     seamshell.Plugin,
-		"shell-local":    shelllocal.Plugin,
-		"shell-guard":    shellguard.Plugin,
-		"seam-sandbox":   seamsandbox.Plugin,
-		"sandbox-none":   sandboxnone.Plugin,
-		"seam-approval":  seamapproval.Plugin,
-		"approval-deny":  approvaldeny.Plugin,
-		"approval-cli":   approvalcli.Plugin,
-		"seam-session":   seamsession.Plugin,
-		"session-memory": memory.Plugin,
-		"session-jsonl":  sessionjsonl.Plugin,
-		"caps-static":    capsstatic.Plugin,
-		"caps-gate":      capsgate.Plugin,
-		"fs-redact":      fsredact.Plugin,
-		"fs-observe":     fsobserve.Plugin,
-		"shell-redact":   shellredact.Plugin,
-		"shell-observe":  shellobserve.Plugin,
+		"seam-llm":         seamllm.Plugin,
+		"llm-replay":       replay.Plugin,
+		"llm-openai":       openai.Plugin,
+		"seam-prompts":     seamprompts.Plugin,
+		"system-prompt":    systemprompt.Plugin,
+		"seam-tools":       seamtools.Plugin,
+		"tool-fs":          toolfs.Plugin,
+		"agent-loop":       agentloop.Plugin,
+		"session-stats":    sessionstats.Plugin,
+		"compaction-basic": compaction.Plugin,
+		"approval-gate":    approvalgate.Plugin,
+		"llm-retry":        llmretry.Plugin,
+		"tool-timeout":     tooltimeout.Plugin,
+		"seam-fs":          seamfs.Plugin,
+		"fs-local":         fslocal.Plugin,
+		"fs-sandbox":       fssandbox.Plugin,
+		"seam-shell":       seamshell.Plugin,
+		"shell-local":      shelllocal.Plugin,
+		"shell-guard":      shellguard.Plugin,
+		"seam-sandbox":     seamsandbox.Plugin,
+		"sandbox-none":     sandboxnone.Plugin,
+		"seam-approval":    seamapproval.Plugin,
+		"approval-deny":    approvaldeny.Plugin,
+		"approval-cli":     approvalcli.Plugin,
+		"seam-session":     seamsession.Plugin,
+		"session-memory":   memory.Plugin,
+		"session-jsonl":    sessionjsonl.Plugin,
+		"caps-static":      capsstatic.Plugin,
+		"caps-gate":        capsgate.Plugin,
+		"fs-redact":        fsredact.Plugin,
+		"fs-observe":       fsobserve.Plugin,
+		"shell-redact":     shellredact.Plugin,
+		"shell-observe":    shellobserve.Plugin,
 	}
 }
 

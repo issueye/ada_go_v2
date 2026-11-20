@@ -19,7 +19,8 @@ type config struct {
 
 // Provider 是会话工厂:持有后端 Store 与已打开的会话。
 type Provider struct {
-	store Store
+	store       Store
+	projections *session.ProjectionRegistry
 
 	mu       sync.Mutex
 	sessions map[string]*Session
@@ -33,6 +34,11 @@ func New(store Store) *Provider {
 
 // Name 返回 provider 名。
 func (p *Provider) Name() string { return ProviderName }
+
+// BindProjections 由 session.Registry 在注册时调用,把投影表注入 provider。
+func (p *Provider) BindProjections(r *session.ProjectionRegistry) {
+	p.projections = r
+}
 
 // Version 返回 session 契约主版本。
 func (p *Provider) Version() int { return 1 }
@@ -72,7 +78,7 @@ func (p *Provider) add(ctx context.Context, id string, meta session.Meta, create
 	if err != nil {
 		return nil, err
 	}
-	s, err := newSession(p, id, stored, j)
+	s, err := newSession(p, id, stored, j, p.projections)
 	if err != nil {
 		_ = j.Close()
 		return nil, err
@@ -90,7 +96,7 @@ func (p *Provider) fork(parent *Session, at uint64) (session.Session, kernel.Dis
 	if err != nil {
 		return nil, nil, err
 	}
-	s, err := newSession(p, id, meta, j)
+	s, err := newSession(p, id, meta, j, p.projections)
 	if err != nil {
 		_ = j.Close()
 		return nil, nil, err

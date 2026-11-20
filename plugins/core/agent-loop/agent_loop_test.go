@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,9 +14,124 @@ import (
 	agentloop "github.com/adag/ada-go/v2/plugins/core/agent-loop"
 	replay "github.com/adag/ada-go/v2/plugins/provider/llm-replay"
 	"github.com/adag/ada-go/v2/plugins/seam/llm"
+	"github.com/adag/ada-go/v2/plugins/seam/seamerr"
 	"github.com/adag/ada-go/v2/plugins/seam/session"
 	"github.com/adag/ada-go/v2/plugins/seam/tools"
 )
+
+// 投影存在且超过 contextBudget 时,agent 必须返回 ECONTEXT,而不是把超长请求发给模型。
+func TestContextBudgetReturnsECONTEXT(t *testing.T) {
+	ctx := context.Background()
+	app := kernel.New(kernel.Options{})
+	defer func() { _ = app.Stop(ctx) }()
+	mount := func(id string, cfg map[string]any) {
+		t.Helper()
+		mk := builtins.Plugins()[id]
+		if mk == nil {
+			t.Fatalf("内置插件缺失: %s", id)
+		}
+		f, err := app.Plugin(mk(), kernel.NewConfig(cfg))
+		if err != nil {
+			t.Fatalf("挂载 %s 失败: %v", id, err)
+		}
+		if err := f.Ready(ctx); err != nil {
+			t.Fatalf("等待 %s 就绪失败: %v", id, err)
+		}
+	}
+	mount("seam-session", nil)
+	mount("session-memory", nil)
+	mount("session-stats", nil)
+	mount("seam-prompts", nil)
+	mount("seam-llm", nil)
+	mount("llm-replay", map[string]any{
+		"steps": []replay.Step{{Response: llm.Response{
+			Message: llm.Message{Role: llm.RoleAssistant, Content: []llm.Block{{Kind: llm.BlockText, Text: "ok"}}},
+			Finish:  llm.FinishStop,
+		}}},
+		"models":       []llm.ModelInfo{{ID: "replay", ContextWindow: 8192}},
+		"defaultModel": "replay",
+	})
+	mount("seam-tools", nil)
+	mount("agent-loop", map[string]any{"model": "replay", "contextBudget": 1})
+
+	raw, err := app.Root().Service("agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ag := raw.(*agentloop.Agent)
+	sess, err := ag.Open(ctx, session.Meta{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = ag.Run(ctx, sess, "hello")
+	if !seamerr.Is(err, seamerr.ErrContext) {
+		t.Fatalf("应返回 ECONTEXT,实际 %v", err)
+	}
+}
+
+// 超预算时 agent 应调用 compaction 服务,压缩后继续请求,而不是直接拒绝。
+func TestCompactionFitsBudget(t *testing.T) {
+	ctx := context.Background()
+	app := kernel.New(kernel.Options{})
+	defer func() { _ = app.Stop(ctx) }()
+	mount := func(id string, cfg map[string]any) {
+		t.Helper()
+		mk := builtins.Plugins()[id]
+		if mk == nil {
+			t.Fatalf("内置插件缺失: %s", id)
+		}
+		f, err := app.Plugin(mk(), kernel.NewConfig(cfg))
+		if err != nil {
+			t.Fatalf("挂载 %s 失败: %v", id, err)
+		}
+		if err := f.Ready(ctx); err != nil {
+			t.Fatalf("等待 %s 就绪失败: %v", id, err)
+		}
+	}
+	mount("seam-session", nil)
+	mount("session-memory", nil)
+	mount("session-stats", nil)
+	mount("compaction-basic", map[string]any{"keepRecent": 4})
+	mount("seam-prompts", nil)
+	mount("seam-llm", nil)
+	mount("llm-replay", map[string]any{
+		"steps": []replay.Step{{Response: llm.Response{
+			Message: llm.Message{Role: llm.RoleAssistant, Content: []llm.Block{{Kind: llm.BlockText, Text: "done"}}},
+			Finish:  llm.FinishStop,
+		}}},
+		"models":       []llm.ModelInfo{{ID: "replay", ContextWindow: 8192}},
+		"defaultModel": "replay",
+	})
+	mount("seam-tools", nil)
+	mount("agent-loop", map[string]any{"model": "replay", "contextBudget": 300})
+
+	raw, err := app.Root().Service("agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ag := raw.(*agentloop.Agent)
+	sess, err := ag.Open(ctx, session.Meta{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	long := strings.Repeat("x", 200)
+	for i := 0; i < 12; i++ {
+		data, _ := json.Marshal(llm.Message{Role: llm.RoleUser, Content: []llm.Block{{Kind: llm.BlockText, Text: long}}})
+		if _, err := sess.Append(session.Event{
+			Type: session.TypeUserMessage,
+			Data: data,
+		}); err != nil {
+			t.Fatalf("预置历史失败: %v", err)
+		}
+	}
+	res, err := ag.Run(ctx, sess, "short")
+	if err != nil {
+		t.Fatalf("压缩后应继续,实际 %v", err)
+	}
+	if res.Text != "done" {
+		t.Fatalf("回复不正确: %+v", res)
+	}
+}
 
 func TestTurnWithReplayAndTool(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

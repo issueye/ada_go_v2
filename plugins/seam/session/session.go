@@ -105,6 +105,8 @@ type Session interface {
 	Fork(at uint64) (Session, kernel.Dispose, error)
 	// Compact 把 upTo 之前的范围标记为已压缩,并追加一条摘要事件。
 	Compact(ctx context.Context, upTo uint64, summary Event) error
+	// Project 返回命名投影的当前视图(见 projection.go)。
+	Project(name string) (any, error)
 }
 
 // Provider 是 session seam 的实现方(例如 session-memory)。
@@ -122,13 +124,26 @@ type Provider interface {
 // 选择规则与注册顺序无关:默认取名字排序后的第一个 provider。
 // 「后注册的覆盖先注册的」会让装配顺序决定行为,这是装配层最忌讳的随机性。
 type Registry struct {
-	mu        sync.RWMutex
-	providers map[string]Provider
+	mu          sync.RWMutex
+	providers   map[string]Provider
+	projections *ProjectionRegistry
 }
 
 // NewRegistry 构造一个空注册表。
 func NewRegistry() *Registry {
-	return &Registry{providers: make(map[string]Provider)}
+	return &Registry{
+		providers:   make(map[string]Provider),
+		projections: NewProjectionRegistry(),
+	}
+}
+
+// Projections 返回投影注册表;投影插件通过它注册派生状态。
+func (r *Registry) Projections() *ProjectionRegistry { return r.projections }
+
+// ProjectionBinder 由 provider 可选实现:Registry 注册时把投影表注入 provider,
+// 使 provider 创建的 Session 能执行 Project。
+type ProjectionBinder interface {
+	BindProjections(*ProjectionRegistry)
 }
 
 // Register 注册一个 provider;dispose 时注销。
@@ -139,6 +154,9 @@ func (r *Registry) Register(p Provider) (kernel.Dispose, error) {
 	name := p.Name()
 	if name == "" {
 		return nil, seamerr.New(seamerr.ErrInvalid, "session", "provider 的 Name 不能为空", false)
+	}
+	if b, ok := p.(ProjectionBinder); ok {
+		b.BindProjections(r.projections)
 	}
 	r.mu.Lock()
 	if _, exists := r.providers[name]; exists {
