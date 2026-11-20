@@ -133,6 +133,106 @@ func TestCompactionFitsBudget(t *testing.T) {
 	}
 }
 
+// 同一步的多个工具调用必须并行;串行实现会在 barrier 处超时。
+func TestParallelTools(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	app := kernel.New(kernel.Options{})
+	defer func() { _ = app.Stop(ctx) }()
+	mount := func(id string, cfg map[string]any) {
+		t.Helper()
+		mk := builtins.Plugins()[id]
+		if mk == nil {
+			t.Fatalf("内置插件缺失: %s", id)
+		}
+		f, err := app.Plugin(mk(), kernel.NewConfig(cfg))
+		if err != nil {
+			t.Fatalf("挂载 %s 失败: %v", id, err)
+		}
+		if err := f.Ready(ctx); err != nil {
+			t.Fatalf("等待 %s 就绪失败: %v", id, err)
+		}
+	}
+
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	barrier := kernel.Func("barrier-tools", func(ctx *kernel.Context, _ kernel.Config) (kernel.Dispose, error) {
+		reg, err := kernel.Service[*tools.Registry](ctx, "tools")
+		if err != nil {
+			return nil, err
+		}
+		return reg.Register(tools.ToolDef{
+			Name: "barrier",
+			Handler: func(ctx context.Context, _ tools.CallInfo) (tools.Result, error) {
+				started <- struct{}{}
+				select {
+				case <-release:
+					return tools.Result{Status: tools.StatusOK, Content: []llm.Block{{Kind: llm.BlockText, Text: "ok"}}}, nil
+				case <-ctx.Done():
+					return tools.Result{}, ctx.Err()
+				}
+			},
+		})
+	}).WithInject("tools")
+
+	mount("seam-session", nil)
+	mount("session-memory", nil)
+	mount("seam-prompts", nil)
+	mount("seam-tools", nil)
+	fiber, err := app.Plugin(barrier, kernel.NewConfig(nil))
+	if err != nil {
+		t.Fatalf("挂载 barrier 失败: %v", err)
+	}
+	if err := fiber.Ready(ctx); err != nil {
+		t.Fatalf("barrier 未就绪: %v", err)
+	}
+	mount("seam-llm", nil)
+	mount("llm-replay", map[string]any{
+		"steps": []replay.Step{
+			{Response: llm.Response{
+				Message: llm.Message{Role: llm.RoleAssistant, Content: []llm.Block{{Kind: llm.BlockText, Text: "run"}}},
+				ToolCalls: []llm.ToolCall{
+					{ID: "c1", Name: "barrier"},
+					{ID: "c2", Name: "barrier"},
+				},
+				Finish: llm.FinishToolCalls,
+			}},
+			{Response: llm.Response{
+				Message: llm.Message{Role: llm.RoleAssistant, Content: []llm.Block{{Kind: llm.BlockText, Text: "done"}}},
+				Finish:  llm.FinishStop,
+			}},
+		},
+		"models":       []llm.ModelInfo{{ID: "replay", ContextWindow: 8192}},
+		"defaultModel": "replay",
+	})
+	mount("agent-loop", map[string]any{"model": "replay", "maxSteps": 3, "maxParallelTools": 2})
+
+	raw, err := app.Root().Service("agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ag := raw.(*agentloop.Agent)
+	sess, err := ag.Open(ctx, session.Meta{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { _, err := ag.Run(ctx, sess, "start"); done <- err }()
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			close(release)
+			t.Fatalf("工具调用没有并行: 只收到 %d 个开始信号", i)
+		}
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("并行执行失败: %v", err)
+	}
+}
+
 func TestTurnWithReplayAndTool(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

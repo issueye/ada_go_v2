@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/adag/ada-go/v2/platform/kernel"
@@ -24,12 +25,16 @@ const PluginName = "agent-loop"
 // DefaultMaxSteps 是一轮内最多的「模型 → 工具」步数。
 const DefaultMaxSteps = 8
 
+// DefaultMaxParallelTools 是同一步内并行工具的上限。
+const DefaultMaxParallelTools = 4
+
 type config struct {
 	Model         string `json:"model,omitempty"`
 	MaxSteps      int    `json:"maxSteps,omitempty"`
 	MaxTokens     int    `json:"maxTokens,omitempty"`
 	PromptBudget  int    `json:"promptBudget,omitempty"`
 	ContextBudget int    `json:"contextBudget,omitempty"`
+	MaxParallel   int    `json:"maxParallelTools,omitempty"`
 }
 
 // Agent 是对外服务值:创建会话并跑一轮。
@@ -178,32 +183,12 @@ func (a *Agent) Run(ctx context.Context, sess session.Session, userText string) 
 		}
 
 		terminate := false
-		for _, call := range resp.ToolCalls {
-			info := tools.CallInfo{
-				ID: call.ID, Name: call.Name, Args: call.Args,
-				SessionID: sess.ID(), TurnID: turn.ID, StepID: stepID, Origin: "model",
-			}
-			if _, err := sess.Append(session.Event{
-				Type: session.TypeToolCall, TurnID: turn.ID, StepID: stepID,
-				Data: mustJSON(info), Source: "core/agent-loop",
-			}); err != nil {
-				return TurnResult{}, err
-			}
-			tr, err := a.tools.Invoke(ctx, info)
-			if err != nil {
-				tr = tools.Result{Status: tools.StatusError, Content: []llm.Block{{Kind: llm.BlockText, Text: err.Error()}}}
-			}
-			res.ToolCalls++
-			if tr.Terminate {
-				terminate = true
-			}
-			if _, err := sess.Append(session.Event{
-				Type: session.TypeToolResult, TurnID: turn.ID, StepID: stepID,
-				Data: mustJSON(toolPayload{Call: info, Result: tr}), Source: "core/agent-loop",
-			}); err != nil {
-				return TurnResult{}, err
-			}
+		count, terminated, err := a.runTools(ctx, sess, turn, stepID, resp.ToolCalls)
+		if err != nil {
+			return TurnResult{}, err
 		}
+		res.ToolCalls += count
+		terminate = terminated
 		if _, err := sess.Append(session.Event{
 			Type: session.TypeStepEnd, TurnID: turn.ID, StepID: stepID, Source: "core/agent-loop",
 		}); err != nil {
@@ -214,6 +199,68 @@ func (a *Agent) Run(ctx context.Context, sess session.Session, userText string) 
 		}
 	}
 	return a.finish(sess, turn, res)
+}
+
+type toolOutcome struct {
+	call   tools.CallInfo
+	result tools.Result
+	err    error
+}
+
+// runTools 先按调用顺序写 tool/call,再并发执行,最后仍按调用顺序写 tool/result。
+//
+// 事件顺序固定,模型看到的结果顺序与 tool_calls 顺序一致;并发只发生在执行阶段。
+func (a *Agent) runTools(ctx context.Context, sess session.Session, turn session.TurnInfo, stepID string, calls []llm.ToolCall) (int, bool, error) {
+	infos := make([]tools.CallInfo, len(calls))
+	for i, call := range calls {
+		infos[i] = tools.CallInfo{
+			ID: call.ID, Name: call.Name, Args: call.Args,
+			SessionID: sess.ID(), TurnID: turn.ID, StepID: stepID, Origin: "model",
+		}
+		if _, err := sess.Append(session.Event{
+			Type: session.TypeToolCall, TurnID: turn.ID, StepID: stepID,
+			Data: mustJSON(infos[i]), Source: "core/agent-loop",
+		}); err != nil {
+			return 0, false, err
+		}
+	}
+
+	limit := a.conf.MaxParallel
+	if limit <= 0 {
+		limit = DefaultMaxParallelTools
+	}
+	outcomes := make([]toolOutcome, len(calls))
+	sem := make(chan struct{}, limit)
+	var wg sync.WaitGroup
+	for i := range infos {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			outcomes[i].call = infos[i]
+			outcomes[i].result, outcomes[i].err = a.tools.Invoke(ctx, infos[i])
+		}(i)
+	}
+	wg.Wait()
+
+	terminate := false
+	for i := range outcomes {
+		tr := outcomes[i].result
+		if outcomes[i].err != nil {
+			tr = tools.Result{Status: tools.StatusError, Content: []llm.Block{{Kind: llm.BlockText, Text: outcomes[i].err.Error()}}}
+		}
+		if tr.Terminate {
+			terminate = true
+		}
+		if _, err := sess.Append(session.Event{
+			Type: session.TypeToolResult, TurnID: turn.ID, StepID: stepID,
+			Data: mustJSON(toolPayload{Call: outcomes[i].call, Result: tr}), Source: "core/agent-loop",
+		}); err != nil {
+			return i, terminate, err
+		}
+	}
+	return len(outcomes), terminate, nil
 }
 
 // checkContext 用 turn-stats 投影估算上下文;超预算时尝试 compaction 服务。
