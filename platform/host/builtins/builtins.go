@@ -21,6 +21,8 @@ import (
 	llmretry "github.com/issueye/ada_go_v2/plugins/policy/llm-retry"
 	netguard "github.com/issueye/ada_go_v2/plugins/policy/net-guard"
 	netobserve "github.com/issueye/ada_go_v2/plugins/policy/net-observe"
+	rpcguard "github.com/issueye/ada_go_v2/plugins/policy/rpc-guard"
+	rpcobserve "github.com/issueye/ada_go_v2/plugins/policy/rpc-observe"
 	secretsguard "github.com/issueye/ada_go_v2/plugins/policy/secrets-guard"
 	shellguard "github.com/issueye/ada_go_v2/plugins/policy/shell-guard"
 	shellobserve "github.com/issueye/ada_go_v2/plugins/policy/shell-observe"
@@ -36,6 +38,7 @@ import (
 	rpcjson "github.com/issueye/ada_go_v2/plugins/provider/rpc-json"
 	rpcnet "github.com/issueye/ada_go_v2/plugins/provider/rpc-net"
 	rpcpipe "github.com/issueye/ada_go_v2/plugins/provider/rpc-pipe"
+	rpctls "github.com/issueye/ada_go_v2/plugins/provider/rpc-tls"
 	sandboxnone "github.com/issueye/ada_go_v2/plugins/provider/sandbox-none"
 	secretsenv "github.com/issueye/ada_go_v2/plugins/provider/secrets-env"
 	sessionjsonl "github.com/issueye/ada_go_v2/plugins/provider/session-jsonl"
@@ -105,6 +108,9 @@ func Plugins() map[string]func() kernel.Plugin {
 		"rpc-json":         rpcjson.Plugin,
 		"rpc-net":          rpcnet.Plugin,
 		"rpc-pipe":         rpcpipe.Plugin,
+		"rpc-tls":          rpctls.Plugin,
+		"rpc-guard":        rpcguard.Plugin,
+		"rpc-observe":      rpcobserve.Plugin,
 	}
 }
 

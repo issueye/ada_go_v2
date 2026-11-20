@@ -29,6 +29,8 @@ const (
 	Unix Network = "unix"
 	// Pipe 是 Windows 命名管道传输(只有 windows 构建注册)。
 	Pipe Network = "pipe"
+	// TLS 是 TLS over TCP 传输(P4;证书由 provider/rpc-tls 加载)。
+	NetworkTLS Network = "tls"
 )
 
 // Address 是一个 RPC 端点。
@@ -54,7 +56,7 @@ func Parse(raw string) (Address, error) {
 		return Address{}, Invalid("地址包含 NUL: " + raw)
 	}
 	switch n {
-	case TCP:
+	case TCP, NetworkTLS:
 		host, port, err := net.SplitHostPort(name)
 		if err != nil {
 			return Address{}, Invalid("tcp 地址必须是 host:port: " + raw)

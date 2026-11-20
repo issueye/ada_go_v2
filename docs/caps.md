@@ -12,7 +12,7 @@ plugins/provider/caps-static/  提供 "caps" 服务(*caps.Broker),让宿主/装�
 platform/assemble/                 GrantManifests:按清单 caps/trust 灌入 Broker
 ```
 
-本刀做**静态授权 + 调用点强制**:`caps-gate`(fs/shell)、`net-guard`、`secrets-guard`
+本刀做**静态授权 + 调用点强制**:`caps-gate`(fs/shell)、`net-guard`、`secrets-guard`、`rpc-guard`
 从 `kernel.Principal(ctx)` 取调用者身份;`kernel.Context.Context()` 已负责把 principal 传进 ctx。
 剩余的是信任来源与目标级约束(见 §5)。
 
@@ -26,6 +26,8 @@ net.fetch | net.fetch.<host>
 secrets.<name>
 config.<namespace>
 ui
+rpc.call | rpc.call.<method>
+rpc.listen.<network>
 ```
 
 - 未知命名空间、层级错误、空名一律非法(清单校验期拒绝)。
@@ -37,7 +39,8 @@ ui
 | 能力 | 最低信任 |
 |---|---|
 | `fs.read` / `net.fetch` | third-party |
-| `fs.write` / `ui` / `config` / `secrets` | verified |
+| `fs.write` / `ui` / `config` / `secrets` / `rpc.listen` | verified |
+| `rpc.call` | third-party |
 | `exec` / `process` | official |
 
 `builtin` > `official` > `verified` > `third-party`;`AllowedByTrust` 做等级比较。

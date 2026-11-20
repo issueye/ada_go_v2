@@ -12,14 +12,16 @@ import (
 // 1. 能力名语法:未知命名空间/层级错误/空名一律非法。
 func TestParse(t *testing.T) {
 	valid := []string{"fs.read", "fs.write", "exec", "process", "process.isolated",
-		"net.fetch.example.com", "secrets.GITHUB_TOKEN", "config.ada", "ui"}
+		"net.fetch.example.com", "secrets.GITHUB_TOKEN", "config.ada", "ui",
+		"rpc.call", "rpc.call.agent.session.list", "rpc.listen.tcp", "rpc.listen.unix"}
 	for _, spec := range valid {
 		if _, err := caps.Parse(spec); err != nil {
 			t.Fatalf("%q 应合法: %v", spec, err)
 		}
 	}
 	bad := []string{"", "fs", "fs.exec", "exec.x", "process.foo", "net.read.a",
-		"net.fetch.", "secrets", "config", "shell", "fs.read.deep"}
+		"net.fetch.", "secrets", "config", "shell", "fs.read.deep",
+		"rpc", "rpc.x", "rpc.call.", "rpc.listen", "rpc.listen.foo"}
 	for _, spec := range bad {
 		if _, err := caps.Parse(spec); err == nil {
 			t.Fatalf("%q 应非法", spec)

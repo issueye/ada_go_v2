@@ -2,7 +2,7 @@
 
 > 本文件把里程碑验收项映射到**实现位置、证据命令与已知边界**。口径来源:
 > [plugin-kernel-design.md](plugin-kernel-design.md) §17、AGENTS §10。
-> 最近更新:2026-11-20(473 个 Test + 4 个 Benchmark;不做 v1 插件迁移)。
+> 最近更新:2026-11-20(483 个 Test + 4 个 Benchmark;不做 v1 插件迁移)。
 
 ## 0. 结论速览
 
@@ -11,7 +11,7 @@
 | M4 编排 | ✅ 完成(文档口径) | platform/sched/platform/quota/platform/flow/platform/bundle/回收/延迟激活/jobs 锁 |
 | M4.5 Agent Core | ⚠️ 第一刀完成 | prompts/llm/tools/agent-loop + 最小 preset + memory/jsonl session + turn-stats 投影 + compaction-basic;真实端点与策略已落地,模型摘要可选/并行工具 |
 | M5 安全与宿主 | ⚠️ 部分完成 | 安全 seam/caps/install/宿主/C13/inspect chain 已落地;仅剩 **OS 级沙箱强制** 与 **真实桌面窗口** |
-| RPC 通讯(新增) | ⚠️ P0–P2 | seam/rpc + rpc-json + tcp/unix/Windows 命名管道;policy/caps/TLS 待做(P3/P4) |
+| RPC 通讯(新增) | ✅ P0–P4(TLS) | seam/rpc + rpc-json + tcp/unix/pipe + rpc-guard/rpc-observe + tls://;SO_PEERCRED/桌面 Transport 待做 |
 
 ## 1. M4.5 验收矩阵
 
@@ -76,7 +76,7 @@
 | `ada inspect --chain` | `platform/host/cli` | `cli.TestInspectChain` | 只显示 fs/shell/net 优先级 |
 | 内置栈接线 | `platform/host/builtins` | `builtins.TestBuiltinGoPlugins`、`cli.TestUpNetStack`/`TestUpSecretsStack` | net/secrets 已接入宿主;其它 Go 插件仍需编译时注册 |
 
-### 2.5 RPC 通讯(P0–P2,新增能力)
+### 2.5 RPC 通讯(P0–P4 TLS,新增能力)
 
 | 验收项 | 实现位置 | 证据 | 已知边界 |
 |---|---|---|---|
@@ -84,7 +84,9 @@
 | 帧/握手/调用/事件/取消 | `plugins/provider/rpc-json` | `rpc-json`(8) | 无写队列;`rpc-json` 预算例外见 ADR 0009 |
 | tcp/unix 传输 | `plugins/provider/rpc-net` | `rpc-net`(6) | unix socket 0600/stale;非 loopback 由宿主自控 |
 | Windows 命名管道 | `plugins/provider/rpc-pipe` | `rpc-pipe`(3) | DACL 当前用户+SYSTEM;拒绝远程客户端 |
-| 授权与审计 | 尚未实现(P3) | —— | 无 `rpc.call`/`rpc.listen`、无 `rpc/observe`、无 TLS |
+| 授权(rpc-guard) | `plugins/policy/rpc-guard` | `rpcguard.TestDial`/`TestListen`/`TestListenDenied`/`TestAuthRequiresSecret` | 地址/方法/peer 白名单 + caps `rpc.call`/`rpc.listen`;无 Broker 时只做白名单 |
+| 观察(rpc-observe) | `plugins/policy/rpc-observe` | `rpcobserve.TestObserveOutbound`/`TestObserveInbound` | payload 不含 params/result;inbound peer 来自 principal |
+| TLS 传输 | `plugins/provider/rpc-tls` | `rpctls.TestTLSRoundTrip`/`TestTLSRPCIntegration` | 需要证书/CA;远程明文 TCP 仍拒绝;`SO_PEERCRED` 待做 |
 
 ## 3. 门禁与证据
 
@@ -99,7 +101,7 @@ go run ./cmd/ada inspect --chain --preset examples/agent/agent.preset.json
 
 当前实测:
 
-- 测试 **473 个 Test + 4 个 Benchmark**,`go test -race ./...` 全绿;
+- 测试 **483 个 Test + 4 个 Benchmark**,`go test -race ./...` 全绿;
 - kernel 生产 **2396 / 3000** 行;
 - host 生产 **2306 / 2500**(cli 1410 / 1500,其它最大 408 / 800);
 - bench:ServiceResolve 58ns、Emit 1.61μs、waterfall 5.55μs、50 插件 348μs;

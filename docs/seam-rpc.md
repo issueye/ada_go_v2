@@ -1,6 +1,6 @@
 # seam/rpc 与 RPC 通讯协议插件
 
-> 状态:**P0–P2 已实现(2026-11-20);P3/P4 仍是提案**。已落地:`plugins/seam/rpc`(契约)、`plugins/provider/rpc-json`(帧/握手/调用/事件/取消)、`plugins/provider/rpc-net`(tcp/unix)、`plugins/provider/rpc-pipe`(Windows 命名管道)。未落地:`policy/rpc-guard`、caps `rpc.call`/`rpc.listen`、`rpc/observe`、TLS 与 `SO_PEERCRED`。
+> 状态:**P0–P3 已实现,P4 TLS 已实现(2026-11-20);`SO_PEERCRED` 与桌面接入待做**。已落地:`plugins/seam/rpc`(契约)、`plugins/provider/rpc-json`(帧/握手/调用/事件/取消)、`plugins/provider/rpc-net`(tcp/unix)、`plugins/provider/rpc-pipe`(Windows 命名管道)、`plugins/policy/rpc-guard`(授权/地址/方法/对端/鉴权)、`plugins/policy/rpc-observe`(`rpc/observe`)、`plugins/provider/rpc-tls`(`tls://`)。
 >
 > 关联:[plugin-kernel-design.md](plugin-kernel-design.md)(§2 原则、§13 安全)、[seam-api.md](seam-api.md) §1.2(错误码)、[seam-net.md](seam-net.md)(同构的 Chain 模式)、[caps.md](caps.md)、[host-server.md](host-server.md)、[ADR 0008](adr/0008-desktop-webview-shell.md)、[ADR 0009](adr/0009-rpc-json-budget.md)、AGENTS §2–§5。
 
@@ -64,8 +64,9 @@ plugins/seam/rpc/             Address / Frame / Message / Stream / Transport / P
 plugins/provider/rpc-json/    协议:帧编解码、握手、请求分发、事件、取消、心跳   ✅ P0
 plugins/provider/rpc-net/     传输:tcp + unix(Windows 走 AF_UNIX)              ✅ P1
 plugins/provider/rpc-pipe/    传输:Windows 命名管道(仅 windows 构建注册)         ✅ P2
-plugins/policy/rpc-guard/     出站 caps/方法/地址白名单;入站 peer/方法白名单 + principal 映射  ⬜ P3
-plugins/policy/rpc-observe/   观察:rpc/observe(不阻断)                          ⬜ P3
+plugins/policy/rpc-guard/     出站 caps/方法/地址白名单;入站 peer/方法白名单 + principal 映射  ✅ P3
+plugins/policy/rpc-observe/   观察:rpc/observe(不阻断)                          ✅ P3
+plugins/provider/rpc-tls/     传输:tls://(证书/CA,远程 TCP 需该传输)             ✅ P4(TLS)
 ```
 
 服务名:
@@ -73,9 +74,9 @@ plugins/policy/rpc-observe/   观察:rpc/observe(不阻断)                     
 | 服务 | 类型 | 提供者 | 用途 |
 |---|---|---|---|
 | `rpc` | `*rpc.Chain` | `seam/rpc` 提供空链;`rpc-json` `Install` 底座 | 消费者 `Dial`/`Listen` |
-| `rpc-transport` | `*rpc.Registry` | `seam/rpc` | `rpc-net`/`rpc-pipe` 按 `Network` 注册 |
+| `rpc-transport` | `*rpc.Registry` | `seam/rpc` | `rpc-net`/`rpc-pipe`/`rpc-tls` 按 `Network` 注册 |
 
-依赖方向:`rpc-json` **inject** 必需 `rpc-transport`(缺失时插件停在 `pending`,装配期即可发现);传输 provider **inject** `rpc-transport` 并 `Register`;`rpc-guard`(P3)**inject** `rpc`,`caps`、`secrets` 可选。
+依赖方向:`rpc-json` **inject** 必需 `rpc-transport`(缺失时插件停在 `pending`,装配期即可发现);传输 provider **inject** `rpc-transport` 并 `Register`;`rpc-guard` **inject** `rpc`,`caps`、`secrets` 可选;`rpc-observe` **inject** `rpc`。
 
 ### 2.1 seam 接口草图(只类型,不实现)
 
@@ -406,7 +407,7 @@ func Plugin() kernel.Plugin // 提供 "rpc"(空 Chain)与 "rpc-transport"(Regist
 
 ## 7. 配置与 preset
 
-> 本节是 **P3 目标形态**;P0–P2 还没有 `rpc-guard`,监听由宿主直接调用 `Service.Listen` 并传 `ServerOptions`,preset 里没有 `rpc` 段。
+> 本节是 **P3 已实现形态**:`rpc-guard` 按 `listen`/`call` 白名单、`peers`、`methods`、`auth`/`tokenSecret`、`allowRemote` 设门;监听仍由宿主显式调用 `Service.Listen`。
 
 ```jsonc
 {
@@ -432,8 +433,8 @@ func Plugin() kernel.Plugin // 提供 "rpc"(空 Chain)与 "rpc-transport"(Regist
 规则:
 
 - **默认不监听**:`listen` 为空时 `rpc-json` 不创建任何 listener;没有「装了就开门」的默认。
-- `tokenSecret` 是 `seam/secrets` 的键名,不是明文;`auth=token` 且 secret 缺失 → 启动失败(`EAUTH`)。`rpc-guard` 解析后把字节交给 `rpc-json`,provider 不直接读 secret。
-- `allowRemote=true` 才允许监听非 loopback;P0–P3 直接拒绝,`allowInsecure=true` 只用于 `auth=none` 的测试场景。
+- `tokenSecret` 是 `seam/secrets` 的键名,不是明文;`auth=token` 且 secret 缺失 → 首次 `Dial`/`Listen` 失败(`EAUTH`)。`rpc-guard` 解析后把字节交给 `rpc-json`,provider 不直接读 secret。
+- `allowRemote=true` 才允许监听非 loopback;远程必须是 `tls://`(明文 TCP 拒绝),`allowInsecure=true` 只用于 `auth=none` 的测试场景。
 - `listen`/`call` 的地址在 `rpc-guard` 里做白名单;provider 本身不判断「该不该连」。
 - preset 只影响「装什么 + 配什么」,协议行为不因产品名分叉。
 
@@ -441,7 +442,7 @@ func Plugin() kernel.Plugin // 提供 "rpc"(空 Chain)与 "rpc-transport"(Regist
 
 ## 8. 观测与诊断
 
-`rpc/observe`(由 `policy/rpc-observe` 发出,观察不阻断;P3 未实现):
+`rpc/observe`(由 `policy/rpc-observe` 发出,观察不阻断):
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
@@ -473,17 +474,19 @@ func Plugin() kernel.Plugin // 提供 "rpc"(空 Chain)与 "rpc-transport"(Regist
 | unix 权限/stale/符号链接拒绝 | `rpcnet.TestPerm`、`TestStale` |
 | Windows 命名管道(仅 windows) | `rpcpipe.TestPipe*` |
 | 非 Windows 上 pipe 返回 `EUNIMPLEMENTED` | `rpcpipe.TestUnsupported` |
-| 鉴权:peer 白名单/token 缺失/allowInsecure | `rpcguard.TestAuth*` |
-| caps:出站 `rpc.call.<method>` 允许/拒绝;入站 principal | `rpcguard.TestCaps*` |
-| 拒绝矩阵:地址×方法×对端×鉴权 | `rpcguard.TestDenyMatrix` |
+| 鉴权:peer 白名单/token 缺失/allowInsecure | `rpcguard.TestAuthRequiresSecret`、`rpcguard.TestListen` |
+| caps:出站 `rpc.call.<method>` 允许/拒绝;入站 principal | `rpcguard.TestDial`、`TestListen` |
+| 拒绝矩阵:地址×方法×对端×鉴权 | `rpcguard.TestDial`、`TestListenDenied` |
 | 内核集成:seam+provider+consumer+Dispose | `rpcjson.TestKernelIntegration` |
 | 重载 100 次无泄漏 | `rpcjson.TestReload` |
 | 交叉编译 linux/darwin/windows(CGO=0) | `guard.ps1` |
 | 帧模糊测试 | `FuzzFrameDecode` |
+| 观察事件:出站/入站/错误 | `rpcobserve.TestObserveOutbound`、`TestObserveInbound` |
+| TLS 往返/未知 CA/协议集成 | `rpctls.TestTLSRoundTrip`、`TestTLSRejectsUnknownCA`、`TestTLSRPCIntegration` |
 
 约束:测试不依赖真实外网、不 sleep 轮询、不写固定端口;Unix/pipe 用 `t.TempDir()` 与随机名字;Windows 测试用 `t.Skip` 保护无 AF_UNIX 的环境。
 
-**已落地(P0–P2)的用例**:
+**已落地(P0–P4 TLS)的用例**:
 
 | 包 | 用例 |
 |---|---|
@@ -491,6 +494,9 @@ func Plugin() kernel.Plugin // 提供 "rpc"(空 Chain)与 "rpc-transport"(Regist
 | `rpc-json` | `TestCallAndNotify`、`TestUnknownMethod`、`TestBadTokenAndPeer`、`TestCancelPropagates`、`TestEvents`、`TestConcurrentCalls`、`TestFrameLimits`、`TestKernelIntegration` |
 | `rpc-net` | `TestTCP`、`TestUnix`、`TestUnixStale`、`TestAcceptCancel`、`TestUnsupported`、`TestKernelStack` |
 | `rpc-pipe` | `TestPipeEcho`、`TestPipeAcceptCancel`(Windows);`TestPipeUnsupported`(非 Windows) |
+| `rpc-guard` | `TestDial`、`TestListen`、`TestListenDenied`、`TestAuthRequiresSecret` |
+| `rpc-observe` | `TestObserveOutbound`、`TestObserveInbound` |
+| `rpc-tls` | `TestTLSRoundTrip`、`TestTLSRejectsUnknownCA`、`TestTLSRPCIntegration` |
 
 ---
 
@@ -511,10 +517,10 @@ func Plugin() kernel.Plugin // 提供 "rpc"(空 Chain)与 "rpc-transport"(Regist
 | **P0** | `seam/rpc` 类型 + `Registry`/`Chain`;内存传输;`rpc-json` 帧/握手/调用/事件/取消;契约测试 | ✅ `go test -race ./plugins/seam/rpc ./plugins/provider/rpc-json` |
 | **P1** | `rpc-net`(tcp loopback + unix;Windows AF_UNIX);权限/stale/Addr;集成测试 | ✅ Linux/macOS/Windows 全绿;`unix` 权限测试在支持平台通过 |
 | **P2** | `rpc-pipe`(Windows 命名管道 + ACL + 拒绝远程客户端);非 Windows 空实现 | ✅ Windows CI/本机 `go test ./plugins/provider/rpc-pipe`;`GOOS=linux` 构建通过 |
-| **P3** | `rpc-guard` + `rpc-observe`;caps 语法 `rpc.call`/`rpc.listen`;audit 接入;principal 改写 | ⬜ 未开始 |
-| **P4** | TLS/远程 TCP、`SO_PEERCRED`、宿主接入(`ada serve --rpc` 或 desktop Transport 可选) | ⬜ 需单独评审 |
+| **P3** | `rpc-guard` + `rpc-observe`;caps 语法 `rpc.call`/`rpc.listen`;audit 接入;principal 改写 | ✅ `go test -race ./plugins/policy/rpc-guard ./plugins/policy/rpc-observe`;caps 拒绝接 `caps/deny` |
+| **P4** | TLS/远程 TCP、`SO_PEERCRED`、宿主接入(`ada serve --rpc` 或 desktop Transport 可选) | ⚠️ TLS + 远程 TCP 已落地(`rpc-tls`);`SO_PEERCRED`/宿主接入待做 |
 
-预算(超了先拆或写 ADR):seam ≤ 400 行;`rpc-json` ≤ 800;`rpc-net` ≤ 400;`rpc-pipe` ≤ 500(仅 windows 文件);`rpc-guard` ≤ 400;`rpc-observe` ≤ 200。
+预算(超了先拆或写 ADR):seam ≤ 400 行;`rpc-json` ≤ 1200(ADR 0009);`rpc-net` ≤ 400;`rpc-pipe` ≤ 500(仅 windows 文件);`rpc-tls` ≤ 300;`rpc-guard` ≤ 400;`rpc-observe` ≤ 200。
 
 ---
 
@@ -535,12 +541,12 @@ func Plugin() kernel.Plugin // 提供 "rpc"(空 Chain)与 "rpc-transport"(Regist
 
 ## 13. 偏差与不做
 
-### 13.1 已实现子集(P0–P2)的偏差
+### 13.1 已实现子集(P0–P4 TLS)的偏差
 
-1. **没有 `rpc-guard`/caps**:provider 不判断「该不该监听/该不该调用」;监听地址由宿主显式传 `Address`,没有地址允许表,也没有 `rpc.call`/`rpc.listen` 授权。装 `rpc-net` 后调用 `Listen` 即会监听,必须由 preset/宿主控制;P3 补齐前不要把 TCP 监听暴露到非 loopback。
+1. **授权已由 `rpc-guard` 提供**:出站地址/方法/`rpc.call.<method>`,入站 `rpc.listen.<network>`/peer 白名单/`tokenSecret`;未装 guard 时仍由宿主自行控制监听地址。
 2. **写路径是 mutex 串行写,不是独立写协程 + 有界队列**:慢客户端会让 `Publish`/响应阻塞;事件队列满仍按设计断开连接(`ELIMIT`)。这与 §4.6 的「单写者 + 队列」有差距,后续再引入队列。
 3. **心跳只做 ping/pong 宣告,不做存活回收**:客户端发 `ping`,服务端回 `pong`;不因缺 `pong` 主动断开,空闲连接由宿主 `Close`/ctx 取消。
-4. **TCP 只支持明文,非 loopback 未强制拒绝**:`rpc-net` 不做 TLS,也不判断监听地址是否 loopback;P0–P3 的「默认只监听 loopback」要由宿主配置保证,直到 P4 提供 `tls://`。
+4. **明文 TCP 仍不允许远程**:`rpc-net` 只做明文 tcp/unix;远程必须用 `rpc-tls` 的 `tls://`,`rpc-guard` 默认拒绝非 loopback 明文 TCP。
 5. **`noReply` 失败不可观测**:通知执行失败只丢在服务端,调用方无从知道;只适合幂等通知。
 6. **`allowInsecure` 与 `auth=none` 是测试通道**:生产配置不应使用;`auth=os` 在 unix 上只依赖 0600 权限,不校验对端 UID(`SO_PEERCRED` 在 P4)。
 7. **`rpc-json` 约 1088 行**,超过单插件 800 行预算,例外见 [ADR 0009](adr/0009-rpc-json-budget.md);拆包方向已写进 ADR。
@@ -553,7 +559,7 @@ func Plugin() kernel.Plugin // 提供 "rpc"(空 Chain)与 "rpc-transport"(Regist
 4. **不做压缩/分片**:大对象走句柄/URL;单帧硬上限。
 5. **不把 RPC 当插件装载通道**:插件安装仍走 `install` 与签名。
 6. **不替代 host/web 的 HTTP/SSE**:两条通道各自服务不同场景。
-7. **P0–P3 不支持远程 TCP 明文**:非 loopback 监听直接拒绝,直到 P4 的 TLS。
+7. **远程只支持 TLS**:明文 TCP 只允许 loopback;非 loopback 由 `rpc-guard` 拒绝,必须改用 `rpc-tls`。
 
 ---
 

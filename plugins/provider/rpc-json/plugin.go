@@ -87,7 +87,7 @@ func (s *service) Listen(ctx context.Context, addr seamrpc.Address, opts seamrpc
 		return nil, seamrpc.Unimplemented("没有注册传输 " + string(addr.Network))
 	}
 	if opts.Auth.Mode == "" {
-		if addr.Network == seamrpc.TCP {
+		if addr.Network == seamrpc.TCP || addr.Network == seamrpc.NetworkTLS {
 			opts.Auth.Mode = seamrpc.AuthToken
 		} else {
 			opts.Auth.Mode = seamrpc.AuthOS
@@ -95,8 +95,8 @@ func (s *service) Listen(ctx context.Context, addr seamrpc.Address, opts seamrpc
 	}
 	switch opts.Auth.Mode {
 	case seamrpc.AuthOS:
-		if addr.Network == seamrpc.TCP {
-			return nil, seamrpc.Invalid("tcp 不能用 os 鉴权")
+		if addr.Network == seamrpc.TCP || addr.Network == seamrpc.NetworkTLS {
+			return nil, seamrpc.Invalid("tcp/tls 不能用 os 鉴权")
 		}
 	case seamrpc.AuthToken:
 		if len(opts.Auth.Token) == 0 {

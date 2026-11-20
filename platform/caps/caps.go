@@ -72,7 +72,10 @@ func Requirement(c Cap) Trust {
 			return TrustVerified
 		}
 		return TrustThirdParty
-	case "ui", "config", "secrets":
+	case "ui", "config", "secrets", "rpc":
+		if string(c) == "rpc.call" || strings.HasPrefix(string(c), "rpc.call.") {
+			return TrustThirdParty
+		}
 		return TrustVerified
 	}
 	return TrustThirdParty
@@ -120,6 +123,22 @@ func Parse(spec string) (Cap, error) {
 	case "ui":
 		if len(parts) > 2 {
 			return "", fmt.Errorf("caps: ui 能力层级过深: %q", spec)
+		}
+	case "rpc":
+		if len(parts) < 2 {
+			return "", fmt.Errorf("caps: rpc 能力必须是 rpc.call 或 rpc.listen.<network>,得到 %q", spec)
+		}
+		switch parts[1] {
+		case "call":
+			if len(parts) > 2 && strings.Join(parts[2:], ".") == "" {
+				return "", fmt.Errorf("caps: rpc.call 方法为空: %q", spec)
+			}
+		case "listen":
+			if len(parts) != 3 || (parts[2] != "tcp" && parts[2] != "unix" && parts[2] != "pipe" && parts[2] != "tls") {
+				return "", fmt.Errorf("caps: rpc.listen 必须是 rpc.listen.<tcp|unix|pipe|tls>,得到 %q", spec)
+			}
+		default:
+			return "", fmt.Errorf("caps: rpc 能力只支持 call/listen: %q", spec)
 		}
 	default:
 		return "", fmt.Errorf("caps: 未知能力命名空间 %q", parts[0])
