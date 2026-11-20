@@ -733,3 +733,34 @@ func TestAgentTaskScriptPlugin(t *testing.T) {
 		t.Fatalf("任务文件不正确: %v %s", err, data)
 	}
 }
+
+// 35. 脚本插件 command-helper + ada:shell 装配与命令调用。
+func TestUpCommandScriptPlugin(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir("../../.."); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	code, out, errOut := run("up", "--preset", "examples/command-ts/command.preset.json")
+	if code != 0 || !strings.Contains(out, "command-helper") {
+		t.Fatalf("command-helper 装配失败: code=%d err=%s out=%s", code, errOut, out)
+	}
+}
+
+func TestAgentCommandScriptPlugin(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir("../../.."); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	code, out, errOut := run("agent", "--preset", "examples/command-ts/command.preset.json", "-message", "执行 git --version")
+	if code != 0 || !strings.Contains(out, "命令执行完成") {
+		t.Fatalf("command-helper 运行失败: code=%d err=%s out=%s", code, errOut, out)
+	}
+}

@@ -2,7 +2,7 @@
 
 > 本文件把里程碑验收项映射到**实现位置、证据命令与已知边界**。口径来源:
 > [plugin-kernel-design.md](plugin-kernel-design.md) §17、AGENTS §10。
-> 最近更新:2026-11-20(487 个 Test + 4 个 Benchmark;不做 v1 插件迁移)。
+> 最近更新:2026-11-20(489 个 Test + 4 个 Benchmark;不做 v1 插件迁移)。
 
 ## 0. 结论速览
 
@@ -23,6 +23,7 @@
 | C4 tools seam + tool/fs | `plugins/seam/tools`、`plugins/tool/fs` | `tools` 2 个用例 | `tools/execute` 不能包裹 handler;无 approval-gate |
 | C4b 脚本工具 | `examples/git-ts/plugins/git-helper`、`platform/bridge`(`ctx.tool`/`ada:shell`) | `cli.TestAgentGitScriptPlugin`;真实端点手工 | 无 SDK 类型;JS→原生 shell 无 ctx 取消 |
 | C4c 脚本持久化工具 | `examples/task-ts/plugins/task-helper`、`platform/bridge`(`ada:fs`) | `cli.TestUpTaskScriptPlugin`、`cli.TestAgentTaskScriptPlugin`;真实端点手工 | 任务文件不是会话事实;read-modify-write 无事务 |
+| C4d 脚本命令工具 | `examples/command-ts/plugins/command-helper`、`ada:shell` | `cli.TestUpCommandScriptPlugin`、`cli.TestAgentCommandScriptPlugin`;真实端点手工 | 白名单不是安全边界;无 shell 解析 |
 | C5 agent-loop | `plugins/core/agent-loop` | `agentloop.TestTurnWithReplayAndTool`、`TestContextBudgetReturnsECONTEXT`、`TestCompactionFitsBudget`、`TestParallelTools` | 并行工具(maxParallelTools);contextBudget + compaction-basic;模型摘要可选;无 core/agent 拆分 |
 | C6 最小 preset + golden | `examples/agent` | `ada plan/up --preset examples/agent/agent.preset.json`;事件序列 golden;`TestRealAgentTurn` 实测真实端点 tool call | 默认回放模型;真实端点需 env |
 | C7 策略桩 | `plugins/policy/approval-gate`、`llm-retry`、`tool-timeout` | approval-gate 2、llm-retry 3、tool-timeout 1 | 全部落地;后续可加 tool-repeat-guard 等 |
@@ -103,7 +104,7 @@ go run ./cmd/ada inspect --chain --preset examples/agent/agent.preset.json
 
 当前实测:
 
-- 测试 **487 个 Test + 4 个 Benchmark**,`go test -race ./...` 全绿;
+- 测试 **489 个 Test + 4 个 Benchmark**,`go test -race ./...` 全绿;
 - kernel 生产 **2396 / 3000** 行;
 - host 生产 **2306 / 2500**(cli 1410 / 1500,其它最大 408 / 800);
 - bench:ServiceResolve 58ns、Emit 1.61μs、waterfall 5.55μs、50 插件 348μs;
