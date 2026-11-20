@@ -85,6 +85,7 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 | [tool-git-helper.md](docs/tool-git-helper.md) | 脚本插件示例:TS git-helper + 注入 ada:shell + ctx.tool |
 | [tool-task-helper.md](docs/tool-task-helper.md) | 脚本插件示例:TS task-helper + 注入 ada:fs |
 | [tool-command-helper.md](docs/tool-command-helper.md) | 脚本插件示例:TS command-helper + 注入 ada:shell |
+| [tool-text-helper.md](docs/tool-text-helper.md) | 脚本插件示例:TS text-helper + ada:fs 读写/编辑/搜索 |
 | [adr/0001](docs/adr/0001-deferred-m5-scope.md) | ADR:延迟 OS 级沙箱与真实桌面窗口(复议 2027-01-15) |
 | [adr/0002](docs/adr/0002-host-budget-exception.md) | ADR:host 层代码预算例外(CLI 适配器) |
 | [adr/0003](docs/adr/0003-handler-context-and-timeout-gate.md) | ADR:监听器 ctx 与 waterfall 超时闸门 |
@@ -122,7 +123,7 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 ## 当前状态:M1 内核 + M2 执行层 + M3 装配 + M4 编排 + M4.5 Agent Core 第一刀 + M5 安全与宿主
 
 ```powershell
-go test -race -count=1 -timeout 300s ./...   # 489 个 Test + 4 个 Benchmark
+go test -race -count=1 -timeout 300s ./...   # 493 个 Test + 4 个 Benchmark
 go run ./cmd/ada-demo                        # 依赖门控 + 级联重载演示
 pwsh scripts/guard.ps1                       # 门禁:词汇/依赖/gofmt/build/vet/staticcheck/race/交叉编译/预算
 go run ./cmd/ada-ts-demo                     # M2:TS 插件编译→加载→提供服务/派发事件→内核消费
@@ -138,6 +139,7 @@ go run ./cmd/ada up --preset examples/secrets/secrets.preset.json # M5:secrets �
 go run ./cmd/ada agent --preset examples/git-ts/git.preset.json -message "看看 git 状态" # 脚本插件 + 注入模块
 go run ./cmd/ada agent --preset examples/task-ts/task.preset.json -message "添加任务并列出" # 脚本插件 + ada:fs
 go run ./cmd/ada agent --preset examples/command-ts/command.preset.json -message "执行 git --version" # 脚本插件 + 受控命令
+go run ./cmd/ada agent --preset examples/text-ts/text.preset.json -message "写文件、替换并搜索" # 脚本插件 + 文本工具
 go run ./cmd/ada plan --preset examples/presets/base.preset.json   # M3:preset(多目录/disabled/patch)
 go run ./cmd/ada inspect --preset examples/presets/ts-only.preset.json  # M3:诊断快照(fiber/服务/effect)
 go run ./cmd/ada verify examples/plugins-ts/hello-ts  # M5:清单/摘要/验签/信任

@@ -6,8 +6,10 @@
 package fslocal
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -483,12 +485,91 @@ func virtualPrefix(root string, f *FS) string {
 	return "/workspace"
 }
 
-// Search 是可选能力;当前实现返回 EUNIMPLEMENTED。
+// Search 在工作区/临时目录内按字面量搜索文本文件。
+//
+// 只搜索文本;单文件读取上限 1 MiB;命中数量受 req.Limit 限制(默认 200)。
 func (f *FS) Search(ctx context.Context, req seamfs.SearchRequest) (seamfs.SearchResult, error) {
 	if err := f.checkCtx(ctx); err != nil {
 		return seamfs.SearchResult{}, err
 	}
-	return seamfs.SearchResult{}, seamerr.New(seamerr.ErrUnimplemented, ProviderName, "Search 未实现", false)
+	if req.Query == "" {
+		return seamfs.SearchResult{}, seamfs.Invalid("fs-local: 搜索词不能为空")
+	}
+	host, root, err := f.resolve(req.Path)
+	if err != nil {
+		return seamfs.SearchResult{}, err
+	}
+	info, err := os.Stat(host)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return seamfs.SearchResult{}, seamfs.NotFound(req.Path)
+		}
+		return seamfs.SearchResult{}, err
+	}
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 200
+	}
+	virtualRoot := virtualPrefix(root, f)
+
+	var matches []seamfs.SearchMatch
+	addFile := func(p string) error {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		if !bytes.Contains(data, []byte(req.Query)) {
+			return nil
+		}
+		if kindFor(p, prefixBytes(p)) != seamfs.KindText {
+			return nil
+		}
+		vp := seamfs.Path(virtualRoot + "/" + filepath.ToSlash(mustRel(root, p)))
+		for i, line := range strings.Split(string(data), "\n") {
+			if strings.Contains(line, req.Query) {
+				matches = append(matches, seamfs.SearchMatch{Path: vp, Line: i + 1, Text: strings.TrimSpace(line)})
+				if len(matches) >= limit {
+					return errSearchLimit
+				}
+			}
+		}
+		return nil
+	}
+
+	if info.IsDir() {
+		err = filepath.WalkDir(host, func(p string, d os.DirEntry, werr error) error {
+			if werr != nil {
+				return werr
+			}
+			if d.IsDir() {
+				return nil
+			}
+			if info2, ierr := d.Info(); ierr == nil && info2.Size() > seamfs.DefaultReadLimit {
+				return nil
+			}
+			return addFile(p)
+		})
+	} else {
+		err = addFile(host)
+	}
+	if err == errSearchLimit {
+		err = nil
+	}
+	if err != nil {
+		return seamfs.SearchResult{}, err
+	}
+	return seamfs.SearchResult{Matches: matches}, nil
+}
+
+// errSearchLimit 用于停止 WalkDir,不是对外错误。
+var errSearchLimit = errors.New("fs-local: 搜索结果达到上限")
+
+func mustRel(root, p string) string {
+	rel, err := filepath.Rel(root, p)
+	if err != nil {
+		return filepath.ToSlash(p)
+	}
+	return rel
 }
 
 // versionFor 计算版本凭证(有界:最多读 1 MiB 参与哈希)。

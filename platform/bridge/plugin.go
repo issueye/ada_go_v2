@@ -247,7 +247,7 @@ func (p *Plugin) Apply(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, 
 		modules["ada:shell"] = m
 	}
 	if fsChain != nil {
-		m, cerr := moejs.Compile("ada:fs", "const host = globalThis.__adaHost;\nexport function read(path) { return host.fs.read(path); }\nexport function write(path, content, createDirs) { return host.fs.write(path, content, createDirs); }\n")
+		m, cerr := moejs.Compile("ada:fs", "const host = globalThis.__adaHost;\nexport function read(path) { return host.fs.read(path); }\nexport function write(path, content, createDirs) { return host.fs.write(path, content, createDirs); }\nexport function edit(path, old, newText, all) { return host.fs.edit(path, old, newText, all); }\nexport function search(query, path, limit) { return JSON.parse(host.fs.search(path || \"/workspace\", query, limit || 0)); }\nexport function list(path, recursive, limit) { return JSON.parse(host.fs.list(path || \"/workspace\", recursive, limit || 0)); }\n")
 		if cerr != nil {
 			return nil, kernel.Wrap(kernel.CodeInvalid, cerr, "JS 插件 %s 注入模块编译失败", p.opts.Name)
 		}
@@ -313,6 +313,68 @@ func (p *Plugin) Apply(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, 
 					Path: seamfs.Path(path), Content: []byte(content), CreateDirs: createDirs,
 				})
 				return err
+			},
+			FSEdit: func(fctx context.Context, path, old, newText string, all bool) (int, error) {
+				if fsChain == nil {
+					return 0, fmt.Errorf("fs 服务不可用")
+				}
+				impl, err := fsChain.Get()
+				if err != nil {
+					return 0, err
+				}
+				read, err := impl.Read(fctx, seamfs.ReadRequest{Path: seamfs.Path(path)})
+				if err != nil {
+					return 0, err
+				}
+				res, err := impl.Edit(fctx, seamfs.EditRequest{
+					Path: seamfs.Path(path), IfVersion: read.Version, Old: old, New: newText, All: all,
+				})
+				if err != nil {
+					return 0, err
+				}
+				return res.Replacements, nil
+			},
+			FSSearch: func(fctx context.Context, path, query string, limit int) (string, error) {
+				if fsChain == nil {
+					return "", fmt.Errorf("fs 服务不可用")
+				}
+				if !strings.HasPrefix(path, "/") {
+					path = "/workspace/" + path
+				}
+				impl, err := fsChain.Get()
+				if err != nil {
+					return "", err
+				}
+				res, err := impl.Search(fctx, seamfs.SearchRequest{Path: seamfs.Path(path), Query: query, Limit: limit})
+				if err != nil {
+					return "", err
+				}
+				b, err := json.Marshal(res.Matches)
+				if err != nil {
+					return "", err
+				}
+				return string(b), nil
+			},
+			FSList: func(fctx context.Context, path string, recursive bool, limit int) (string, error) {
+				if fsChain == nil {
+					return "", fmt.Errorf("fs 服务不可用")
+				}
+				if !strings.HasPrefix(path, "/") {
+					path = "/workspace/" + path
+				}
+				impl, err := fsChain.Get()
+				if err != nil {
+					return "", err
+				}
+				entries, err := impl.List(fctx, seamfs.ListRequest{Path: seamfs.Path(path), Recursive: recursive, Limit: limit})
+				if err != nil {
+					return "", err
+				}
+				b, err := json.Marshal(entries)
+				if err != nil {
+					return "", err
+				}
+				return string(b), nil
 			},
 			Tool: func(name, summary string, input map[string]any, readOnly bool, invoke func(ctx context.Context, args any) (any, error)) error {
 				if toolsReg == nil {

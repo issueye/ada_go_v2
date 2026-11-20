@@ -58,6 +58,7 @@
 | [tool-git-helper.md](docs/tool-git-helper.md) | 脚本插件示例:TS git-helper + 注入 ada:shell + ctx.tool |
 | [tool-task-helper.md](docs/tool-task-helper.md) | 脚本插件示例:TS task-helper + 注入 ada:fs |
 | [tool-command-helper.md](docs/tool-command-helper.md) | 脚本插件示例:TS command-helper + 注入 ada:shell |
+| [tool-text-helper.md](docs/tool-text-helper.md) | 脚本插件示例:TS text-helper + ada:fs 读写/编辑/搜索 |
 | [adr/0001](docs/adr/0001-deferred-m5-scope.md) | ADR:OS 级沙箱与真实桌面窗口延期(复议 2027-01-15) |
 | [adr/0002](docs/adr/0002-host-budget-exception.md) | ADR:host 层代码预算例外 |
 | [adr/0003](docs/adr/0003-handler-context-and-timeout-gate.md) | ADR:监听器 ctx 与 waterfall 超时闸门 |

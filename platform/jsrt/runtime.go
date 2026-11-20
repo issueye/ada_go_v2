@@ -105,8 +105,11 @@ type Host struct {
 	// Tool 是 JS 侧 ctx.tool(spec, handler) 的宿主实现;invoke 在工具被调用时执行 JS handler。
 	Tool func(name, summary string, input map[string]any, readOnly bool, invoke func(ctx context.Context, args any) (any, error)) error
 	// FSRead/FSWrite 是注入模块 ada:fs 的宿主实现。
-	FSRead  func(ctx context.Context, path string) (string, error)
-	FSWrite func(ctx context.Context, path, content string, createDirs bool) error
+	FSRead   func(ctx context.Context, path string) (string, error)
+	FSWrite  func(ctx context.Context, path, content string, createDirs bool) error
+	FSEdit   func(ctx context.Context, path, old, new string, all bool) (int, error)
+	FSSearch func(ctx context.Context, path, query string, limit int) (string, error)
+	FSList   func(ctx context.Context, path string, recursive bool, limit int) (string, error)
 }
 
 // ErrReentrant 表示同一运行时在自己的回调链里被再次调用。
@@ -297,7 +300,7 @@ func (r *Runtime) load() error {
 			return fmt.Errorf("jsrt: 注入 __adaHost.shell 失败: %w", err)
 		}
 	}
-	if r.opts.Host.FSRead != nil || r.opts.Host.FSWrite != nil {
+	if r.opts.Host.FSRead != nil || r.opts.Host.FSWrite != nil || r.opts.Host.FSEdit != nil || r.opts.Host.FSSearch != nil || r.opts.Host.FSList != nil {
 		fsObj := realm.NewObject()
 		if r.opts.Host.FSRead != nil {
 			if err := fsObj.SetProp(realm, realm.KeyFromGoString("read"), raw.Function("read", 1, r.nativeFSRead(raw))); err != nil {
@@ -307,6 +310,21 @@ func (r *Runtime) load() error {
 		if r.opts.Host.FSWrite != nil {
 			if err := fsObj.SetProp(realm, realm.KeyFromGoString("write"), raw.Function("write", 3, r.nativeFSWrite(raw))); err != nil {
 				return fmt.Errorf("jsrt: 注入 __adaHost.fs.write 失败: %w", err)
+			}
+		}
+		if r.opts.Host.FSEdit != nil {
+			if err := fsObj.SetProp(realm, realm.KeyFromGoString("edit"), raw.Function("edit", 4, r.nativeFSEdit(raw))); err != nil {
+				return fmt.Errorf("jsrt: 注入 __adaHost.fs.edit 失败: %w", err)
+			}
+		}
+		if r.opts.Host.FSSearch != nil {
+			if err := fsObj.SetProp(realm, realm.KeyFromGoString("search"), raw.Function("search", 3, r.nativeFSSearch(raw))); err != nil {
+				return fmt.Errorf("jsrt: 注入 __adaHost.fs.search 失败: %w", err)
+			}
+		}
+		if r.opts.Host.FSList != nil {
+			if err := fsObj.SetProp(realm, realm.KeyFromGoString("list"), raw.Function("list", 3, r.nativeFSList(raw))); err != nil {
+				return fmt.Errorf("jsrt: 注入 __adaHost.fs.list 失败: %w", err)
 			}
 		}
 		if err := hostObj.SetProp(realm, realm.KeyFromGoString("fs"), engine.ObjectValue(fsObj)); err != nil {
@@ -521,6 +539,126 @@ func (r *Runtime) nativeFSWrite(raw *moejs.Runtime) moejs.NativeFunc {
 		}
 		return engine.Undefined(), nil
 	}
+}
+
+// nativeFSEdit 实现 __adaHost.fs.edit(path, old, new, all)。
+func (r *Runtime) nativeFSEdit(raw *moejs.Runtime) moejs.NativeFunc {
+	return func(_ *engine.Realm, _ engine.Value, args []engine.Value) (engine.Value, error) {
+		if r.opts.Host.FSEdit == nil {
+			return engine.Undefined(), fmt.Errorf("fs.edit 未启用")
+		}
+		if len(args) < 3 {
+			return engine.Undefined(), fmt.Errorf("fs.edit(path, old, new, all) 至少需要三个参数")
+		}
+		p, err := toString(raw, args[0])
+		if err != nil || p == "" {
+			return engine.Undefined(), fmt.Errorf("fs.edit 路径非法")
+		}
+		old, err := toString(raw, args[1])
+		if err != nil || old == "" {
+			return engine.Undefined(), fmt.Errorf("fs.edit old 不能为空")
+		}
+		newText, err := toString(raw, args[2])
+		if err != nil {
+			return engine.Undefined(), fmt.Errorf("fs.edit new 必须是字符串")
+		}
+		all := false
+		if len(args) > 3 {
+			if v, convErr := raw.ToGo(args[3]); convErr == nil {
+				if b, ok := v.(bool); ok {
+					all = b
+				}
+			}
+		}
+		n, err := r.opts.Host.FSEdit(context.Background(), p, old, newText, all)
+		if err != nil {
+			return engine.Undefined(), err
+		}
+		return raw.FromGo(n)
+	}
+}
+
+// nativeFSSearch 实现 __adaHost.fs.search(path, query, limit):返回 JSON 字符串。
+func (r *Runtime) nativeFSSearch(raw *moejs.Runtime) moejs.NativeFunc {
+	return func(_ *engine.Realm, _ engine.Value, args []engine.Value) (engine.Value, error) {
+		if r.opts.Host.FSSearch == nil {
+			return engine.Undefined(), fmt.Errorf("fs.search 未启用")
+		}
+		if len(args) < 1 {
+			return engine.Undefined(), fmt.Errorf("fs.search(query) 需要 query")
+		}
+		query, err := toString(raw, args[0])
+		if err != nil || query == "" {
+			return engine.Undefined(), fmt.Errorf("fs.search query 不能为空")
+		}
+		dir := "/workspace"
+		if len(args) > 1 {
+			if s, convErr := toString(raw, args[1]); convErr == nil && s != "" {
+				dir = s
+			}
+		}
+		limit := 0
+		if len(args) > 2 {
+			if v, convErr := raw.ToGo(args[2]); convErr == nil {
+				if n, ok := toInt64(v); ok {
+					limit = int(n)
+				}
+			}
+		}
+		out, err := r.opts.Host.FSSearch(context.Background(), dir, query, limit)
+		if err != nil {
+			return engine.Undefined(), err
+		}
+		return raw.FromGo(out)
+	}
+}
+
+// nativeFSList 实现 __adaHost.fs.list(path, recursive, limit):返回 JSON 字符串。
+func (r *Runtime) nativeFSList(raw *moejs.Runtime) moejs.NativeFunc {
+	return func(_ *engine.Realm, _ engine.Value, args []engine.Value) (engine.Value, error) {
+		if r.opts.Host.FSList == nil {
+			return engine.Undefined(), fmt.Errorf("fs.list 未启用")
+		}
+		dir := "/workspace"
+		if len(args) > 0 {
+			if s, convErr := toString(raw, args[0]); convErr == nil && s != "" {
+				dir = s
+			}
+		}
+		recursive := false
+		if len(args) > 1 {
+			if v, convErr := raw.ToGo(args[1]); convErr == nil {
+				if b, ok := v.(bool); ok {
+					recursive = b
+				}
+			}
+		}
+		limit := 0
+		if len(args) > 2 {
+			if v, convErr := raw.ToGo(args[2]); convErr == nil {
+				if n, ok := toInt64(v); ok {
+					limit = int(n)
+				}
+			}
+		}
+		out, err := r.opts.Host.FSList(context.Background(), dir, recursive, limit)
+		if err != nil {
+			return engine.Undefined(), err
+		}
+		return raw.FromGo(out)
+	}
+}
+
+func toInt64(v any) (int64, bool) {
+	switch n := v.(type) {
+	case int64:
+		return n, true
+	case float64:
+		return int64(n), true
+	case int:
+		return int64(n), true
+	}
+	return 0, false
 }
 
 // nativeTool 实现 ctx.tool(spec, handler):handler 是 JS 函数,工具调用时回调。

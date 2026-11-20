@@ -53,7 +53,7 @@ policy/fs-sandbox ──inject "fs"──▶ Chain.Decorate(沙箱包装,priorit
 2. **版本哈希是有界的**:文件超过 1 MiB 时,版本只由前 1 MiB + mtime + size 组成,
    与契约的「内容哈希」有偏差;足以检测常规编辑,但理论上可构造同前缀碰撞。
 3. **只有 `/workspace` 与 `/tmp`**:`/platform/plugin/<id>`、`/user/...`、`/attachment/*` 未实现。
-4. **`Search` 未实现**:返回 `EUNIMPLEMENTED`。
+4. **`Search` 已实现(字面量)**:大小写敏感、只搜文本、单文件 ≤1 MiB、默认 limit 200;没有正则/忽略大小写/排除规则。
 5. **沙箱判定已接到 `sandbox.Resolve`**:`fs-sandbox` 每次操作先问 sandbox 后端(模式来自后端配置);设计要求的
    「模式变更写 session 事件、回放后判定一致」仍未做。
 6. **审批已接入可升级拒绝**:`fs-sandbox` 在 sandbox 判定 `Escalatable` 时调用 `seam/approval`(默认审批人拒绝);

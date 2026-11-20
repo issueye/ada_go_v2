@@ -764,3 +764,50 @@ func TestAgentCommandScriptPlugin(t *testing.T) {
 		t.Fatalf("command-helper 运行失败: code=%d err=%s out=%s", code, errOut, out)
 	}
 }
+
+// 36. 脚本插件 text-helper:装配 + 读写/编辑/搜索(临时 workspace)。
+func TestUpTextScriptPlugin(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir("../../.."); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	code, out, errOut := run("up", "--preset", "examples/text-ts/text.preset.json")
+	if code != 0 || !strings.Contains(out, "text-helper") {
+		t.Fatalf("text-helper 装配失败: code=%d err=%s out=%s", code, errOut, out)
+	}
+}
+
+func TestAgentTextScriptPlugin(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir("../../.."); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	workspace := t.TempDir()
+	f, err := os.CreateTemp("examples/text-ts", "test-*.preset.json")
+	if err != nil {
+		t.Fatalf("创建临时 preset 失败: %v", err)
+	}
+	preset := f.Name()
+	_ = f.Close()
+	t.Cleanup(func() { _ = os.Remove(preset) })
+	body := `{"name":"text-test","plugins":["../agent/plugins","plugins"],"disable":["llm-openai","session-jsonl"],"patch":{"agent-loop":{"model":"replay"},"llm-replay":{"path":"examples/text-ts/replay.jsonl"},"fs-local":{"workspace":"` + strings.ReplaceAll(workspace, `\`, `\\`) + `"}}}`
+	if err := os.WriteFile(preset, []byte(body), 0o644); err != nil {
+		t.Fatalf("写临时 preset 失败: %v", err)
+	}
+	code, out, errOut := run("agent", "--preset", preset, "-message", "写文件、替换并搜索")
+	if code != 0 || !strings.Contains(out, "文本操作完成") {
+		t.Fatalf("text-helper 运行失败: code=%d err=%s out=%s", code, errOut, out)
+	}
+	data, err := os.ReadFile(workspace + "/a.txt")
+	if err != nil || string(data) != "hello ada" {
+		t.Fatalf("文本结果不正确: %v %q", err, data)
+	}
+}
