@@ -125,6 +125,7 @@ type Projection interface {
 3. **单写者由 actor 串行,不是拒绝**:session 契约的「单写者」是逻辑语义;
    `Append` 可以来自多个 goroutine,但会被 actor 串行化。provider 只拒绝同一 id 的第二个 `Open`。
 4. **无多进程租约**:当前假设一个进程拥有会话文件;跨进程写需要租约(后续)。
+7. **同进程多会话并发支持**:不同 session 各有独立事件日志/actor,同一 `Agent` 可并发 `Run` 不同 session(`agentloop.TestConcurrentSessionsInOneProcess`);**同一 session 的并发写仍由单写者契约约束**,调用方需自行串行(未加互斥拒绝)。
 5. **`Compact` 不裁剪日志**:只追加摘要并记录边界,读路径仍能拿到全部历史。
 
 ## 6. 测试矩阵
@@ -141,6 +142,7 @@ type Projection interface {
 | jsonl 契约测试 | `jsonl.TestConformance` |
 | 重新打开后事件/seq/meta 恢复 | `jsonl.TestPersistenceAcrossReopen` |
 | 多会话并发写 | `jsonl.TestConcurrentSessions`(`-race`) |
+| 同进程多会话并发 Run | `agentloop.TestConcurrentSessionsInOneProcess`(`-race`) |
 | 同会话多生产者由 actor 串行 | `jsonl.TestSameSessionActorSerializes`(`-race`) |
 | 半行崩溃恢复 | `jsonl.TestTornTailRecovery` |
 | 路径穿越 id 拒绝 | `jsonl.TestRejectBadID` |
