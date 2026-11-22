@@ -86,7 +86,6 @@
 | 在线索引/artifact | `platform/install/fetch.go`,`artifact.go` | `install` 用例 | zip 16MiB/1000 文件;artifact 不单独签名 |
 | 在线仓库服务端 | `platform/host/registry` | `registry`(7) | 只读;无上传/发布 |
 | CLI | `platform/host/cli` | `platform/host/cli`(30) | 参数手写解析;DevX 预算例外 |
-| TUI | `platform/host/tui`、`cmd/ada-tui` | `platform/host/tui`(4)、`scripts/tui.ps1`、2026-11-21 真实端点手工(多轮/工作区切换/只读与 policy 拒绝/ANSI) | 行式输入,无 raw mode/流式;预算例外 ADR 0011 |
 | 只读 HTTP API | `platform/host/server` | `platform/host/server`(14) | Token/限流/TLS/CORS 可选 |
 | 桌面映射骨架 | `platform/host/desktop` | `desktop`(4) | **无真实窗口(mygo),见 ADR 0001** |
 | 审计落盘 | `policy/audit-log` | `audit-log`(7) | 无 fsync;大小轮转 |
@@ -122,7 +121,7 @@ go run ./cmd/ada agent --preset examples/workspace/workspace.preset.json --works
 
 - 测试 **526 个 Test + 4 个 Benchmark**,`go test -race ./...` 全绿;
 - kernel 生产 **2396 / 3000** 行;
-- host 生产 **2638 / 2900**(cli 1443 / 1500,其它最大 408 / 800;TUI 271,ADR 0011);
+- host 生产 **2367 / 2500**(cli 1443 / 1500,其它最大 408 / 800);
 - bench:ServiceResolve 58ns、Emit 1.61μs、waterfall 5.55μs、50 插件 348μs;
 - 本机默认 `staticcheck 2025.1.1` 与 Go 1.27 export data 不兼容;用 `2026.2.2` 覆盖 PATH 后 guard 全绿(CI 用 `@latest`)。
 

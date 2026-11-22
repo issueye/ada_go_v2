@@ -15,7 +15,7 @@ try {
     $goarchValue = if ($GOARCH) { $GOARCH } else { (& go env GOARCH).Trim() }
     $ext = if ($goosValue -eq "windows") { ".exe" } else { "" }
 
-    $commands = @("ada", "ada-tui", "ada-demo", "ada-ts-demo")
+    $commands = @("ada", "ada-demo", "ada-ts-demo")
     $outAbs = Join-Path $root $OutputDir
     New-Item -ItemType Directory -Force -Path $outAbs | Out-Null
 
