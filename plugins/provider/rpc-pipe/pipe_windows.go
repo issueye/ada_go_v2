@@ -5,7 +5,8 @@ package rpcpipe
 import (
 	"context"
 	"errors"
-	"os"
+	"io"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -21,15 +22,97 @@ type transport struct{}
 
 func newTransport() seamrpc.Transport { return transport{} }
 
-// fileStream 把命名管道句柄包成字节流;同步句柄不支持 deadline。
-type fileStream struct{ f *os.File }
+var errPipeClosed = errors.New("rpc-pipe: 连接已关闭")
 
-func (s *fileStream) Read(p []byte) (int, error)  { return s.f.Read(p) }
-func (s *fileStream) Write(p []byte) (int, error) { return s.f.Write(p) }
-func (s *fileStream) Close() error                { return s.f.Close() }
+// fileStream performs overlapped read/write with one event per operation. It
+// deliberately does not wrap the handle in os.File: a pending read on a
+// synchronous handle blocks writes on the same handle, which makes an RPC
+// client (read loop + call write) deadlock, and concurrent use of os.File also
+// races on its internal offset.
+type fileStream struct {
+	h windows.Handle
+
+	mu      sync.Mutex
+	closing bool
+	wg      sync.WaitGroup
+}
+
+func newStream(h windows.Handle) *fileStream { return &fileStream{h: h} }
+
+func (s *fileStream) Read(p []byte) (int, error)  { return s.io(true, p) }
+func (s *fileStream) Write(p []byte) (int, error) { return s.io(false, p) }
+
+func (s *fileStream) io(read bool, p []byte) (int, error) {
+	s.mu.Lock()
+	if s.closing {
+		s.mu.Unlock()
+		return 0, errPipeClosed
+	}
+	s.wg.Add(1)
+	s.mu.Unlock()
+	defer s.wg.Done()
+
+	ev, err := windows.CreateEvent(nil, 0, 0, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer windows.CloseHandle(ev)
+	var n uint32
+	var ov windows.Overlapped
+	ov.HEvent = ev
+	if read {
+		err = windows.ReadFile(s.h, p, &n, &ov)
+	} else {
+		err = windows.WriteFile(s.h, p, &n, &ov)
+	}
+	runtime.KeepAlive(p)
+	if err == nil {
+		if read && n == 0 {
+			return 0, io.EOF
+		}
+		return int(n), nil
+	}
+	if !errors.Is(err, windows.ERROR_IO_PENDING) {
+		return 0, pipeIOError(err, read)
+	}
+	if _, werr := windows.WaitForSingleObject(ev, windows.INFINITE); werr != nil {
+		return 0, pipeIOError(werr, read)
+	}
+	var done uint32
+	if gerr := windows.GetOverlappedResult(s.h, &ov, &done, false); gerr != nil {
+		return 0, pipeIOError(gerr, read)
+	}
+	if read && done == 0 {
+		return 0, io.EOF
+	}
+	return int(done), nil
+}
+
+func (s *fileStream) Close() error {
+	s.mu.Lock()
+	if s.closing {
+		s.mu.Unlock()
+		return nil
+	}
+	s.closing = true
+	s.mu.Unlock()
+	_ = windows.CancelIoEx(s.h, nil)
+	s.wg.Wait()
+	return windows.CloseHandle(s.h)
+}
 
 func (s *fileStream) SetDeadline(time.Time) error {
 	return errors.New("rpc-pipe: 命名管道不支持 deadline")
+}
+
+func pipeIOError(err error, read bool) error {
+	if errors.Is(err, windows.ERROR_OPERATION_ABORTED) || errors.Is(err, windows.ERROR_INVALID_HANDLE) {
+		return errPipeClosed
+	}
+	if read && errors.Is(err, windows.ERROR_BROKEN_PIPE) {
+		return io.EOF
+	}
+	return err
 }
 
 func (transport) Dial(ctx context.Context, addr seamrpc.Address) (seamrpc.Stream, error) {
@@ -41,12 +124,12 @@ func (transport) Dial(ctx context.Context, addr seamrpc.Address) (seamrpc.Stream
 	h, err := windows.CreateFile(
 		windows.StringToUTF16Ptr(fullName(addr.Name)),
 		windows.GENERIC_READ|windows.GENERIC_WRITE,
-		0, nil, windows.OPEN_EXISTING, 0, 0,
+		0, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_OVERLAPPED, 0,
 	)
 	if err != nil {
 		return nil, seamrpc.Unavailable("打开命名管道失败: " + err.Error())
 	}
-	return &fileStream{f: os.NewFile(uintptr(h), addr.Name)}, nil
+	return newStream(h), nil
 }
 
 func (transport) Listen(ctx context.Context, addr seamrpc.Address, _ seamrpc.ListenOptions) (seamrpc.Listener, error) {
@@ -98,6 +181,7 @@ func (l *pipeListener) Close() error {
 			l.next = 0
 		}
 		for h := range l.pending {
+			_ = windows.CancelIoEx(h, nil)
 			_ = windows.CloseHandle(h)
 			delete(l.pending, h)
 		}
@@ -128,7 +212,7 @@ func (l *pipeListener) Accept(ctx context.Context) (seamrpc.Stream, error) {
 		return nil, seamrpc.Unavailable("管道监听器已关闭")
 	}
 	done := make(chan error, 1)
-	go func() { done <- windows.ConnectNamedPipe(h, nil) }()
+	go func() { done <- connectNamedPipe(h) }()
 	select {
 	case err := <-done:
 		l.untrack(h)
@@ -150,6 +234,7 @@ func (l *pipeListener) Accept(ctx context.Context) (seamrpc.Stream, error) {
 		_ = windows.CloseHandle(h)
 		return nil, seamerr.New(seamerr.ErrCanceled, "rpc-pipe", "accept 已取消", false)
 	case <-l.closeCh:
+		_ = windows.CancelIoEx(h, nil)
 		l.untrack(h)
 		_ = windows.CloseHandle(h)
 		return nil, seamrpc.Unavailable("管道监听器已关闭")
@@ -161,7 +246,7 @@ func (l *pipeListener) Accept(ctx context.Context) (seamrpc.Stream, error) {
 	}
 	// 立刻补上下一个实例,让下一个客户端在 Accept 之前也能打开管道。
 	l.refill()
-	return &fileStream{f: os.NewFile(uintptr(h), l.name)}, nil
+	return newStream(h), nil
 }
 
 func (l *pipeListener) track(h windows.Handle) {
@@ -203,14 +288,44 @@ func (l *pipeListener) instance() (windows.Handle, error) {
 	first := l.first
 	l.first = false
 	l.mu.Unlock()
-	flags := uint32(windows.PIPE_ACCESS_DUPLEX)
+	flags := uint32(windows.PIPE_ACCESS_DUPLEX | windows.FILE_FLAG_OVERLAPPED)
 	if first {
 		flags |= windows.FILE_FLAG_FIRST_PIPE_INSTANCE
 	}
 	mode := uint32(windows.PIPE_TYPE_BYTE | windows.PIPE_READMODE_BYTE | windows.PIPE_WAIT | windows.PIPE_REJECT_REMOTE_CLIENTS)
+	// The protocol caps connections at 64; the instance count must leave room
+	// for the pre-created next instance while one connection is live.
 	return windows.CreateNamedPipe(
-		windows.StringToUTF16Ptr(l.name), flags, mode, 1, 4096, 4096, 0, l.sa,
+		windows.StringToUTF16Ptr(l.name), flags, mode, 64, 4096, 4096, 0, l.sa,
 	)
+}
+
+// connectNamedPipe waits for a client on an overlapped instance. Accept runs it
+// in a goroutine so ctx/Close can self-connect to wake it.
+func connectNamedPipe(h windows.Handle) error {
+	ev, err := windows.CreateEvent(nil, 0, 0, nil)
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(ev)
+	var ov windows.Overlapped
+	ov.HEvent = ev
+	err = windows.ConnectNamedPipe(h, &ov)
+	switch err {
+	case nil, windows.ERROR_PIPE_CONNECTED:
+		return nil
+	case windows.ERROR_IO_PENDING:
+		if _, err := windows.WaitForSingleObject(ev, windows.INFINITE); err != nil {
+			return err
+		}
+		var n uint32
+		if err := windows.GetOverlappedResult(h, &ov, &n, false); err != nil && !errors.Is(err, windows.ERROR_PIPE_CONNECTED) {
+			return err
+		}
+		return nil
+	default:
+		return err
+	}
 }
 
 // wake 用一次短连接让阻塞的 ConnectNamedPipe 返回 ERROR_PIPE_CONNECTED。

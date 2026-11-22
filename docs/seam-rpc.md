@@ -1,6 +1,6 @@
 # seam/rpc 与 RPC 通讯协议插件
 
-> 状态:**P0–P3 已实现,P4 TLS 已实现(2026-11-20);`SO_PEERCRED` 与桌面接入待做**。已落地:`plugins/seam/rpc`(契约)、`plugins/provider/rpc-json`(帧/握手/调用/事件/取消)、`plugins/provider/rpc-net`(tcp/unix)、`plugins/provider/rpc-pipe`(Windows 命名管道)、`plugins/policy/rpc-guard`(授权/地址/方法/对端/鉴权)、`plugins/policy/rpc-observe`(`rpc/observe`)、`plugins/provider/rpc-tls`(`tls://`)。
+> 状态:**P0–P3 已实现,P4 TLS 已实现(2026-11-20);`SO_PEERCRED` 待做,桌面接入原型已落地(`cmd/ada-rpc-agent`)**。已落地:`plugins/seam/rpc`(契约)、`plugins/provider/rpc-json`(帧/握手/调用/事件/取消)、`plugins/provider/rpc-net`(tcp/unix)、`plugins/provider/rpc-pipe`(Windows 命名管道,overlapped 流)、`plugins/policy/rpc-guard`(授权/地址/方法/对端/鉴权)、`plugins/policy/rpc-observe`(`rpc/observe`)、`plugins/provider/rpc-tls`(`tls://`)、`cmd/ada-rpc-agent`(把 agent preset 做成每机器人一个进程的 RPC 宿主)。
 >
 > 关联:[plugin-kernel-design.md](plugin-kernel-design.md)(§2 原则、§13 安全)、[seam-api.md](seam-api.md) §1.2(错误码)、[seam-net.md](seam-net.md)(同构的 Chain 模式)、[caps.md](caps.md)、[host-server.md](host-server.md)、[ADR 0008](adr/0008-desktop-webview-shell.md)、[ADR 0009](adr/0009-rpc-json-budget.md)、AGENTS §2–§5。
 
@@ -262,10 +262,11 @@ Windows 上首选 `pipe`(ACL + `PIPE_REJECT_REMOTE_CLIENTS`),`unix` 只用于与
 
 - 路径统一为 `\\.\pipe\<name>`;名字长度 ≤ 128。
 - 第一个实例使用 `FILE_FLAG_FIRST_PIPE_INSTANCE`,防止同名管道劫持。
-- 模式 `PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE`,类型 `PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS`。
+- 模式 `PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED`(首个实例再或上 `FILE_FLAG_FIRST_PIPE_INSTANCE`),类型 `PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS`。
 - 安全描述符只授予**当前用户**与 `SYSTEM` 完全控制;默认拒绝远程客户端(即使 SMB 可达)。
-- 每个连接一个管道实例;`Accept` 先 `ConnectNamedPipe`,把 `Handle` 包成 `*os.File` 后交给协议层;取消时通过自连接唤醒或关闭句柄,不留悬挂线程。
-- 不使用 `go-winio`(未在依赖中);用已存在的 `golang.org/x/sys/windows`(见 §12 替代方案)。P2 已落地并用 `TestPipeEcho`/`TestPipeAcceptCancel` 验证;连接建立后立即预建下一个实例,避免客户端看不到管道。
+- 每个连接一个管道实例;`Accept` 用 overlapped `ConnectNamedPipe`(每实例一个 EVENT),把句柄包成**自实现的 overlapped 流**:每次读/写各用独立 `OVERLAPPED` 与事件,完成后再 `GetOverlappedResult`;取消时 `CancelIoEx` + 关闭句柄,不留悬挂线程。
+- **不要用同步句柄 + `os.File`**:同步句柄上挂起的读会让同一连接的写阻塞,而 RPC 客户端总是「读循环 + 调用写」并发,会直接死锁;`os.File` 的并发读写在 Windows 上还会争用内部偏移。P2 早期实现踩过这个坑,`TestRPCOverPipe` 是回归用例。
+- 不使用 `go-winio`(未在依赖中);用已存在的 `golang.org/x/sys/windows` 自己实现 overlapped 流(见 §12 替代方案)。P2 已落地并用 `TestPipeEcho`/`TestPipeAcceptCancel`/`TestRPCOverPipe` 验证;连接建立后立即预建下一个实例,避免客户端看不到管道。
 
 ---
 
@@ -493,7 +494,7 @@ func Plugin() kernel.Plugin // 提供 "rpc"(空 Chain)与 "rpc-transport"(Regist
 | `seam/rpc` | `TestParse`、`TestChainOrder`、`TestRegistry` |
 | `rpc-json` | `TestCallAndNotify`、`TestUnknownMethod`、`TestBadTokenAndPeer`、`TestCancelPropagates`、`TestEvents`、`TestConcurrentCalls`、`TestFrameLimits`、`TestKernelIntegration` |
 | `rpc-net` | `TestTCP`、`TestUnix`、`TestUnixStale`、`TestAcceptCancel`、`TestUnsupported`、`TestKernelStack` |
-| `rpc-pipe` | `TestPipeEcho`、`TestPipeAcceptCancel`(Windows);`TestPipeUnsupported`(非 Windows) |
+| `rpc-pipe` | `TestPipeEcho`、`TestPipeAcceptCancel`、`TestRPCOverPipe`(Windows);`TestPipeUnsupported`(非 Windows) |
 | `rpc-guard` | `TestDial`、`TestListen`、`TestListenDenied`、`TestAuthRequiresSecret` |
 | `rpc-observe` | `TestObserveOutbound`、`TestObserveInbound` |
 | `rpc-tls` | `TestTLSRoundTrip`、`TestTLSRejectsUnknownCA`、`TestTLSRPCIntegration` |
@@ -518,7 +519,7 @@ func Plugin() kernel.Plugin // 提供 "rpc"(空 Chain)与 "rpc-transport"(Regist
 | **P1** | `rpc-net`(tcp loopback + unix;Windows AF_UNIX);权限/stale/Addr;集成测试 | ✅ Linux/macOS/Windows 全绿;`unix` 权限测试在支持平台通过 |
 | **P2** | `rpc-pipe`(Windows 命名管道 + ACL + 拒绝远程客户端);非 Windows 空实现 | ✅ Windows CI/本机 `go test ./plugins/provider/rpc-pipe`;`GOOS=linux` 构建通过 |
 | **P3** | `rpc-guard` + `rpc-observe`;caps 语法 `rpc.call`/`rpc.listen`;audit 接入;principal 改写 | ✅ `go test -race ./plugins/policy/rpc-guard ./plugins/policy/rpc-observe`;caps 拒绝接 `caps/deny` |
-| **P4** | TLS/远程 TCP、`SO_PEERCRED`、宿主接入(`ada serve --rpc` 或 desktop Transport 可选) | ⚠️ TLS + 远程 TCP 已落地(`rpc-tls`);`SO_PEERCRED`/宿主接入待做 |
+| **P4** | TLS/远程 TCP、`SO_PEERCRED`、宿主接入(`ada serve --rpc` 或 desktop Transport 可选) | ⚠️ TLS + 远程 TCP 已落地(`rpc-tls`);`SO_PEERCRED` 待做;宿主接入原型 `cmd/ada-rpc-agent` 已落地(每机器人一个进程、workspace 为工作目录、`bot.info`/`chat.send`;见该目录 README) |
 
 预算(超了先拆或写 ADR):seam ≤ 400 行;`rpc-json` ≤ 1200(ADR 0009);`rpc-net` ≤ 400;`rpc-pipe` ≤ 500(仅 windows 文件);`rpc-tls` ≤ 300;`rpc-guard` ≤ 400;`rpc-observe` ≤ 200。
 
@@ -534,7 +535,7 @@ func Plugin() kernel.Plugin // 提供 "rpc"(空 Chain)与 "rpc-transport"(Regist
 | 裸 JSON 行(NDJSON) | 内容里的换行/大对象会破坏边界;无法区分控制帧 |
 | 只用 Unix socket | Windows 无原生等价物;跨机不可用 |
 | 只用 TCP | 本地多用户环境下端口暴露面大;令牌明文风险 |
-| `go-winio` | 未在依赖中;引入需 ADR 与新版依赖。当前用 `x/sys/windows` 的同步句柄 + 自连接唤醒即可;若 P2 遇到取消/超时缺陷,再评估 ADR |
+| `go-winio` | 未在依赖中;引入需 ADR 与新版依赖。当前用 `x/sys/windows` 的 `FILE_FLAG_OVERLAPPED` + 每操作 EVENT 自行实现流,足以覆盖并发读写与取消;若后续遇到超时/关闭缺陷再评估 ADR |
 | 把 RPC 放进 `platform/`(L2) | RPC 是可替换能力,不是装载/编译机制;产品可用 HTTP/SSE 替代 |
 
 ---
