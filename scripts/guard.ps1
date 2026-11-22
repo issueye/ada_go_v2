@@ -116,7 +116,7 @@ if ($prod -gt 3000) {
     Pass "kernel 行数预算(生产 $prod / 3000,测试 $test 行)"
 }
 
-# 7.1 host 预算(AGENTS §5.3;ADR 0002:cli ≤1500;ADR 0011:TUI 使总上限暂为 2900,其它 ≤800)。
+# 7.1 host 预算(AGENTS §5.3;ADR 0002 临时例外:总 ≤2500,cli ≤1500,其它 ≤800)。
 $hostRoot = (Resolve-Path platform/host).Path
 $hostFiles = Get-ChildItem platform/host -Recurse -Include *.go |
     Where-Object { $_.Name -notlike '*_test.go' }
@@ -131,14 +131,14 @@ foreach ($file in $hostFiles) {
 }
 $otherMax = ($perAdapter.GetEnumerator() | Where-Object { $_.Key -ne 'cli' } |
     Measure-Object -Property Value -Maximum).Maximum
-if ($hostTotal -gt 2900) {
-    Fail "host 行数预算" @("生产合计 $hostTotal 行,超过 2900(ADR 0002/0011)")
+if ($hostTotal -gt 2500) {
+    Fail "host 行数预算" @("生产合计 $hostTotal 行,超过 2500(ADR 0002)")
 } elseif ($perAdapter['cli'] -gt 1500) {
     Fail "host 行数预算" @("host/cli $($perAdapter['cli']) 行,超过 1500(ADR 0002)")
 } elseif ($otherMax -gt 800) {
     Fail "host 行数预算" @("其它适配器最大 $otherMax 行,超过 800")
 } else {
-    Pass "host 行数预算(总 $hostTotal / 2900,cli $($perAdapter['cli']) / 1500,其它最大 $otherMax / 800)"
+    Pass "host 行数预算(总 $hostTotal / 2500,cli $($perAdapter['cli']) / 1500,其它最大 $otherMax / 800)"
 }
 
 # 7.2 单插件预算(AGENTS §5.3;例外:rpc-json ≤1200 ADR 0009,session-jsonl ≤1000 ADR 0010)。

@@ -2,7 +2,7 @@
 
 > 本文件把里程碑验收项映射到**实现位置、证据命令与已知边界**。口径来源:
 > [plugin-kernel-design.md](plugin-kernel-design.md) §17、AGENTS §10。
-> 最近更新:2026-11-21(526 个 Test + 4 个 Benchmark;不做 v1 插件迁移)。
+> 最近更新:2026-11-21(524 个 Test + 4 个 Benchmark;不做 v1 插件迁移)。
 
 ## 0. 结论速览
 
@@ -119,7 +119,7 @@ go run ./cmd/ada agent --preset examples/workspace/workspace.preset.json --works
 
 当前实测:
 
-- 测试 **526 个 Test + 4 个 Benchmark**,`go test -race ./...` 全绿;
+- 测试 **524 个 Test + 4 个 Benchmark**,`go test -race ./...` 全绿;
 - kernel 生产 **2396 / 3000** 行;
 - host 生产 **2367 / 2500**(cli 1443 / 1500,其它最大 408 / 800);
 - bench:ServiceResolve 58ns、Emit 1.61μs、waterfall 5.55μs、50 插件 348μs;

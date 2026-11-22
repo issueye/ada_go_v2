@@ -115,8 +115,8 @@ v1 是一个成熟但**功能化**的插件宿主（`internal/agent_core/plugins
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ L6  应用/宿主     mygo 桌面窗口 · ada CLI · ada-tui 终端 · 服务端 HTTP        │
-│                   platform/host/desktop  · cli · tui · server                 │
+│ L6  应用/宿主     mygo 桌面窗口 · ada CLI(headless) · 服务端 HTTP             │
+│                   platform/host/desktop   platform/host/cli   platform/host/server                        │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ L5  组合层（数据）preset（agent 能力组合）· bundle · profile patch            │
 │                   「装哪些插件」在这一层决定，不改代码                          │
