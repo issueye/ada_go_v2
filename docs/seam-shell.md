@@ -1,6 +1,7 @@
 # M5 安全(第二刀:seam/shell)
 
 > 契约来源:[seam-api-security.md](seam-api-security.md) §4。本页记录**已实现子集**、偏差与边界。
+> `Command.Dir` 的 `/workspace` 可由 [workspace-plugin.md](workspace-plugin.md) 托管；cwd 限制仍不是 OS 级沙箱。
 
 ## 1. 范围
 

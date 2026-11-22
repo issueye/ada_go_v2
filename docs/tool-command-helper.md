@@ -58,6 +58,6 @@ go run ./cmd/ada agent --preset examples/command-ts/command.preset.json -message
 1. **脚本白名单不是安全边界**:白名单只限制程序名;生产必须叠加 `shell-guard`/sandbox/caps/审批,否则模型可执行白名单程序的所有子命令(如 `git clean`)。
 2. **无 shell 解析**:参数数组直接传给程序;不能使用管道/重定向;需要 shell 语义时应由受信插件显式调用 `ctx.shell`。
 3. **无流式输出**:工具同步返回合并后的字符串。
-4. **取消不穿透 JS→原生 shell 调用**:超时靠 tools 30s 与 shell-local 默认值。
+4. **取消随工具 ctx 传播到原生 shell**:`jsrt` 会把当前任务 ctx 传给 `ada:shell`;超时仍靠 tools 30s 与 shell-local 默认值,JS 侧无 `AbortSignal`。
 5. **无 SDK 类型**:`ctx.tool`/`ada:shell` 类型仍由示例声明。
 6. **`dir` 只做词法校验**:真实路径映射由 shell-local/策略负责。

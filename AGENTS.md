@@ -2,7 +2,7 @@
 
 > 给在本仓库工作的 AI 代理与人类协作者。**动代码之前先读这一份**；它与设计文档冲突时，以本文件的红线为准，并立刻提 issue 修正文档。
 
-**当前阶段:M1 内核、M2 执行层、M3 装配、M4 编排(`sched`/`quota`/`flow`(含 fanout/subflow)/`bundle`,内核回收 + 装配层 on-demand 延迟激活(含 onService/onCron/onEvent 触发 helper)+ jobs 跨进程锁)、M4.5 Agent Core 第一刀(`prompts`/`llm`/`tools`/`agent-loop` + `provider/llm-openai`/`llm-replay` + `provider/session-jsonl`(每会话 actor) + `core/session-stats`(turn-stats 投影) + `core/compaction-basic`(确定性摘要) + `agent-loop` 并行工具 + `policy/approval-gate`/`llm-retry`/`tool-timeout` + 最小 preset,已跑通「用户消息 → 模型 → 工具 → 结果」的最小回路)、M5 安全(`fs`/`fs-local`/`fs-sandbox`、`shell`/`shell-local`/`shell-guard`、`sandbox`/`sandbox-none`、`fs-redact` 脱敏、`fs-observe`/`shell-observe` 观察事件、`audit-log` 审计落盘、`shell-redact` 输出脱敏,且 fs/shell 策略已调用 sandbox.Resolve、可升级拒绝走 approval(含 CLI 交互审批)、caps 静态授权 + `caps-gate` 调用点强制(fs/shell)、install 校验/原子落盘/本机索引/CLI 安装同意、`platform/host/cli`/`platform/host/server`/`platform/host/desktop`(视图映射骨架)/`platform/host/registry`(只读仓库服务)宿主适配器(共享 `platform/host/builtins` 内置插件)、`net.fetch`(seam/net + provider/net-http + net-guard 授权)、`secrets`(seam/secrets + provider/secrets-env + secrets-guard 授权)已落地**,M5 剩余 desktop 真实窗口/OS 级沙箱(Linux 后端;见 ADR 0001,复议 2027-01-15);C13 拒绝矩阵与 `ada inspect --chain` 已落地;RPC P0–P4(TLS) 已落地(`rpc-guard`/`rpc-observe`/`rpc-tls`,`SO_PEERCRED` 待做)。本文件始终生效:先用它约束设计,再用它约束实现。
+**当前阶段:M1 内核、M2 执行层、M3 装配、M4 编排(`sched`/`quota`/`flow`(含 fanout/subflow)/`bundle`,内核回收 + 装配层 on-demand 延迟激活(含 onService/onCron/onEvent 触发 helper)+ jobs 跨进程锁)、M4.5 Agent Core 第一刀(`prompts`/`llm`/`tools`/`agent-loop` + `provider/llm-openai`/`llm-replay` + `provider/session-jsonl`(每会话 actor) + `core/session-stats`(turn-stats 投影) + `core/compaction-basic`(确定性摘要) + `agent-loop` 并行工具 + `policy/approval-gate`/`llm-retry`/`tool-timeout` + 最小 preset,已跑通「用户消息 → 模型 → 工具 → 结果」的最小回路)、M5 安全(`fs`/`fs-local`/`fs-sandbox`、`shell`/`shell-local`/`shell-guard`、`sandbox`/`sandbox-none`、`fs-redact` 脱敏、`fs-observe`/`shell-observe` 观察事件、`audit-log` 审计落盘、`shell-redact` 输出脱敏,且 fs/shell 策略已调用 sandbox.Resolve、可升级拒绝走 approval(含 CLI 交互审批)、caps 静态授权 + `caps-gate` 调用点强制(fs/shell)、install 校验/原子落盘/本机索引/CLI 安装同意、`platform/host/cli`/`platform/host/tui`/`platform/host/server`/`platform/host/desktop`(视图映射骨架)/`platform/host/registry`(只读仓库服务)宿主适配器(共享 `platform/host/builtins` 内置插件)、`net.fetch`(seam/net + provider/net-http + net-guard 授权)、`secrets`(seam/secrets + provider/secrets-env + secrets-guard 授权)、`workspace`(seam/workspace + provider/workspace-local + workspace-guard + tool/workspace + fs/shell 托管解析 + 会话绑定)已落地**,M5 剩余 desktop 真实窗口/OS 级沙箱(Linux 后端;见 ADR 0001,复议 2027-01-15);C13 拒绝矩阵与 `ada inspect --chain` 已落地;RPC P0–P4(TLS) 已落地(`rpc-guard`/`rpc-observe`/`rpc-tls`,`SO_PEERCRED` 待做)。本文件始终生效:先用它约束设计,再用它约束实现。
 
 ---
 
@@ -51,6 +51,7 @@
 | [m4-composition.md](docs/m4-composition.md) | M4 组合层:bundle / profile(整体替换与补丁) |
 | [version.md](docs/version.md) | 版本与引擎约束:semver 解析与 engine/engines 校验 |
 | [host-cli.md](docs/host-cli.md) | M5 宿主适配器第一刀:platform/host/cli 命令实现与测试 |
+| [host-tui.md](docs/host-tui.md) | 终端交互宿主:platform/host/tui 与 `ada-tui`,行式会话、工作区切换与边界 |
 | [host-server.md](docs/host-server.md) | 第二宿主适配器:platform/host/server 只读 HTTP API |
 | [host-desktop.md](docs/host-desktop.md) | 宿主适配器骨架:platform/host/desktop 视图映射 |
 | [host-registry.md](docs/host-registry.md) | 在线仓库服务端:platform/host/registry 只读 HTTP |
@@ -69,9 +70,11 @@
 | [adr/0008](docs/adr/0008-desktop-webview-shell.md) | ADR(提案):桌面只做 WebView 壳 |
 | [adr/0009](docs/adr/0009-rpc-json-budget.md) | ADR:rpc-json 单插件预算例外 |
 | [adr/0010](docs/adr/0010-session-jsonl-budget.md) | ADR:session-jsonl 单插件预算例外 |
+| [adr/0011](docs/adr/0011-tui-host-budget.md) | ADR:host TUI 适配器预算例外(已接受,复议 2027-06-30) |
 | [seam-net.md](docs/seam-net.md) | M5 网络能力:seam/net 与 provider/net-http |
 | [seam-secrets.md](docs/seam-secrets.md) | M5 secret 能力:seam/secrets 与 provider/secrets-env |
 | [seam-fs.md](docs/seam-fs.md) | M5 安全第一刀:seam/fs、fs-local 实现与 fs-sandbox 策略 |
+| [workspace-plugin.md](docs/workspace-plugin.md) | 工作区:seam/workspace、workspace-local、workspace-guard、tool/workspace 与会话绑定 |
 | [seam-shell.md](docs/seam-shell.md) | M5 安全第二刀:seam/shell、shell-local 实现与 shell-guard 策略 |
 | [seam-sandbox.md](docs/seam-sandbox.md) | M5 安全第三刀:seam/sandbox 与 sandbox-none(policy-only) |
 | [seam-approval.md](docs/seam-approval.md) | M5 安全第四刀:seam/approval、approval-deny 与 fs 升级审批 |
@@ -106,7 +109,7 @@
 | **内核** | Context / Fiber / Service / Effect / Event / Config / Registry / Provider 接口 | 只懂「作用域、服务、副作用、事件、配置」，不懂业务 |
 | **基础设施** | assemble / compile(esbuild) / jsrt(moejs) / plugin(清单/安装/签名) / caps(授权) / observe | 是「装载与执行机制」，没有领域语义 |
 | **组合数据** | preset / bundle / patch | 是数据不是代码 |
-| **宿主适配器** | `platform/host/desktop`（mygo）、`platform/host/cli`、`platform/host/server` | 只做平台映射（窗口、协议、主线程、进程入口），不做业务 |
+| **宿主适配器** | `platform/host/desktop`（mygo）、`platform/host/cli`、`platform/host/server`、`platform/host/tui` | 只做平台映射（窗口、协议、主线程、进程入口），不做业务 |
 
 其余一切——平台能力（llm/tools/fs/shell/sandbox/storage/settings/secrets/jobs/schedule/telemetry/ui）、agent core（agent/agent-loop/session/system-prompt/context/compaction/approval/subagent/goal/plan/team/workflow）、工具、UI 贡献——**都是插件**。
 
@@ -209,7 +212,7 @@ platform/host/*   ✓→ 全部
 | 范围 | 预算 | 理由 |
 |---|---|---|
 | `platform/kernel/` | ≤ 3000 行 | 内核越厚，插件越难替换 |
-| `platform/host/*` | ≤ 2500 行（每个适配器 ≤ 800；`platform/host/cli` ≤ 1500，ADR 0002 临时例外） | 宿主只做映射；CLI 的参数解析/输出计入预算，拆分包后回滚例外 |
+| `platform/host/*` | ≤ 2900 行（每个适配器 ≤ 800；`platform/host/cli` ≤ 1500，ADR 0002；TUI 例外见 ADR 0011） | 宿主只做映射；CLI 的参数解析/输出计入预算，拆分包后回滚例外 |
 | 单个插件 | ≤ 800 行，单一职责（例外:`rpc-json` ≤ 1200，ADR 0009;`session-jsonl` ≤ 1000，ADR 0010） | 混装说明该拆;例外有复议日期 |
 | 单个 seam 包 | ≤ 400 行（只有类型/错误/事件名） | 出现实现即违规 |
 

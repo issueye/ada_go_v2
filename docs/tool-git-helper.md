@@ -54,7 +54,7 @@ go run ./cmd/ada agent --preset examples/git-ts/git.preset.json -message "看看
 ## 5. 已知边界
 
 1. **无流式/增量输出**:工具 handler 同步返回字符串。
-2. **取消不能穿透原生 shell 调用**:JS 侧 `run` 不携带 Go `context`;超时由 `tools` 的 30s 与 shell-local 超时兜底。
+2. **取消随工具 ctx 传播到原生 shell**:`jsrt` 把当前 worker 任务的 ctx 传给 `ada:shell`,但 JS 侧没有 `AbortSignal`;超时仍由 `tools` 的 30s 与 shell-local 超时兜底。
 3. **参数只做最小校验**:路径拒绝 `-` 前缀/NUL;命令固定为 `git status/diff/log`,不接受任意程序。
 4. **依赖宿主注入模块名**:目前固定为 `ada:shell`;没有版本化/多模块注册表。
 5. **TS 类型仅示例内声明**:`@ada/sdk` 尚未补 `ctx.tool`/`ada:shell` 类型。
@@ -63,5 +63,5 @@ go run ./cmd/ada agent --preset examples/git-ts/git.preset.json -message "看看
 ## 6. 下一步
 
 1. 把 `ctx.tool` 与 `ada:shell` 写入 `@ada/sdk` 类型与脚本插件契约;
-2. 支持 `run` 携带取消(JS→Go 回调注册工具时传入 ctx 的桥);
+2. ~~支持 `run` 携带取消~~ 已由 jsrt 把工具调用 ctx 传给原生 shell;下一步是在 JS 侧暴露 `AbortSignal`;
 3. 增加 `ada:git` 专用模块(把 git 参数校验/输出格式化放在模块内,而不是插件脚本)。

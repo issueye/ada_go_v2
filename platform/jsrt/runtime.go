@@ -160,6 +160,9 @@ type Runtime struct {
 	// inHost 记录「worker 正在回调宿主」。此时宿主要求本运行时执行回调,
 	// 会绕回正在忙碌的 worker 而死锁,所以必须快速失败。
 	inHost int
+	// callCtx 是当前 worker 任务对应的调用 ctx。只在 worker goroutine 上读写:
+	// 原生 shell/fs 回调必须沿用它,才能拿到调用级 workspace 绑定与取消信号。
+	callCtx context.Context
 }
 
 // enterHost/leaveHost 标记 worker 正在进入宿主回调。
@@ -240,14 +243,29 @@ func (r *Runtime) enqueue(ctx context.Context, job func()) error {
 	if closed {
 		return ErrClosed
 	}
+	// 在 worker 执行任务期间保存调用 ctx;原生 shell/fs 回调据此继承
+	// workspace 绑定、取消与超时,而不是退回 context.Background。
+	wrapped := func() {
+		r.callCtx = ctx
+		defer func() { r.callCtx = nil }()
+		job()
+	}
 	select {
-	case r.jobs <- job:
+	case r.jobs <- wrapped:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-r.stopped:
 		return ErrClosed
 	}
+}
+
+// currentContext 返回当前 JS 任务对应的 ctx;只在 worker goroutine 上调用。
+func (r *Runtime) currentContext() context.Context {
+	if r.callCtx != nil {
+		return r.callCtx
+	}
+	return context.Background()
 }
 
 // load 在 worker 上执行:编译 Artifact 的每个模块 → Link → Load。
@@ -479,8 +497,8 @@ func (r *Runtime) nativeShell(raw *moejs.Runtime) moejs.NativeFunc {
 				dir = s
 			}
 		}
-		// 工具调用链路上的取消由 Go 侧 tools 超时兜底;JS 无法把 ctx 传回原生函数。
-		out, err := r.opts.Host.Shell(context.Background(), program, argv, dir)
+		// 用当前 worker 任务的 ctx:工具调用链路的取消、超时与 workspace 绑定都随它传播。
+		out, err := r.opts.Host.Shell(r.currentContext(), program, argv, dir)
 		if err != nil {
 			return engine.Undefined(), err
 		}
@@ -501,7 +519,7 @@ func (r *Runtime) nativeFSRead(raw *moejs.Runtime) moejs.NativeFunc {
 		if err != nil || p == "" {
 			return engine.Undefined(), fmt.Errorf("fs.read 路径必须是非空字符串")
 		}
-		out, err := r.opts.Host.FSRead(context.Background(), p)
+		out, err := r.opts.Host.FSRead(r.currentContext(), p)
 		if err != nil {
 			return engine.Undefined(), err
 		}
@@ -534,7 +552,7 @@ func (r *Runtime) nativeFSWrite(raw *moejs.Runtime) moejs.NativeFunc {
 				}
 			}
 		}
-		if err := r.opts.Host.FSWrite(context.Background(), p, content, createDirs); err != nil {
+		if err := r.opts.Host.FSWrite(r.currentContext(), p, content, createDirs); err != nil {
 			return engine.Undefined(), err
 		}
 		return engine.Undefined(), nil
@@ -570,7 +588,7 @@ func (r *Runtime) nativeFSEdit(raw *moejs.Runtime) moejs.NativeFunc {
 				}
 			}
 		}
-		n, err := r.opts.Host.FSEdit(context.Background(), p, old, newText, all)
+		n, err := r.opts.Host.FSEdit(r.currentContext(), p, old, newText, all)
 		if err != nil {
 			return engine.Undefined(), err
 		}
@@ -605,7 +623,7 @@ func (r *Runtime) nativeFSSearch(raw *moejs.Runtime) moejs.NativeFunc {
 				}
 			}
 		}
-		out, err := r.opts.Host.FSSearch(context.Background(), dir, query, limit)
+		out, err := r.opts.Host.FSSearch(r.currentContext(), dir, query, limit)
 		if err != nil {
 			return engine.Undefined(), err
 		}
@@ -641,7 +659,7 @@ func (r *Runtime) nativeFSList(raw *moejs.Runtime) moejs.NativeFunc {
 				}
 			}
 		}
-		out, err := r.opts.Host.FSList(context.Background(), dir, recursive, limit)
+		out, err := r.opts.Host.FSList(r.currentContext(), dir, recursive, limit)
 		if err != nil {
 			return engine.Undefined(), err
 		}

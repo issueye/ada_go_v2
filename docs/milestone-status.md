@@ -2,7 +2,7 @@
 
 > 本文件把里程碑验收项映射到**实现位置、证据命令与已知边界**。口径来源:
 > [plugin-kernel-design.md](plugin-kernel-design.md) §17、AGENTS §10。
-> 最近更新:2026-11-20(493 个 Test + 4 个 Benchmark;不做 v1 插件迁移)。
+> 最近更新:2026-11-21(526 个 Test + 4 个 Benchmark;不做 v1 插件迁移)。
 
 ## 0. 结论速览
 
@@ -65,7 +65,19 @@
 | secrets seam/provider | `seam/secrets`,`provider/secrets-env` | `secrets-env`(5) | 白名单空=拒绝;`ADA_SECRET_*` |
 | secrets 授权 | `policy/secrets-guard` | `secrets-guard`(3) | 名称正则 + principal |
 
-### 2.4 安装、审计与宿主
+### 2.4 工作区
+
+| 验收项 | 实现位置 | 证据 | 已知边界 |
+|---|---|---|---|
+| workspace 契约与链 | `plugins/seam/workspace` | `workspace`(5) | Chain/绑定/错误码;seam 无实现 |
+| 本地工作区 provider | `plugins/provider/workspace-local` | `workspace-local`(8) | 多根/只读/符号链接;根在装配期校验 |
+| 路径策略 | `plugins/policy/workspace-guard` | `workspace-guard`(5) | 段前缀 + 单段 glob;非完整 gitignore |
+| 工作区查询工具 | `plugins/tool/workspace` | `tool-workspace`(3) | 只读;结果不含宿主根 |
+| fs/shell 托管解析 | `provider/fs-local`、`provider/shell-local` | `fs-local` 托管模式 3 例、`shell-local` 托管模式 3 例 | 旧 preset 仍走独立模式;`/tmp` 仍本地 |
+| 会话绑定 / CLI | `core/agent-loop`、`platform/host/cli` | `agentloop.TestWorkspaceBindingPropagates`、`cli.TestAgentWorkspace` | 绑定来自 `session.Meta.Workspace`;模型无切换工具 |
+| 真实端点回归 | `examples/workspace/real.preset.json`、`platform/bridge.TestJSNativeFSInheritsCallBinding` | 2026-11-21 手工:docs 查询/读取、docs 只读写拒绝、repo 写读、policy 拒绝、workspace_list、shell 托管 cwd | JS 原生 fs/shell 已继承工具 ctx;事件/waterfall 回调仍用事件 ctx(落 `Current`) |
+
+### 2.5 安装、审计与宿主
 
 | 验收项 | 实现位置 | 证据 | 已知边界 |
 |---|---|---|---|
@@ -74,13 +86,14 @@
 | 在线索引/artifact | `platform/install/fetch.go`,`artifact.go` | `install` 用例 | zip 16MiB/1000 文件;artifact 不单独签名 |
 | 在线仓库服务端 | `platform/host/registry` | `registry`(7) | 只读;无上传/发布 |
 | CLI | `platform/host/cli` | `platform/host/cli`(30) | 参数手写解析;DevX 预算例外 |
+| TUI | `platform/host/tui`、`cmd/ada-tui` | `platform/host/tui`(4)、`scripts/tui.ps1`、2026-11-21 真实端点手工(多轮/工作区切换/只读与 policy 拒绝/ANSI) | 行式输入,无 raw mode/流式;预算例外 ADR 0011 |
 | 只读 HTTP API | `platform/host/server` | `platform/host/server`(14) | Token/限流/TLS/CORS 可选 |
 | 桌面映射骨架 | `platform/host/desktop` | `desktop`(4) | **无真实窗口(mygo),见 ADR 0001** |
 | 审计落盘 | `policy/audit-log` | `audit-log`(7) | 无 fsync;大小轮转 |
-| `ada inspect --chain` | `platform/host/cli` | `cli.TestInspectChain` | 只显示 fs/shell/net 优先级 |
+| `ada inspect --chain` | `platform/host/cli` | `cli.TestInspectChain`、`cli.TestAgentWorkspace` | 显示 fs/shell/net/workspace 优先级 |
 | 内置栈接线 | `platform/host/builtins` | `builtins.TestBuiltinGoPlugins`、`cli.TestUpNetStack`/`TestUpSecretsStack` | net/secrets 已接入宿主;其它 Go 插件仍需编译时注册 |
 
-### 2.5 RPC 通讯(P0–P4 TLS,新增能力)
+### 2.6 RPC 通讯(P0–P4 TLS,新增能力)
 
 | 验收项 | 实现位置 | 证据 | 已知边界 |
 |---|---|---|---|
@@ -101,13 +114,15 @@ go test -race -count=1 ./...
 go test -race -count=1 ./plugins/seam/rpc ./plugins/provider/rpc-json ./plugins/provider/rpc-net ./plugins/provider/rpc-pipe
 go run ./cmd/ada plan --preset examples/agent/agent.preset.json
 go run ./cmd/ada inspect --chain --preset examples/agent/agent.preset.json
+go run ./cmd/ada plan --preset examples/workspace/workspace.preset.json
+go run ./cmd/ada agent --preset examples/workspace/workspace.preset.json --workspace docs -message "查询工作区并读取 a.txt"
 ```
 
 当前实测:
 
-- 测试 **493 个 Test + 4 个 Benchmark**,`go test -race ./...` 全绿;
+- 测试 **526 个 Test + 4 个 Benchmark**,`go test -race ./...` 全绿;
 - kernel 生产 **2396 / 3000** 行;
-- host 生产 **2306 / 2500**(cli 1410 / 1500,其它最大 408 / 800);
+- host 生产 **2638 / 2900**(cli 1443 / 1500,其它最大 408 / 800;TUI 271,ADR 0011);
 - bench:ServiceResolve 58ns、Emit 1.61μs、waterfall 5.55μs、50 插件 348μs;
 - 本机默认 `staticcheck 2025.1.1` 与 Go 1.27 export data 不兼容;用 `2026.2.2` 覆盖 PATH 后 guard 全绿(CI 用 `@latest`)。
 

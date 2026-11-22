@@ -22,7 +22,7 @@ cmd/ada/     只做 os.Exit(cli.Run(os.Args[1:], os.Stdout, os.Stderr))
 | `plan <目录|--preset 文件> [-json]` | 清单 → 依赖图 → 顺序/问题 |
 | `up <目录|--preset 文件>` | 挂载、打印 fiber/服务、停止 |
 | `inspect <目录|--preset 文件> [-json] [-chain]` | 诊断快照(fiber/服务/effect/事件/装饰器链) |
-| `agent <目录|--preset 文件> -message <文本> [-json]` | 挂载 agent 栈并跑一轮,输出最终文本/用量 |
+| `agent <目录|--preset 文件> -message <文本> [-workspace <id>] [-json]` | 挂载 agent 栈并跑一轮;`-workspace` 只接受 preset 中已配置的 ID |
 | `verify <目录> [-keys 文件] [-require-signature]` | 清单/摘要/验签/信任 |
 | `caps <目录|--preset 文件> [-json]` | 静态能力自检:清单 caps/trust → Broker 授权 |
 | `repo <索引 URL> [-keys] [-require-repo-signature] [-json]` | 在线读取仓库索引(可选验签) |

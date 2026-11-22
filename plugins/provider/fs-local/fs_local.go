@@ -22,6 +22,7 @@ import (
 	"github.com/issueye/ada_go_v2/platform/kernel"
 	seamfs "github.com/issueye/ada_go_v2/plugins/seam/fs"
 	"github.com/issueye/ada_go_v2/plugins/seam/seamerr"
+	"github.com/issueye/ada_go_v2/plugins/seam/workspace"
 )
 
 // ProviderName 是 provider 名与插件 id。
@@ -29,10 +30,13 @@ const ProviderName = "fs-local"
 
 // Options 配置根目录。
 type Options struct {
-	// Workspace 是 /workspace 的宿主根目录(必填)。
+	// Workspace 是独立模式的 /workspace 根;托管模式下可为空。
 	Workspace string
 	// Tmp 是 /tmp 的宿主根目录;为空时放在 Workspace 下的 .ada-tmp。
+	// 托管模式且 Workspace 为空时必须显式给出,避免把 /tmp 落到进程 cwd。
 	Tmp string
+	// WorkspaceChain 非 nil 时启用托管模式:优先用 workspace 服务解析 /workspace。
+	WorkspaceChain *workspace.Chain
 }
 
 // FS 是本地实现。
@@ -41,26 +45,34 @@ type FS struct {
 	tmp         string
 	resolvedWS  string
 	resolvedTmp string
+	wschain     *workspace.Chain
 }
 
 // New 创建实现;根目录必须是绝对路径。
 func New(opts Options) (*FS, error) {
-	if opts.Workspace == "" {
-		return nil, seamfs.Invalid("fs-local: Workspace 不能为空")
+	if opts.Workspace == "" && opts.WorkspaceChain == nil {
+		return nil, seamfs.Invalid("fs-local: Workspace 不能为空(或启用 workspace 托管模式)")
 	}
-	ws, err := filepath.Abs(opts.Workspace)
-	if err != nil {
-		return nil, seamfs.Invalid(fmt.Sprintf("fs-local: Workspace 非法: %v", err))
+	var ws string
+	var err error
+	if opts.Workspace != "" {
+		ws, err = filepath.Abs(opts.Workspace)
+		if err != nil {
+			return nil, seamfs.Invalid(fmt.Sprintf("fs-local: Workspace 非法: %v", err))
+		}
 	}
 	tmp := opts.Tmp
 	if tmp == "" {
+		if ws == "" {
+			return nil, seamfs.Invalid("fs-local: 托管模式且 Workspace 为空时必须配置 tmp")
+		}
 		tmp = filepath.Join(ws, ".ada-tmp")
 	}
 	tmp, err = filepath.Abs(tmp)
 	if err != nil {
 		return nil, seamfs.Invalid(fmt.Sprintf("fs-local: Tmp 非法: %v", err))
 	}
-	f := &FS{workspace: ws, tmp: tmp}
+	f := &FS{workspace: ws, tmp: tmp, wschain: opts.WorkspaceChain}
 	f.resolvedWS = resolvedOrSelf(ws)
 	f.resolvedTmp = resolvedOrSelf(tmp)
 	return f, nil
@@ -70,7 +82,10 @@ func New(opts Options) (*FS, error) {
 func (f *FS) Name() string { return ProviderName }
 
 // resolve 把虚拟路径解析成宿主路径;任何越界都返回 EDENIED(source=sandbox)。
-func (f *FS) resolve(v seamfs.Path) (host string, root string, err error) {
+//
+// 托管模式优先问 workspace 服务;只有服务在位但 provider 尚未就绪且本机仍配置了
+// 根时才回退到独立模式。两者根不一致时 fail-closed,避免读写落到不同目录。
+func (f *FS) resolve(ctx context.Context, op workspace.Op, v seamfs.Path) (host string, root string, err error) {
 	s := string(v)
 	if s == "" {
 		return "", "", seamfs.Invalid("fs-local: 路径不能为空")
@@ -87,6 +102,26 @@ func (f *FS) resolve(v seamfs.Path) (host string, root string, err error) {
 	clean := path.Clean(s)
 	if clean == ".." || strings.HasPrefix(clean, "../") {
 		return "", "", seamfs.Denied("sandbox", fmt.Sprintf("路径越界: %s", s))
+	}
+
+	// 托管模式只接管 /workspace;/tmp 仍由本 provider 自己拥有。
+	if f.wschain != nil && (clean == workspace.MountRoot || strings.HasPrefix(clean, workspace.MountRoot+"/")) {
+		svc, gerr := f.wschain.Get()
+		if gerr != nil {
+			if f.workspace == "" {
+				return "", "", gerr
+			}
+			// 已配置独立根:provider 尚未安装时保持旧行为;provider 出现后自动托管。
+		} else {
+			target, rerr := svc.ResolveHost(ctx, op, clean)
+			if rerr != nil {
+				return "", "", rerr
+			}
+			if f.workspace != "" && !sameDirectory(f.workspace, target.Root) {
+				return "", "", workspace.Conflict("fs-local: 配置的 workspace 与 workspace 服务根不一致")
+			}
+			return target.Host, target.Root, nil
+		}
 	}
 
 	var prefix, rel string
@@ -174,6 +209,19 @@ func resolvedOrSelf(p string) string {
 	return p
 }
 
+// sameDirectory 用 os.SameFile 比较两个目录,避免大小写/符号链接导致的误判。
+func sameDirectory(a, b string) bool {
+	ai, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	bi, err := os.Stat(b)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(ai, bi)
+}
+
 func within(root, p string) bool {
 	rel, err := filepath.Rel(root, p)
 	if err != nil {
@@ -194,7 +242,7 @@ func (f *FS) Stat(ctx context.Context, p seamfs.Path) (seamfs.FileInfo, error) {
 	if err := f.checkCtx(ctx); err != nil {
 		return seamfs.FileInfo{}, err
 	}
-	host, _, err := f.resolve(p)
+	host, _, err := f.resolve(ctx, workspace.OpRead, p)
 	if err != nil {
 		return seamfs.FileInfo{}, err
 	}
@@ -227,7 +275,7 @@ func (f *FS) Read(ctx context.Context, req seamfs.ReadRequest) (seamfs.ReadResul
 	if limit <= 0 {
 		limit = seamfs.DefaultReadLimit
 	}
-	host, _, err := f.resolve(req.Path)
+	host, _, err := f.resolve(ctx, workspace.OpRead, req.Path)
 	if err != nil {
 		return seamfs.ReadResult{}, err
 	}
@@ -296,7 +344,7 @@ func (f *FS) Write(ctx context.Context, req seamfs.WriteRequest) (seamfs.WriteRe
 	if int64(len(req.Content)) > seamfs.DefaultWriteLimit {
 		return seamfs.WriteResult{}, seamfs.TooLarge(fmt.Sprintf("写入超过上限(%d)", seamfs.DefaultWriteLimit))
 	}
-	host, _, err := f.resolve(req.Path)
+	host, _, err := f.resolve(ctx, workspace.OpWrite, req.Path)
 	if err != nil {
 		return seamfs.WriteResult{}, err
 	}
@@ -354,7 +402,7 @@ func (f *FS) Edit(ctx context.Context, req seamfs.EditRequest) (seamfs.EditResul
 	if req.Old == "" {
 		return seamfs.EditResult{}, seamfs.Invalid("fs-local: Old 不能为空")
 	}
-	host, _, err := f.resolve(req.Path)
+	host, _, err := f.resolve(ctx, workspace.OpEdit, req.Path)
 	if err != nil {
 		return seamfs.EditResult{}, err
 	}
@@ -403,7 +451,7 @@ func (f *FS) List(ctx context.Context, req seamfs.ListRequest) ([]seamfs.DirEntr
 	if err := f.checkCtx(ctx); err != nil {
 		return nil, err
 	}
-	host, root, err := f.resolve(req.Path)
+	host, root, err := f.resolve(ctx, workspace.OpList, req.Path)
 	if err != nil {
 		return nil, err
 	}
@@ -495,7 +543,7 @@ func (f *FS) Search(ctx context.Context, req seamfs.SearchRequest) (seamfs.Searc
 	if req.Query == "" {
 		return seamfs.SearchResult{}, seamfs.Invalid("fs-local: 搜索词不能为空")
 	}
-	host, root, err := f.resolve(req.Path)
+	host, root, err := f.resolve(ctx, workspace.OpSearch, req.Path)
 	if err != nil {
 		return seamfs.SearchResult{}, err
 	}
@@ -628,16 +676,41 @@ func mimeFor(host string) string {
 }
 
 // Plugin 返回 fs-local 插件:inject fs seam,把本地实现安装进 Chain。
+//
+// workspace 是可选依赖:旧 preset 没有 workspace 栈时完全按自己的根工作。
 func Plugin() kernel.Plugin {
 	return kernel.Func(ProviderName, func(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, error) {
 		chain, err := kernel.Service[*seamfs.Chain](ctx, "fs")
 		if err != nil {
 			return nil, err
 		}
-		impl, err := New(Options{Workspace: cfg.String("workspace"), Tmp: cfg.String("tmp")})
+		var wschain *workspace.Chain
+		if v, ok := ctx.TryService(workspace.ServiceName); ok {
+			if ch, ok := v.(*workspace.Chain); ok {
+				wschain = ch
+			}
+		}
+		workspaceCfg := cfg.String("workspace")
+		if wschain != nil && workspaceCfg != "" {
+			if svc, gerr := wschain.Get(); gerr == nil {
+				target, rerr := svc.ResolveHost(ctx.Context(), workspace.OpRead, workspace.MountRoot)
+				if rerr != nil {
+					return nil, rerr
+				}
+				abs, aerr := filepath.Abs(workspaceCfg)
+				if aerr != nil || !sameDirectory(abs, target.Root) {
+					return nil, workspace.Conflict("fs-local: 配置的 workspace 与 workspace 服务根不一致")
+				}
+			}
+		}
+		impl, err := New(Options{
+			Workspace:      workspaceCfg,
+			Tmp:            cfg.String("tmp"),
+			WorkspaceChain: wschain,
+		})
 		if err != nil {
 			return nil, err
 		}
 		return chain.Install(impl)
-	}).WithInject("fs")
+	}).WithInject("fs").WithOptional(workspace.ServiceName)
 }

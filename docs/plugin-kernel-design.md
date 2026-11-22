@@ -115,8 +115,8 @@ v1 是一个成熟但**功能化**的插件宿主（`internal/agent_core/plugins
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ L6  应用/宿主     mygo 桌面窗口 · ada CLI(headless) · 服务端 HTTP             │
-│                   platform/host/desktop   platform/host/cli   platform/host/server                        │
+│ L6  应用/宿主     mygo 桌面窗口 · ada CLI · ada-tui 终端 · 服务端 HTTP        │
+│                   platform/host/desktop  · cli · tui · server                 │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ L5  组合层（数据）preset（agent 能力组合）· bundle · profile patch            │
 │                   「装哪些插件」在这一层决定，不改代码                          │
@@ -509,7 +509,7 @@ func (s *JSObjectService) Call(ctx context.Context, method string, args json.Raw
 | `llm` | `plugins/seam/llm`（Go 插件） | 模型调用 **seam**：只定义接口与契约版本，实现由 provider 插件注册 |
 | `tools` | `plugins/seam/tools`（Go 插件） | 工具目录与执行 **seam**；执行器由 `tool-executor-*` 插件提供 |
 | `prompts` | `plugins/seam/prompts`（Go 插件） | 提示词分段注册表 |
-| `fs` / `shell` / `sandbox` / `storage` / `settings` / `secrets` / `jobs` / `telemetry` / `ui` | `plugins/seam/*` + `provider/*` + `policy/*` | 见 §12.6 的三段式 |
+| `fs` / `shell` / `workspace` / `sandbox` / `storage` / `settings` / `secrets` / `jobs` / `telemetry` / `ui` | `plugins/seam/*` + `provider/*` + `policy/*` | 见 §12.6 的三段式；workspace 见 [workspace-plugin.md](workspace-plugin.md) |
 
 > 这正是「一切以插件为核心」的落地方式：**基座不为某个功能开后门**。模型调用、工具执行、审批、会话存储都是插件，可被替换、可被隔离、可被禁用；不同产品只是**不同的 preset**。
 > **agent core 本身也是插件组合**（`agent`、`agent-loop`、`session`、`system-prompt`、`compaction`…），见 §12.6。

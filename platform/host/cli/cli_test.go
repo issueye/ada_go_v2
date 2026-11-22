@@ -129,6 +129,37 @@ func TestAgentReplay(t *testing.T) {
 	}
 }
 
+// 6.2.1 agent + workspace:会话绑定只读工作区,工具查询与 fs 解析都落到该根。
+func TestAgentWorkspace(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir("../../.."); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(cwd) }()
+	code, out, errOut := run("agent", "--preset", "examples/workspace/workspace.preset.json",
+		"--workspace", "docs", "-message", "查询工作区并读取 a.txt")
+	if code != 0 {
+		t.Fatalf("agent workspace 应成功,code=%d err=%s", code, errOut)
+	}
+	if !strings.Contains(out, "工作区查询完成,文件内容是 hello") {
+		t.Fatalf("workspace agent 输出不正确:\n%s", out)
+	}
+
+	code, _, errOut = run("agent", "--preset", "examples/workspace/workspace.preset.json",
+		"--workspace", "missing", "-message", "x")
+	if code != 1 || !strings.Contains(errOut, "工作区不存在") {
+		t.Fatalf("未知工作区应失败,code=%d err=%s", code, errOut)
+	}
+
+	code, out, errOut = run("inspect", "--chain", "--preset", "examples/workspace/workspace.preset.json")
+	if code != 0 || !strings.Contains(out, "workspace priorities=[100]") {
+		t.Fatalf("inspect --chain 应显示 workspace 链,code=%d err=%s\n%s", code, errOut, out)
+	}
+}
+
 // 6.3 plan:jsonl session preset 必须可装配,且选中 session-jsonl。
 func TestPlanJSONLPreset(t *testing.T) {
 	cwd, err := os.Getwd()

@@ -22,6 +22,7 @@ import (
 	"github.com/issueye/ada_go_v2/platform/kernel"
 	"github.com/issueye/ada_go_v2/plugins/seam/seamerr"
 	seamshell "github.com/issueye/ada_go_v2/plugins/seam/shell"
+	"github.com/issueye/ada_go_v2/plugins/seam/workspace"
 )
 
 // ProviderName 是 provider 名与插件 id。
@@ -29,12 +30,16 @@ const ProviderName = "shell-local"
 
 // Options 配置本地执行。
 type Options struct {
-	Workspace    string
-	Tmp          string
-	AllowedEnv   []string
-	AllowShell   bool
-	ShellProgram string
-	MaxOutput    int64
+	// Workspace 是独立模式的 /workspace 根;托管模式下可为空。
+	Workspace string
+	// Tmp 是 /tmp 根;托管模式且 Workspace 为空时必须显式给出。
+	Tmp string
+	// WorkspaceChain 非 nil 时启用托管模式,优先用 workspace 服务解析 /workspace。
+	WorkspaceChain *workspace.Chain
+	AllowedEnv     []string
+	AllowShell     bool
+	ShellProgram   string
+	MaxOutput      int64
 }
 
 // Shell 是本地实现。
@@ -45,19 +50,27 @@ type Shell struct {
 	allowShell   bool
 	shellProgram string
 	maxOutput    int64
+	wschain      *workspace.Chain
 }
 
 // New 创建实现。
 func New(opts Options) (*Shell, error) {
-	if opts.Workspace == "" {
-		return nil, seamshell.Invalid("shell-local: Workspace 不能为空")
+	if opts.Workspace == "" && opts.WorkspaceChain == nil {
+		return nil, seamshell.Invalid("shell-local: Workspace 不能为空(或启用 workspace 托管模式)")
 	}
-	ws, err := filepath.Abs(opts.Workspace)
-	if err != nil {
-		return nil, seamshell.Invalid(fmt.Sprintf("shell-local: Workspace 非法: %v", err))
+	var ws string
+	var err error
+	if opts.Workspace != "" {
+		ws, err = filepath.Abs(opts.Workspace)
+		if err != nil {
+			return nil, seamshell.Invalid(fmt.Sprintf("shell-local: Workspace 非法: %v", err))
+		}
 	}
 	tm := opts.Tmp
 	if tm == "" {
+		if ws == "" {
+			return nil, seamshell.Invalid("shell-local: 托管模式且 Workspace 为空时必须配置 tmp")
+		}
 		tm = filepath.Join(ws, ".ada-tmp")
 	}
 	if tm, err = filepath.Abs(tm); err != nil {
@@ -68,7 +81,7 @@ func New(opts Options) (*Shell, error) {
 		maxOutput = seamshell.MaxOutputBytes
 	}
 	return &Shell{
-		workspace: ws, tm: tm,
+		workspace: ws, tm: tm, wschain: opts.WorkspaceChain,
 		env:          newManagedEnv(opts.AllowedEnv, os.Environ()),
 		allowShell:   opts.AllowShell,
 		shellProgram: opts.ShellProgram,
@@ -109,7 +122,7 @@ func (s *Shell) exec(ctx context.Context, cmd seamshell.Command, onChunk func(se
 	if timeout < 0 || timeout > seamshell.MaxTimeout {
 		return seamshell.Result{}, seamshell.Invalid(fmt.Sprintf("shell-local: Timeout 非法(%s)", timeout))
 	}
-	dir, err := s.resolveDir(cmd.Dir)
+	dir, err := s.resolveDir(ctx, cmd.Dir)
 	if err != nil {
 		return seamshell.Result{}, err
 	}
@@ -236,9 +249,9 @@ func validateProgram(program string) error {
 	return nil
 }
 
-func (s *Shell) resolveDir(p seamshell.Path) (string, error) {
+func (s *Shell) resolveDir(ctx context.Context, p seamshell.Path) (string, error) {
 	if p == "" {
-		return s.workspace, nil
+		p = workspace.MountRoot
 	}
 	v := string(p)
 	if strings.ContainsRune(v, 0) || strings.Contains(v, `\`) {
@@ -248,6 +261,34 @@ func (s *Shell) resolveDir(p seamshell.Path) (string, error) {
 		return "", seamshell.Invalid("shell-local: Dir 必须是虚拟路径")
 	}
 	clean := path.Clean(v)
+
+	// 托管模式只接管 /workspace;/tmp 仍是本 provider 自己的目录。
+	if s.wschain != nil && (clean == workspace.MountRoot || strings.HasPrefix(clean, workspace.MountRoot+"/")) {
+		svc, gerr := s.wschain.Get()
+		if gerr != nil {
+			if s.workspace == "" {
+				return "", gerr
+			}
+			// 已配置独立根:provider 未就绪时保持旧行为。
+		} else {
+			target, rerr := svc.ResolveHost(ctx, workspace.OpExec, clean)
+			if rerr != nil {
+				return "", rerr
+			}
+			if s.workspace != "" && !sameDirectory(s.workspace, target.Root) {
+				return "", seamerr.New(workspace.CodeConflict, ProviderName, "shell-local: 配置的 workspace 与 workspace 服务根不一致", false)
+			}
+			info, ierr := os.Stat(target.Host)
+			if ierr != nil {
+				return "", ierr
+			}
+			if !info.IsDir() {
+				return "", seamshell.Invalid(fmt.Sprintf("shell-local: Dir 不是目录: %s", p))
+			}
+			return target.Host, nil
+		}
+	}
+
 	var root, rel string
 	switch {
 	case clean == "/workspace" || strings.HasPrefix(clean, "/workspace/"):
@@ -256,6 +297,9 @@ func (s *Shell) resolveDir(p seamshell.Path) (string, error) {
 		root, rel = s.tm, strings.TrimPrefix(clean, "/tmp")
 	default:
 		return "", seamshell.Denied("sandbox", fmt.Sprintf("不支持的虚拟根: %s", clean))
+	}
+	if root == "" {
+		return "", seamerr.Unimplemented(ProviderName, "workspace 服务未就绪")
 	}
 	host := filepath.Join(root, filepath.FromSlash(strings.TrimPrefix(rel, "/")))
 	resolvedRoot := root
@@ -280,6 +324,19 @@ func (s *Shell) resolveDir(p seamshell.Path) (string, error) {
 		return "", seamshell.Invalid(fmt.Sprintf("shell-local: Dir 不是目录: %s", p))
 	}
 	return target, nil
+}
+
+// sameDirectory 用 os.SameFile 比较两个目录,避免大小写/符号链接导致的误判。
+func sameDirectory(a, b string) bool {
+	ai, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	bi, err := os.Stat(b)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(ai, bi)
 }
 
 // withinDir 判断 target 是否在 root 内(两者都应是已解析的真实路径)。
@@ -441,22 +498,44 @@ func (c *capture) chunkError() error {
 }
 
 // Plugin 返回 shell-local 插件:inject shell seam,把本地实现安装进 Chain。
+//
+// workspace 是可选依赖:旧 preset 没有 workspace 栈时完全按自己的根工作。
 func Plugin() kernel.Plugin {
 	return kernel.Func(ProviderName, func(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, error) {
 		chain, err := kernel.Service[*seamshell.Chain](ctx, "shell")
 		if err != nil {
 			return nil, err
 		}
+		var wschain *workspace.Chain
+		if v, ok := ctx.TryService(workspace.ServiceName); ok {
+			if ch, ok := v.(*workspace.Chain); ok {
+				wschain = ch
+			}
+		}
+		workspaceCfg := cfg.String("workspace")
+		if wschain != nil && workspaceCfg != "" {
+			if svc, gerr := wschain.Get(); gerr == nil {
+				target, rerr := svc.ResolveHost(ctx.Context(), workspace.OpExec, workspace.MountRoot)
+				if rerr != nil {
+					return nil, rerr
+				}
+				abs, aerr := filepath.Abs(workspaceCfg)
+				if aerr != nil || !sameDirectory(abs, target.Root) {
+					return nil, seamerr.New(workspace.CodeConflict, ProviderName, "shell-local: 配置的 workspace 与 workspace 服务根不一致", false)
+				}
+			}
+		}
 		impl, err := New(Options{
-			Workspace:    cfg.String("workspace"),
-			Tmp:          cfg.String("tmp"),
-			AllowedEnv:   cfg.Strings("env"),
-			AllowShell:   cfg.Bool("allowShell"),
-			ShellProgram: cfg.String("shellProgram"),
+			Workspace:      workspaceCfg,
+			Tmp:            cfg.String("tmp"),
+			WorkspaceChain: wschain,
+			AllowedEnv:     cfg.Strings("env"),
+			AllowShell:     cfg.Bool("allowShell"),
+			ShellProgram:   cfg.String("shellProgram"),
 		})
 		if err != nil {
 			return nil, err
 		}
 		return chain.Install(impl)
-	}).WithInject("shell")
+	}).WithInject("shell").WithOptional(workspace.ServiceName)
 }

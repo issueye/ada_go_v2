@@ -11,8 +11,10 @@ import (
 	"time"
 
 	shelllocal "github.com/issueye/ada_go_v2/plugins/provider/shell-local"
+	workspacelocal "github.com/issueye/ada_go_v2/plugins/provider/workspace-local"
 	"github.com/issueye/ada_go_v2/plugins/seam/seamerr"
 	seamshell "github.com/issueye/ada_go_v2/plugins/seam/shell"
+	"github.com/issueye/ada_go_v2/plugins/seam/workspace"
 )
 
 func errCode(err error) seamerr.Code {
@@ -59,6 +61,40 @@ func exitCommand(code string) seamshell.Command {
 		return seamshell.Command{Program: "cmd", Args: []string{"/c", "exit /b " + code}}
 	}
 	return seamshell.Command{Program: "sh", Args: []string{"-c", "exit " + code}}
+}
+
+func pwdCommand() seamshell.Command {
+	if runtime.GOOS == "windows" {
+		return seamshell.Command{Program: "cmd", Args: []string{"/c", "cd"}}
+	}
+	return seamshell.Command{Program: "pwd"}
+}
+
+func samePath(a, b string) bool {
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+
+func newManagedShell(t *testing.T, cfgRoot string, workspaces []workspacelocal.Workspace) *shelllocal.Shell {
+	t.Helper()
+	chain := workspace.NewChain()
+	provider, err := workspacelocal.New(workspacelocal.Options{Active: workspaces[0].ID, Workspaces: workspaces}, nil)
+	if err != nil {
+		t.Fatalf("创建 workspace provider 失败: %v", err)
+	}
+	if _, err := chain.Install(provider); err != nil {
+		t.Fatalf("安装 workspace provider 失败: %v", err)
+	}
+	s, err := shelllocal.New(shelllocal.Options{
+		Workspace: cfgRoot, Tmp: t.TempDir(), WorkspaceChain: chain,
+	})
+	if err != nil {
+		t.Fatalf("创建托管 shell-local 失败: %v", err)
+	}
+	return s
 }
 
 // 1. 基本执行:输出、退出码、耗时、Facts 可见。
@@ -215,4 +251,75 @@ func echoProgram() string {
 		return "cmd"
 	}
 	return "echo"
+}
+
+// 10. 托管模式:默认 cwd 落到 provider 根,绑定优先,显式 Dir 受根检查,/tmp 仍本地。
+func TestManagedWorkspace(t *testing.T) {
+	root1, root2 := t.TempDir(), t.TempDir()
+	s := newManagedShell(t, "", []workspacelocal.Workspace{
+		{ID: "alpha", Root: root1}, {ID: "beta", Root: root2},
+	})
+	ctx := context.Background()
+
+	res, err := s.Run(ctx, pwdCommand())
+	if err != nil {
+		t.Fatalf("默认 cwd 执行失败: %v", err)
+	}
+	if !samePath(strings.TrimSpace(string(res.Stdout)), root1) {
+		t.Fatalf("默认 cwd 应为 alpha 根: %q want %q", res.Stdout, root1)
+	}
+
+	bound := workspace.WithBinding(ctx, workspace.Binding{SessionID: "s1", Workspace: "beta"})
+	res, err = s.Run(bound, pwdCommand())
+	if err != nil {
+		t.Fatalf("绑定 cwd 执行失败: %v", err)
+	}
+	if !samePath(strings.TrimSpace(string(res.Stdout)), root2) {
+		t.Fatalf("绑定 cwd 应为 beta 根: %q want %q", res.Stdout, root2)
+	}
+
+	if err := os.MkdirAll(filepath.Join(root1, "sub"), 0o755); err != nil {
+		t.Fatalf("创建子目录失败: %v", err)
+	}
+	res, err = s.Run(ctx, seamshell.Command{Program: pwdCommand().Program, Args: pwdCommand().Args, Dir: "/workspace/sub"})
+	if err != nil {
+		t.Fatalf("显式 Dir 执行失败: %v", err)
+	}
+	if !samePath(strings.TrimSpace(string(res.Stdout)), filepath.Join(root1, "sub")) {
+		t.Fatalf("显式 Dir 不正确: %q", res.Stdout)
+	}
+
+	res, err = s.Run(ctx, seamshell.Command{Program: pwdCommand().Program, Args: pwdCommand().Args, Dir: "/tmp"})
+	if err != nil {
+		t.Fatalf("/tmp 执行失败: %v", err)
+	}
+	if samePath(strings.TrimSpace(string(res.Stdout)), root1) {
+		t.Fatalf("/tmp 不应落在工作区根")
+	}
+}
+
+// 11. 托管模式:只读工作区拒绝执行;根不一致 ECONFLICT。
+func TestManagedReadOnlyAndConflict(t *testing.T) {
+	root1, root2 := t.TempDir(), t.TempDir()
+	s := newManagedShell(t, "", []workspacelocal.Workspace{{ID: "alpha", Root: root1, ReadOnly: true}})
+	if _, err := s.Run(context.Background(), pwdCommand()); err == nil || errCode(err) != workspace.CodeDenied {
+		t.Fatalf("只读工作区执行应 EDENIED,实际 %v", err)
+	}
+
+	bad := newManagedShell(t, root2, []workspacelocal.Workspace{{ID: "alpha", Root: root1}})
+	if _, err := bad.Run(context.Background(), pwdCommand()); err == nil || errCode(err) != workspace.CodeConflict {
+		t.Fatalf("根不一致应 ECONFLICT,实际 %v", err)
+	}
+}
+
+// 12. 托管模式未就绪:有 seam 无 provider 且无独立根 → EUNIMPLEMENTED。
+func TestManagedNotReady(t *testing.T) {
+	chain := workspace.NewChain()
+	s, err := shelllocal.New(shelllocal.Options{Tmp: t.TempDir(), WorkspaceChain: chain})
+	if err != nil {
+		t.Fatalf("创建托管 shell-local 失败: %v", err)
+	}
+	if _, err := s.Run(context.Background(), pwdCommand()); err == nil || !seamerr.Is(err, seamerr.ErrUnimplemented) {
+		t.Fatalf("provider 未就绪应 EUNIMPLEMENTED,实际 %v", err)
+	}
 }

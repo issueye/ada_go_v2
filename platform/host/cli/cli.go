@@ -29,6 +29,7 @@ import (
 	seamnet "github.com/issueye/ada_go_v2/plugins/seam/net"
 	seamsession "github.com/issueye/ada_go_v2/plugins/seam/session"
 	seamshell "github.com/issueye/ada_go_v2/plugins/seam/shell"
+	seamworkspace "github.com/issueye/ada_go_v2/plugins/seam/workspace"
 )
 
 // Run 执行一条命令并返回退出码:0 成功 / 1 计划或装配失败 / 2 用法错误。
@@ -81,7 +82,7 @@ func usage(w io.Writer) {
   ada plan    <插件目录|--preset 文件> [-json]
   ada up      <插件目录|--preset 文件>
   ada inspect <插件目录|--preset 文件> [-json] [-chain]
-  ada agent   <插件目录|--preset 文件> -message <文本> [-json]
+  ada agent   <插件目录|--preset 文件> -message <文本> [-workspace <id>] [-json]
   ada verify  <插件目录> [-keys 密钥文件] [-require-signature]
   ada install <插件目录> -dest <安装根> [-keys 密钥文件] [-require-signature] [-yes]
   ada list    -dest <安装根>
@@ -100,11 +101,12 @@ func usage(w io.Writer) {
 }
 
 type target struct {
-	dir    string
-	preset string
-	json   bool
-	chain  bool
-	bad    string
+	dir       string
+	preset    string
+	workspace string
+	json      bool
+	chain     bool
+	bad       string
 }
 
 func parseTarget(args []string) target {
@@ -334,6 +336,12 @@ func parseAgentArgs(args []string) (target, string, string) {
 			}
 			t.preset = args[i+1]
 			i++
+		case a == "-workspace" || a == "--workspace":
+			if i+1 >= len(args) {
+				return t, message, "--workspace 缺少工作区 id"
+			}
+			t.workspace = args[i+1]
+			i++
 		case strings.HasPrefix(a, "-"):
 			return t, message, "未知参数 " + a
 		default:
@@ -390,12 +398,32 @@ func cmdAgent(args []string, out, errOut io.Writer) int {
 		fmt.Fprintln(errOut, "agent 服务类型不正确")
 		return 1
 	}
-	sess, err := ag.Open(context.Background(), seamsession.Meta{Title: "cli"})
+	ctx := context.Background()
+	meta := seamsession.Meta{Title: "cli"}
+	if t.workspace != "" {
+		// 只接工作区 ID,不接路径:根由 preset 配置,命令行不绕过宿主策略。
+		chain, err := kernel.Service[*seamworkspace.Chain](app.Root(), seamworkspace.ServiceName)
+		if err != nil {
+			fmt.Fprintln(errOut, "没有 workspace 服务:", err)
+			return 1
+		}
+		svc, err := chain.Get()
+		if err != nil {
+			fmt.Fprintln(errOut, "没有 workspace provider:", err)
+			return 1
+		}
+		if _, err := svc.Get(ctx, seamworkspace.ID(t.workspace)); err != nil {
+			fmt.Fprintln(errOut, "工作区不存在:", err)
+			return 1
+		}
+		meta.Workspace = t.workspace
+	}
+	sess, err := ag.Open(ctx, meta)
 	if err != nil {
 		fmt.Fprintln(errOut, "打开会话失败:", err)
 		return 1
 	}
-	res, err := ag.Run(context.Background(), sess, message)
+	res, err := ag.Run(ctx, sess, message)
 	if err != nil {
 		fmt.Fprintln(errOut, "agent 运行失败:", err)
 		return 1
@@ -504,7 +532,7 @@ func cmdInspect(args []string, out, errOut io.Writer) int {
 	if t.chain {
 		fmt.Fprintln(out, "chains:")
 		chains := inspectChains(app)
-		for _, name := range []string{"fs", "shell", "net"} {
+		for _, name := range []string{"fs", "shell", "net", "workspace"} {
 			p, ok := chains[name]
 			if !ok {
 				continue
@@ -515,7 +543,7 @@ func cmdInspect(args []string, out, errOut io.Writer) int {
 	return 0
 }
 
-// inspectChains 读取 fs/shell/net 三个 chain 的装饰器优先级(外层到内层)。
+// inspectChains 读取 fs/shell/net/workspace 四个 chain 的装饰器优先级(外层到内层)。
 func inspectChains(app *kernel.App) map[string][]int {
 	out := map[string][]int{}
 	if v, ok := app.Root().TryService("fs"); ok {
@@ -531,6 +559,11 @@ func inspectChains(app *kernel.App) map[string][]int {
 	if v, ok := app.Root().TryService("net"); ok {
 		if c, ok := v.(*seamnet.Chain); ok {
 			out["net"] = c.Applied()
+		}
+	}
+	if v, ok := app.Root().TryService(seamworkspace.ServiceName); ok {
+		if c, ok := v.(*seamworkspace.Chain); ok {
+			out["workspace"] = c.Applied()
 		}
 	}
 	return out

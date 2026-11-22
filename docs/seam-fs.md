@@ -1,6 +1,7 @@
 # M5 安全(第一刀:seam/fs)
 
 > 契约来源:[seam-api-security.md](seam-api-security.md) §1、§3。本页记录**已实现子集**、偏差与边界。
+> 工作区根可由 [workspace-plugin.md](workspace-plugin.md) 托管；本文的 `workspace` 配置只在没有 workspace provider 时生效。
 
 ## 1. 范围
 

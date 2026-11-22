@@ -28,6 +28,7 @@ import (
 	shellobserve "github.com/issueye/ada_go_v2/plugins/policy/shell-observe"
 	shellredact "github.com/issueye/ada_go_v2/plugins/policy/shell-redact"
 	tooltimeout "github.com/issueye/ada_go_v2/plugins/policy/tool-timeout"
+	workspaceguard "github.com/issueye/ada_go_v2/plugins/policy/workspace-guard"
 	approvalcli "github.com/issueye/ada_go_v2/plugins/provider/approval-cli"
 	approvaldeny "github.com/issueye/ada_go_v2/plugins/provider/approval-deny"
 	capsstatic "github.com/issueye/ada_go_v2/plugins/provider/caps-static"
@@ -44,6 +45,7 @@ import (
 	sessionjsonl "github.com/issueye/ada_go_v2/plugins/provider/session-jsonl"
 	memory "github.com/issueye/ada_go_v2/plugins/provider/session-memory"
 	shelllocal "github.com/issueye/ada_go_v2/plugins/provider/shell-local"
+	workspacelocal "github.com/issueye/ada_go_v2/plugins/provider/workspace-local"
 	seamapproval "github.com/issueye/ada_go_v2/plugins/seam/approval"
 	seamfs "github.com/issueye/ada_go_v2/plugins/seam/fs"
 	seamllm "github.com/issueye/ada_go_v2/plugins/seam/llm"
@@ -55,7 +57,9 @@ import (
 	seamsession "github.com/issueye/ada_go_v2/plugins/seam/session"
 	seamshell "github.com/issueye/ada_go_v2/plugins/seam/shell"
 	seamtools "github.com/issueye/ada_go_v2/plugins/seam/tools"
+	seamworkspace "github.com/issueye/ada_go_v2/plugins/seam/workspace"
 	toolfs "github.com/issueye/ada_go_v2/plugins/tool/fs"
+	toolworkspace "github.com/issueye/ada_go_v2/plugins/tool/workspace"
 )
 
 // Plugins 返回编译进宿主的内置 Go 插件注册表。
@@ -80,6 +84,10 @@ func Plugins() map[string]func() kernel.Plugin {
 		"seam-fs":          seamfs.Plugin,
 		"fs-local":         fslocal.Plugin,
 		"fs-sandbox":       fssandbox.Plugin,
+		"seam-workspace":   seamworkspace.Plugin,
+		"workspace-local":  workspacelocal.Plugin,
+		"workspace-guard":  workspaceguard.Plugin,
+		"tool-workspace":   toolworkspace.Plugin,
 		"seam-shell":       seamshell.Plugin,
 		"shell-local":      shelllocal.Plugin,
 		"shell-guard":      shellguard.Plugin,

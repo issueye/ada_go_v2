@@ -18,6 +18,7 @@ import (
 	"github.com/issueye/ada_go_v2/plugins/seam/seamerr"
 	"github.com/issueye/ada_go_v2/plugins/seam/session"
 	"github.com/issueye/ada_go_v2/plugins/seam/tools"
+	"github.com/issueye/ada_go_v2/plugins/seam/workspace"
 )
 
 // 投影存在且超过 contextBudget 时,agent 必须返回 ECONTEXT,而不是把超长请求发给模型。
@@ -419,5 +420,93 @@ func TestTurnWithReplayAndTool(t *testing.T) {
 	}
 	if toolPayload.Result.Status != tools.StatusOK || len(toolPayload.Result.Content) == 0 || toolPayload.Result.Content[0].Text != "hello" {
 		t.Fatalf("工具结果不对: %+v", toolPayload.Result)
+	}
+}
+
+// 工作区绑定必须从 session.Meta 进入调用 ctx,工具能读到同一绑定。
+func TestWorkspaceBindingPropagates(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	app := kernel.New(kernel.Options{})
+	defer func() { _ = app.Stop(ctx) }()
+	mount := func(id string, cfg map[string]any) {
+		t.Helper()
+		mk := builtins.Plugins()[id]
+		if mk == nil {
+			t.Fatalf("内置插件缺失: %s", id)
+		}
+		f, err := app.Plugin(mk(), kernel.NewConfig(cfg))
+		if err != nil {
+			t.Fatalf("挂载 %s 失败: %v", id, err)
+		}
+		if err := f.Ready(ctx); err != nil {
+			t.Fatalf("等待 %s 就绪失败: %v", id, err)
+		}
+	}
+
+	got := make(chan workspace.Binding, 1)
+	capture := kernel.Func("capture-workspace", func(ctx *kernel.Context, _ kernel.Config) (kernel.Dispose, error) {
+		reg, err := kernel.Service[*tools.Registry](ctx, "tools")
+		if err != nil {
+			return nil, err
+		}
+		return reg.Register(tools.ToolDef{
+			Name: "capture",
+			Handler: func(ctx context.Context, _ tools.CallInfo) (tools.Result, error) {
+				b, _ := workspace.BindingFrom(ctx)
+				got <- b
+				return tools.Result{Status: tools.StatusOK, Content: []llm.Block{{Kind: llm.BlockText, Text: "ok"}}}, nil
+			},
+		})
+	}).WithInject("tools")
+
+	mount("seam-session", nil)
+	mount("session-memory", nil)
+	mount("seam-prompts", nil)
+	mount("seam-tools", nil)
+	fiber, err := app.Plugin(capture, kernel.NewConfig(nil))
+	if err != nil {
+		t.Fatalf("挂载 capture 失败: %v", err)
+	}
+	if err := fiber.Ready(ctx); err != nil {
+		t.Fatalf("capture 未就绪: %v", err)
+	}
+	mount("seam-llm", nil)
+	mount("llm-replay", map[string]any{
+		"steps": []replay.Step{
+			{Response: llm.Response{
+				Message:   llm.Message{Role: llm.RoleAssistant, Content: []llm.Block{{Kind: llm.BlockText, Text: "run"}}},
+				ToolCalls: []llm.ToolCall{{ID: "c1", Name: "capture"}},
+				Finish:    llm.FinishToolCalls,
+			}},
+			{Response: llm.Response{
+				Message: llm.Message{Role: llm.RoleAssistant, Content: []llm.Block{{Kind: llm.BlockText, Text: "done"}}},
+				Finish:  llm.FinishStop,
+			}},
+		},
+		"models":       []llm.ModelInfo{{ID: "replay", ContextWindow: 8192}},
+		"defaultModel": "replay",
+	})
+	mount("agent-loop", map[string]any{"model": "replay"})
+
+	raw, err := app.Root().Service("agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ag := raw.(*agentloop.Agent)
+	sess, err := ag.Open(ctx, session.Meta{Workspace: "beta"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ag.Run(ctx, sess, "start"); err != nil {
+		t.Fatalf("运行失败: %v", err)
+	}
+	select {
+	case b := <-got:
+		if b.Workspace != "beta" || b.SessionID != sess.ID() {
+			t.Fatalf("绑定未正确传播: %+v", b)
+		}
+	default:
+		t.Fatalf("工具没有收到绑定")
 	}
 }

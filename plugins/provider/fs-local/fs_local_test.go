@@ -9,8 +9,10 @@ import (
 	"testing"
 
 	fslocal "github.com/issueye/ada_go_v2/plugins/provider/fs-local"
+	workspacelocal "github.com/issueye/ada_go_v2/plugins/provider/workspace-local"
 	seamfs "github.com/issueye/ada_go_v2/plugins/seam/fs"
 	"github.com/issueye/ada_go_v2/plugins/seam/seamerr"
+	"github.com/issueye/ada_go_v2/plugins/seam/workspace"
 )
 
 func newFS(t *testing.T) (*fslocal.FS, string) {
@@ -219,4 +221,80 @@ func TestPreservesCRLF(t *testing.T) {
 	if !strings.Contains(r.Content, "\r\n") {
 		t.Fatalf("读结果不应改写换行: %q", r.Content)
 	}
+}
+
+func newManaged(t *testing.T, cfgRoot string, workspaces []workspacelocal.Workspace) (*fslocal.FS, *workspacelocal.Provider, *workspace.Chain) {
+	t.Helper()
+	chain := workspace.NewChain()
+	provider, err := workspacelocal.New(workspacelocal.Options{Active: workspaces[0].ID, Workspaces: workspaces}, nil)
+	if err != nil {
+		t.Fatalf("创建 workspace provider 失败: %v", err)
+	}
+	if _, err := chain.Install(provider); err != nil {
+		t.Fatalf("安装 workspace provider 失败: %v", err)
+	}
+	f, err := fslocal.New(fslocal.Options{
+		Workspace: cfgRoot, Tmp: t.TempDir(), WorkspaceChain: chain,
+	})
+	if err != nil {
+		t.Fatalf("创建托管 fs-local 失败: %v", err)
+	}
+	return f, provider, chain
+}
+
+// 7. 托管模式:/workspace 落到 provider 的根,绑定优先于 active,/tmp 仍本地。
+func TestManagedWorkspace(t *testing.T) {
+	root1, root2 := t.TempDir(), t.TempDir()
+	f, _, _ := newManaged(t, "", []workspacelocal.Workspace{
+		{ID: "alpha", Root: root1}, {ID: "beta", Root: root2},
+	})
+	ctx := context.Background()
+	if _, err := f.Write(ctx, seamfs.WriteRequest{Path: ws("/a.txt"), Content: []byte("hello"), CreateDirs: true}); err != nil {
+		t.Fatalf("托管写失败: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(root1, "a.txt")); err != nil || string(data) != "hello" {
+		t.Fatalf("文件应写到 alpha 根: data=%q err=%v", data, err)
+	}
+
+	bound := workspace.WithBinding(ctx, workspace.Binding{SessionID: "s1", Workspace: "beta"})
+	if _, err := f.Write(bound, seamfs.WriteRequest{Path: ws("/b.txt"), Content: []byte("beta"), CreateDirs: true}); err != nil {
+		t.Fatalf("绑定写失败: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(root2, "b.txt")); err != nil || string(data) != "beta" {
+		t.Fatalf("绑定应写到 beta 根: data=%q err=%v", data, err)
+	}
+
+	if _, err := f.Write(ctx, seamfs.WriteRequest{Path: seamfs.Path("/tmp/t.txt"), Content: []byte("tmp"), CreateDirs: true}); err != nil {
+		t.Fatalf("/tmp 写失败: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root1, "t.txt")); err == nil {
+		t.Fatalf("/tmp 不应落到工作区根")
+	}
+}
+
+// 8. 托管模式仍拒绝只读工作区的写;两侧根不一致必须 ECONFLICT。
+func TestManagedReadOnlyAndConflict(t *testing.T) {
+	root1, root2 := t.TempDir(), t.TempDir()
+	f, _, _ := newManaged(t, "", []workspacelocal.Workspace{{ID: "alpha", Root: root1, ReadOnly: true}})
+	if _, err := f.Write(context.Background(), seamfs.WriteRequest{Path: ws("/a.txt"), Content: []byte("x"), CreateDirs: true}); err == nil {
+		t.Fatalf("只读工作区写应被拒绝")
+	}
+
+	bad, _, _ := newManaged(t, root2, []workspacelocal.Workspace{{ID: "alpha", Root: root1}})
+	if _, err := bad.Write(context.Background(), seamfs.WriteRequest{Path: ws("/a.txt"), Content: []byte("x"), CreateDirs: true}); err == nil || errCode(err) != workspace.CodeConflict {
+		t.Fatalf("根不一致应 ECONFLICT,实际 %v", err)
+	}
+}
+
+// 9. 托管模式未就绪:有 seam 无 provider 且无独立根 → EUNIMPLEMENTED。
+func TestManagedNotReady(t *testing.T) {
+	chain := workspace.NewChain()
+	f, err := fslocal.New(fslocal.Options{Tmp: t.TempDir(), WorkspaceChain: chain})
+	if err != nil {
+		t.Fatalf("创建托管 fs-local 失败: %v", err)
+	}
+	if _, err := f.Write(context.Background(), seamfs.WriteRequest{Path: ws("/a.txt"), Content: []byte("x")}); err == nil || !seamerr.Is(err, seamerr.ErrUnimplemented) {
+		t.Fatalf("provider 未就绪应 EUNIMPLEMENTED,实际 %v", err)
+	}
+	_ = f
 }

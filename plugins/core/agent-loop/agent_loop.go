@@ -17,6 +17,7 @@ import (
 	"github.com/issueye/ada_go_v2/plugins/seam/seamerr"
 	"github.com/issueye/ada_go_v2/plugins/seam/session"
 	"github.com/issueye/ada_go_v2/plugins/seam/tools"
+	"github.com/issueye/ada_go_v2/plugins/seam/workspace"
 )
 
 // PluginName 是插件 id。
@@ -64,6 +65,13 @@ func (a *Agent) Run(ctx context.Context, sess session.Session, userText string) 
 	}
 	if userText == "" {
 		return TurnResult{}, fmt.Errorf("agent-loop: 用户消息不能为空")
+	}
+	// 工作区绑定来自 session.Meta,不另存会话→工作区映射;没有绑定时由
+	// workspace provider 的 Current 决定,旧 preset 完全不受影响。
+	if id := sess.Meta().Workspace; id != "" {
+		ctx = workspace.WithBinding(ctx, workspace.Binding{
+			SessionID: sess.ID(), Workspace: workspace.ID(id),
+		})
 	}
 	model, err := a.model(ctx)
 	if err != nil {

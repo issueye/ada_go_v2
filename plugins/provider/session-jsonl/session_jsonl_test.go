@@ -49,7 +49,7 @@ func TestPersistenceAcrossReopen(t *testing.T) {
 	dir := t.TempDir()
 	p := New(NewFileStore(dir, true))
 	defer p.CloseAll()
-	s, err := p.OpenID(context.Background(), "sess-persist", session.Meta{Title: "persist", Model: "m1"})
+	s, err := p.OpenID(context.Background(), "sess-persist", session.Meta{Title: "persist", Model: "m1", Workspace: "docs"})
 	if err != nil {
 		t.Fatalf("打开会话失败: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestPersistenceAcrossReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("重新打开失败: %v", err)
 	}
-	if s2.Meta().Title != "persist" || s2.Meta().Model != "m1" {
+	if s2.Meta().Title != "persist" || s2.Meta().Model != "m1" || s2.Meta().Workspace != "docs" {
 		t.Fatalf("元信息未恢复: %+v", s2.Meta())
 	}
 	events, err := s2.Events(0, 0)

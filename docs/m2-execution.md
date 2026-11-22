@@ -53,6 +53,8 @@ TS 源文件 ──compile.Build──▶ Artifact(每个文件的 JS,纯数据)
 
 并发模型:Runtime 只在 worker goroutine 上使用,只有 `Interrupt`/`ClearInterrupt` 跨协程——这是 moejs 的硬约束(C1),包内用 `mu` 保护 `raw` 指针。`ctx.on`、`ctx.effect`、`ctx.waterfall` 注册的函数与 JS 服务方法共用 worker 独占的 `handlers` 表(函数 + `this`),调用一律经 `CallFunction` 在 worker 上执行。
 
+**调用 ctx 传播**:`enqueue` 在 worker 执行每个任务前把任务 ctx 存入 `callCtx`,结束后清空;`__adaHost.shell` 与 `__adaHost.fs.*` 使用 `currentContext()`,因此 JS 工具的原生 fs/shell 调用会继承调用级 `workspace.Binding`、取消与超时,而不是退回 `context.Background()`。事件/waterfall 回调用事件自己的 ctx。
+
 ### 2.3 `bridge`
 
 `bridge.Plugin` 实现 `kernel.Plugin`,入口约定与 AGENTS §6.2 一致:**`apply(ctx, config)`**。
@@ -145,6 +147,7 @@ out, err := svc.Call(ctx, "render")        // 方法调用转发到 JS worker
 | 运行期 emit(处理器里再 emit) | ✅ | `bridge.TestJSPluginRunsInKernel`、`jsrt.TestRuntimeEmitReentrantGuard` |
 | JS waterfall 改写/否决 + 重复 next + 嵌套防护 | ✅ | `jsrt.TestInvokeWaterfall`、`jsrt.TestWaterfallDoubleNextFails`、`jsrt.TestWaterfallReentrantFails`、`bridge.TestJSPluginRunsInKernel` |
 | ctx 能力未启用/参数非法时报错 | ✅ | `jsrt.TestHostCallbackErrorsSurfaceInJS`、`jsrt.TestHostOnRejectsNonFunction` |
+| JS 工具的原生 fs 继承调用 ctx(含 workspace 绑定) | ✅ | `bridge.TestJSNativeFSInheritsCallBinding` |
 | CJS(`require`/`module.exports`) | ❌ | design §10 规定走离线 Bundle,M2 未做 |
 | OOM / 内存上限 | ❌ | `jsrt.Options.MemoryLimit` 已透传,未写拒绝用例 |
 | 卡死(不响应中断) | ❌ | `ErrBroken` 路径已实现,未写用例(需要不可中断的宿主函数) |
