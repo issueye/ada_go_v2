@@ -894,3 +894,51 @@ func TestAgentTextScriptPlugin(t *testing.T) {
 		t.Fatalf("文本结果不正确: %v %q", err, data)
 	}
 }
+
+// 37. 脚本插件 memory-helper:装配(清单 + TS 编译 + 工具注册)。
+func TestUpMemoryScriptPlugin(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir("../../.."); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	code, out, errOut := run("up", "--preset", "examples/memory-ts/memory.preset.json")
+	if code != 0 || !strings.Contains(out, "memory-helper") {
+		t.Fatalf("memory-helper 装配失败: code=%d err=%s out=%s", code, errOut, out)
+	}
+}
+
+// 38. 脚本插件 memory-helper:真实工具调用(write → search,经 ada:fs 持久化)。
+func TestAgentMemoryScriptPlugin(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir("../../.."); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	workspace := t.TempDir()
+	f, err := os.CreateTemp("examples/memory-ts", "test-*.preset.json")
+	if err != nil {
+		t.Fatalf("创建临时 preset 失败: %v", err)
+	}
+	preset := f.Name()
+	_ = f.Close()
+	t.Cleanup(func() { _ = os.Remove(preset) })
+	body := `{"name":"memory-test","plugins":["../agent/plugins","../../plugins/tool/memory-helper"],"disable":["llm-openai","session-jsonl"],"patch":{"agent-loop":{"model":"replay"},"llm-replay":{"path":"examples/memory-ts/replay.jsonl"},"fs-local":{"workspace":"` + strings.ReplaceAll(workspace, `\`, `\\`) + `"}}}`
+	if err := os.WriteFile(preset, []byte(body), 0o644); err != nil {
+		t.Fatalf("写临时 preset 失败: %v", err)
+	}
+	code, out, errOut := run("agent", "--preset", preset, "-message", "记住我的偏好并回忆")
+	if code != 0 || !strings.Contains(out, "已记住并检索到你的语言偏好") {
+		t.Fatalf("memory-helper 运行失败: code=%d err=%s out=%s", code, errOut, out)
+	}
+	data, err := os.ReadFile(workspace + "/.ada/memory.json")
+	if err != nil || !strings.Contains(string(data), "用户偏好中文回答") {
+		t.Fatalf("记忆文件不正确: %v %s", err, data)
+	}
+}

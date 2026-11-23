@@ -4,8 +4,9 @@
 #   dist/<name>/presets/   只引用包内 plugins/workspace/data 的发布 preset
 #   dist/<name>/workspace/ 默认工作区与 docs 只读示例
 #
-# 关键约束:plugins/ 不是从 examples/ 手抄,而是从 builtins.Plugins() 导出,
-# 因此发布包的清单与二进制内置插件集合一致;preset 也不包含 examples/ 路径。
+# 关键约束:Go 插件清单不是从 examples/ 手抄,而是从 builtins.Plugins() 导出,
+# 因此发布包的 Go 清单与二进制内置插件集合一致;TS 插件按目录复制源码与清单
+# (内置 text-helper/shell-helper + examples 里的示例脚本插件),运行时由包内 esbuild 编译。
 param(
     [string]$Version = "",
     [string]$GOOS = "",
@@ -95,17 +96,47 @@ try {
         throw "导出内置插件清单失败(exit $LASTEXITCODE)"
     }
 
-    # text-helper / shell-helper 是 TS 插件,不在 builtins-dump 的导出范围;
-    # 复制源码与清单,让发布 preset 与开发 preset 使用同一份插件目录。
-    $tsPlugins = @(
-        @{ Src = "plugins/tool/text-helper"; Name = "text-helper" },
-        @{ Src = "plugins/tool/shell-helper"; Name = "shell-helper" }
-    )
-    foreach ($ts in $tsPlugins) {
-        $dest = Join-Path $plugins $ts.Name
+    # TS 插件不在 builtins-dump 的导出范围,按目录复制源码与清单:
+    #   - plugins/tool 下的内置 TS 工具(text-helper/shell-helper);
+    #   - examples/<示例>/plugins/<id> 下 kind=ts 的示例脚本插件。
+    # 示例插件按清单自动发现,新增/改名示例时不需要改本脚本;它们默认不在 release
+    # preset 的 allowlist 里,因此随包发布但不启用,启用方式与其他未启用插件一致。
+    $tsPluginDirs = [ordered]@{
+        "text-helper" = (Join-Path $root "plugins/tool/text-helper")
+        "shell-helper" = (Join-Path $root "plugins/tool/shell-helper")
+        "memory-helper" = (Join-Path $root "plugins/tool/memory-helper")
+    }
+    $examplesRoot = Join-Path $root "examples"
+    foreach ($mf in @(Get-ChildItem $examplesRoot -Recurse -Filter "plugin.json" -File)) {
+        $rel = $mf.FullName.Substring($examplesRoot.Length + 1).Replace("\", "/")
+        # 只收 examples/<示例>/plugins/<id>/plugin.json;examples 其它层级的清单是开发用
+        # Go 示例清单,已由 builtins-dump 导出,重复复制会覆盖自动生成的同名清单。
+        if ($rel -notmatch "^[^/]+/plugins/[^/]+/plugin.json$") { continue }
+        $manifest = Get-Content $mf.FullName -Raw | ConvertFrom-Json
+        if ($manifest.kind -ne "ts") { continue }
+        $id = Split-Path -Leaf $mf.DirectoryName
+        if ($manifest.id -ne $id) {
+            throw "示例插件 examples/$rel 的 id($($manifest.id))与目录名($id)不一致"
+        }
+        if ($tsPluginDirs.Contains($id)) {
+            throw "TS 插件 id 重复: $id($rel)"
+        }
+        $tsPluginDirs[$id] = $mf.DirectoryName
+    }
+    foreach ($id in $tsPluginDirs.Keys) {
+        $src = $tsPluginDirs[$id]
+        $dest = Join-Path $plugins $id
+        # 与 builtins 导出的 Go 清单同名时宁可失败:同名插件会让 loader 按目录覆盖,
+        # 发布包到底跑哪份实现就变得不可预测。
+        if (Test-Path $dest) {
+            throw "TS 插件 $id 与 builtins 导出的插件同名"
+        }
         New-Item -ItemType Directory -Force -Path $dest | Out-Null
-        Copy-Item (Join-Path $ts.Src "plugin.json") (Join-Path $dest "plugin.json") -Force
-        Copy-Item (Join-Path $ts.Src "plugin.ts") (Join-Path $dest "plugin.ts") -Force
+        Copy-Item (Join-Path $src "*") -Destination $dest -Recurse -Force
+        $entry = (Get-Content (Join-Path $src "plugin.json") -Raw | ConvertFrom-Json).entry
+        if (-not $entry -or -not (Test-Path (Join-Path $dest $entry))) {
+            throw "TS 插件 $id 的入口缺失: $src/plugin.json 的 entry($entry)不在复制结果里"
+        }
     }
 
     $ids = @(Get-ChildItem $plugins -Directory | Select-Object -ExpandProperty Name | Sort-Object)
@@ -116,7 +147,7 @@ try {
     $agentBase = @(
         "agent-loop", "compaction-basic", "fs-local", "llm-replay",
         "seam-fs", "seam-llm", "seam-prompts", "seam-session", "seam-tools",
-        "session-memory", "session-stats", "system-prompt", "text-helper"
+        "session-memory", "session-stats", "system-prompt", "text-helper", "memory-helper"
     )
     # shell 栈只在 agent preset 里打开;workspace preset 保持无命令执行。
     $shellAllow = @(
@@ -170,6 +201,10 @@ try {
             path = "data/agent-replay.jsonl"; models = $replayModels; defaultModel = "replay"
         }
         "fs-local" = @{ workspace = "workspace"; tmp = "workspace/.ada-tmp" }
+        # 记忆工具默认随包启用;模型需要知道什么时候写入/检索/忘记。
+        "system-prompt" = @{
+            tools = "长期记忆:`n- 用户要求记住事实/偏好时调用 memory_write;`n- 回答涉及既往信息时先 memory_search 再引用;`n- 用户要求忘记时调用 memory_forget。"
+        }
     }
     foreach ($k in $shellPatch.Keys) { $agentPatch[$k] = $shellPatch[$k] }
 
@@ -189,6 +224,9 @@ try {
                 path = "data/workspace-replay.jsonl"; models = $replayModels; defaultModel = "replay"
             }
             "fs-local" = @{ workspace = ""; tmp = "workspace/.ada-tmp" }
+            "system-prompt" = @{
+                tools = "长期记忆:`n- 用户要求记住事实/偏好时调用 memory_write;`n- 回答涉及既往信息时先 memory_search 再引用;`n- 用户要求忘记时调用 memory_forget。"
+            }
             "workspace-local" = [ordered]@{
                 active = "repo"
                 workspaces = @(
@@ -232,7 +270,8 @@ Ada 发布包 $pkgName
   bin/ada$ext agent --preset presets/agent-release.preset.json -message "读取 a.txt 并总结"
   bin/ada$ext agent --preset presets/workspace-release.preset.json --workspace docs -message "查询工作区并读取 a.txt"
 
-plugins/ 由编译进二进制的 builtins 自动导出,与源码手写清单无关;
+plugins/ 的 Go 清单由编译进二进制的 builtins 自动导出,与源码手写清单无关;
+TS 插件(text-helper / shell-helper / 示例脚本插件)随包复制源码,启用时现场编译;
 presets/ 只引用 ../plugins、workspace/ 与 data/,不包含开发目录路径。
 真实端点可用 LLMEndpoint/LLMModel 参数生成 agent-real-release.preset.json。
 "@
@@ -256,6 +295,12 @@ presets/ 只引用 ../plugins、workspace/ 与 data/,不包含开发目录路径
                 if ($LASTEXITCODE -ne 0) {
                     throw "包内 plan 自检失败: $name"
                 }
+            }
+            # 整目录自检:清单扫描 + 计划 + TS 现场编译。复制进包的示例脚本插件
+            # 只有在这一步才会真正经过 esbuild,能发现漏拷源码或 entry 写错。
+            & $ada check plugins | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                throw "包内 check 自检失败: plugins/"
             }
         } finally {
             Pop-Location

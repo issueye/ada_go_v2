@@ -28,5 +28,9 @@ examples/agent/sessions/
 # 工作区示例临时目录
 examples/workspace/.ada-tmp/
 
+# 示例工作区里由工具写入的本地状态(记忆/任务/临时目录)
+examples/*/workspace/.ada/
+examples/*/workspace/.ada-tmp/
+
 # 发布打包产物
 /dist/

@@ -2,8 +2,8 @@
 //
 // 这里放两类模块:纯 JS 的(path / os / events / util / assert / url / querystring /
 // string_decoder),以及靠 __adaHost 注入能力做 I/O 的(process / child_process /
-// http / https / dns / net)。node:fs / node:fs/promises / node:buffer 由 moejs
-// 的 node 包提供,不在这个目录里。
+// http / https / dns / net / crypto)。node:fs / node:fs/promises / node:buffer 由
+// moejs 的 node 包提供,不在这个目录里。
 package nodemods
 
 import (
@@ -32,6 +32,7 @@ var files = map[string]string{
 	"dns":            "src/dns.js",
 	"dns/promises":   "src/dns_promises.js",
 	"net":            "src/net.js",
+	"crypto":         "src/crypto.js",
 }
 
 // Modules 返回已实现的模块名(排序后)。

@@ -15,12 +15,16 @@
 1. 编译全部入口到 `dist/<name>/bin/`;
 2. 运行 `builtins-dump`,**从编译进宿主的 `builtins.Plugins()` 枚举所有 Go 插件**,
    用 `kernel.Plugin` 的 `Provide()`/`Inject()` 自动生成 `plugins/<id>/plugin.json`;
-3. 把 TS 实现的 `plugins/tool/shell-helper` 复制为 `plugins/shell-helper/`(源码 + 清单);
-4. 生成只引用包内 `../plugins`、`workspace/`、`data/` 的 preset;
-5. 用打包后的二进制执行 `ada plan` 自检(同平台时);
+3. 复制 TS 插件源码与清单:
+   - 内置 `plugins/tool/text-helper`、`plugins/tool/shell-helper`、`plugins/tool/memory-helper`;
+   - `examples/<示例>/plugins/<id>` 下清单 `kind=ts` 的示例脚本插件
+     (`git-helper`、`task-helper`、`command-helper`),按清单自动发现,新增示例不需要改脚本;
+4. 生成只引用包内 `../plugins`、`workspace/`、`data/` 的 preset;示例插件不在 allowlist 里,随包但默认禁用;
+5. 用打包后的二进制执行 `ada plan` 与 `ada check plugins` 自检(同平台时);
 6. 打 zip。
 
-因此发布清单不会随 `examples/` 的手写文件漂移。
+因此发布包的 Go 清单不会随 `examples/` 的手写文件漂移;示例脚本插件随包发布,
+启用时由包内 esbuild 现场编译,不需要开发目录。
 
 ## 2. 用法
 
@@ -49,6 +53,10 @@ dist/ada-<version>-<goos>-<goarch>/
     <id>/plugin.json            # 由 builtins 自动导出的全部 Go 内置插件
     text-helper/                # TS 实现:plugin.json + plugin.ts
     shell-helper/               # TS 实现:plugin.json + plugin.ts
+    memory-helper/              # TS 实现:长期记忆(默认启用)
+    git-helper/                 # 示例脚本插件(examples/git-ts),随包但默认禁用
+    task-helper/                # 示例脚本插件(examples/task-ts)
+    command-helper/             # 示例脚本插件(examples/command-ts)
   presets/
     agent-release.preset.json
     workspace-release.preset.json
@@ -75,12 +83,14 @@ bin/ada.exe agent --preset presets/workspace-release.preset.json --workspace doc
 
 ## 4. preset 的 allowlist
 
-`plugins/` 包含 **47 个 Go 内置插件 + 2 个 TS 插件(`text-helper`、`shell-helper`)**,但发布 preset
-只启用栈内插件,其余全部写入 `disable`:
+`plugins/` 包含 **47 个 Go 内置插件 + 3 个内置 TS 插件(`text-helper`、`shell-helper`、
+`memory-helper`)+ 3 个示例 TS 插件(`git-helper`、`task-helper`、`command-helper`)**,但发布
+preset 只启用栈内插件,其余全部写入 `disable`:
 
 - `agent-release`: agent-loop、session-memory/stats、system-prompt、seam-llm + llm-replay、
-  seam-fs + fs-local、seam-tools、compaction-basic、text-helper(TS),以及 shell 栈
-  (seam-shell + shell-local + shell-guard + seam-sandbox + sandbox-none + shell-helper TS);
+  seam-fs + fs-local、seam-tools、compaction-basic、text-helper(TS)、memory-helper(TS),
+  以及 shell 栈(seam-shell + shell-local + shell-guard + seam-sandbox + sandbox-none +
+  shell-helper TS);`system-prompt.tools` 会附上记忆工具的使用规则;
 - `workspace-release`: 再增加 seam/workspace + workspace-local + workspace-guard + workspace-helper,
   不启用 shell 栈;
 - `agent-real-release`(可选): 用 `llm-openai` 替换 `llm-replay`,同样带 shell 栈。
@@ -92,17 +102,22 @@ bin/ada.exe agent --preset presets/workspace-release.preset.json --workspace doc
 同平台打包时,脚本会进入包目录执行:
 
 ```powershell
-bin/ada plan --preset presets/agent-release.preset.json
-bin/ada plan --preset presets/workspace-release.preset.json
+bin/ada plan  --preset presets/agent-release.preset.json
+bin/ada plan  --preset presets/workspace-release.preset.json
+bin/ada check plugins
 ```
 
+前两条校验发布 preset 不依赖开发目录;`check plugins` 扫描整个插件目录并现场编译
+随包 TS 插件(含三个示例脚本插件),能发现漏拷源码、清单/entry 写错一类的问题。
 任一失败即中止打包。交叉编译到其它 GOOS/GOARCH 时跳过运行自检,但仍校验二进制与清单存在。
 
 ## 6. 边界
 
 1. **Go 内置插件自动导出,TS 插件按目录复制**:`builtins-dump` 只包含 Go 插件;
-   `text-helper` / `shell-helper` 由脚本单独复制源码与清单。其它 TS 脚本插件仍需在发布项目里
-   提供源码/Artifact 与清单。
+   内置 TS 工具(`text-helper`/`shell-helper`)与 `examples/*/plugins` 下 `kind=ts` 的示例
+   脚本插件由脚本复制源码与清单。示例插件只是「随包但不启用」的候选实现,启用时要补
+   它自己的配置(如 `shell-helper` 的 `program`、`task-helper` 依赖的 `fs` 栈);
+   其它来源的 TS 插件仍需在发布项目里提供源码/Artifact 与清单。
 2. **preset 路径以包根为装配基目录**:`llm-replay`、`fs-local.workspace` 等配置是相对装配基目录的,
    包根由脚本写入的 `.ada-base` 锚点标记;`ada` CLI 从包根运行即可,`ada-rpc-agent` 从 preset 目录
    向上找 `go.mod` 或 `.ada-base`,所以桌面宿主可以直接把 `Agent preset` 指向 `presets/agent-release.preset.json`。

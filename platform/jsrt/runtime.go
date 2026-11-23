@@ -443,6 +443,14 @@ func (r *Runtime) load() error {
 			return fmt.Errorf("jsrt: 注入 __adaHost.net 失败: %w", err)
 		}
 	}
+	// 哈希与随机数与策略无关(不读写文件、不发请求),与 node:path 同级默认安装。
+	// node:crypto 模块只把这些能力包成 Node 形状,跨边界仍然是字符串。
+	if err := hostObj.SetProp(realm, realm.KeyFromGoString("sha256"), raw.Function("sha256", 1, r.nativeSHA256(raw))); err != nil {
+		return fmt.Errorf("jsrt: 注入 __adaHost.sha256 失败: %w", err)
+	}
+	if err := hostObj.SetProp(realm, realm.KeyFromGoString("randomHex"), raw.Function("randomHex", 1, r.nativeRandomHex(raw))); err != nil {
+		return fmt.Errorf("jsrt: 注入 __adaHost.randomHex 失败: %w", err)
+	}
 	if err := realm.Global.SetProp(realm, realm.KeyFromGoString("__adaHost"), engine.ObjectValue(hostObj)); err != nil {
 		return fmt.Errorf("jsrt: 注入 __adaHost 失败: %w", err)
 	}

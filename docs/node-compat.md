@@ -35,6 +35,7 @@ const p = path.join("/workspace", "out.txt")
 | `node:querystring` | `platform/jsrt/nodemods` | Node 形状子集 |
 | `node:string_decoder` | `platform/jsrt/nodemods` | 仅 UTF-8 |
 | `node:process` | `platform/jsrt/nodemods` | `cwd()` 固定 `/workspace`;`env` 为空;`exit` 抛错 |
+| `node:crypto` | `platform/jsrt/nodemods` | 仅 `createHash("sha256")`/`randomBytes`/`randomUUID`;`update` 只收字符串;随机源是宿主 `crypto/rand` |
 | `node:child_process` | `platform/jsrt/nodemods` | 只有 `execFile`/`execFileSync`;经 shell seam、无 shell;`cwd` 限 `/workspace` |
 | `node:http` / `node:https` | `platform/jsrt/nodemods` | 同步客户端:`request`/`get`/`ClientRequest`/`IncomingMessage`;无 `createServer` |
 | `node:dns` / `node:dns/promises` | `platform/jsrt/nodemods` | 同步解析:`lookup`/`lookupSync`/`resolve*`/`reverse`;`setServers` 不支持 |
@@ -124,7 +125,7 @@ http.get("https://example.com/api", (res) => {
 
 以下模块暂不安装,按 Node 的方式在链接期失败,而不是返回近似值:
 
-- `node:crypto`/`node:zlib`/`node:stream/web`/`node:timers`;
+- `node:zlib`/`node:stream/web`/`node:timers`;
 - `node:module`/`node:worker_threads`/`node:vm`;
 - `node:tls`(TLS 只在 `node:https` 内部使用,不暴露原始握手)。
 
@@ -148,6 +149,7 @@ go test ./platform/jsrt
 
 - `node:fs` 读写与 `existsSync`;
 - `node:fs/promises` 的导出形状;
+- `node:crypto` 的 `sha256`(hex/base64)、`randomBytes` 长度与 v4 UUID 形状;
 - `node:path.join`;
 - `node:os.platform`;
 - `node:buffer` 的 hex 编码;
