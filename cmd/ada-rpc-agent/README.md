@@ -42,11 +42,24 @@ go build -o bin/ada-rpc-agent.exe ./cmd/ada-rpc-agent
 | 方法 | 参数 | 结果/事件 |
 |---|---|---|
 | `bot.info` | — | `{name, model, workspace, pid, preset, instruction}` |
-| `chat.send` | `{turn, text, botId?, botName?}` | 先推 `chat/delta`，再推 `chat/done`，最后返回 `{turn, text, steps, toolCalls}` |
+| `chat.send` | `{turn, text, botId?, botName?}` | 运行期推送 `chat/delta` / `chat/reasoning` / `chat/tool` / `chat/done`，最后返回 `{turn, text, steps, toolCalls}` |
 
 同一个工作区进程可服务多个机器人：`botId` 不同则各自建一个 agent session，共享同一个进程、
 fs/workspace、preset、system prompt 和 LLM provider；`chat.send` 串行执行。`ctx` 被 RPC
 取消时透传给 `agent.Run`。
+
+### 事件
+
+`chat.send` 运行期推送四类事件，宿主按 `turn`（工具卡片再按 `id`）合并：
+
+| 事件 | 载荷 | 说明 |
+|---|---|---|
+| `chat/delta` | `{turn, text}` | 正文增量；非流式 provider 没有增量时，退回整段回放 |
+| `chat/reasoning` | `{turn, text}` | 思考过程增量，宿主可做成可折叠区域 |
+| `chat/tool` | `{turn, id, name, args, status}`，结果事件另有 `text`、`durationMs` | 工具开始为 `status="running"`，结果按 `ok`/`denied`/`error`/`timeout` 区分；`text` 截断到 8 KiB |
+| `chat/done` | `{turn}` | 本轮结束 |
+
+工具事件来自 `tools/pre-execute` 与 `tools/result`，只做转发，不参与策略判定（事件不是门禁）。
 
 ## 示例
 
@@ -79,6 +92,7 @@ go run ./cmd/ada_chat
 - **per-agent 的 prompt/model/provider 还没有隔离**：同一进程里的多个 bot 共享 preset 与 system prompt；
   项目群组式的多 agent 需要 ada_go_v2 引入显式 agent 实例，而不是只按 botId 切 session。
 - replay provider 的游标是进程级的；多个 bot 共用 replay preset 时会耗尽脚本。真实 LLM 不受此限。
-- 只推送最终回答的分块；工具调用进度目前没有映射成 RPC 事件。
+- 工具结果只回传文本块（截断 8 KiB），图片/附件等非文本内容不进事件；完整结果仍在 `chat.send` 的返回值里。
+- `chat.send` 串行：同一进程里的其他 bot 要等当前轮结束，进度事件也因此只有一条轮次线。
 - preset 里的相对文件路径按 ada_go_v2 模块根解析（可用 `ADA_GO_AGENT_BASE` 覆盖）。
 - 仍由宿主负责重启/重连策略；本进程不自动重连。

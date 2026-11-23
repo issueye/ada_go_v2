@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/issueye/ada_go_v2/platform/assemble"
 	"github.com/issueye/ada_go_v2/platform/host/builtins"
@@ -29,8 +30,10 @@ import (
 	rpcjson "github.com/issueye/ada_go_v2/plugins/provider/rpc-json"
 	rpcnet "github.com/issueye/ada_go_v2/plugins/provider/rpc-net"
 	rpcpipe "github.com/issueye/ada_go_v2/plugins/provider/rpc-pipe"
+	seamllm "github.com/issueye/ada_go_v2/plugins/seam/llm"
 	seamrpc "github.com/issueye/ada_go_v2/plugins/seam/rpc"
 	seamsession "github.com/issueye/ada_go_v2/plugins/seam/session"
+	seamtools "github.com/issueye/ada_go_v2/plugins/seam/tools"
 )
 
 const (
@@ -182,6 +185,81 @@ func run() error {
 	}
 	defer func() { _ = server.Close() }()
 
+	// 流式与工具事件:宿主需要边生成边显示,而不是等 Run 结束后回放。
+	// 这些监听只做转发,不参与策略判定(事件不是门禁)。
+	stream := newTurnStream()
+	publish := func(topic string, payload map[string]any) {
+		if err := server.Publish(topic, payload); err != nil {
+			logger.Warn("发布事件失败", "topic", topic, "error", err)
+		}
+	}
+	app.Root().OnWaterfall(seamllm.EventStream, func(_ context.Context, _ *kernel.Context, input any, next kernel.Next) (any, error) {
+		v, err := next(input)
+		if err != nil {
+			return v, err
+		}
+		delta, ok := v.(*seamllm.Delta)
+		if !ok || delta == nil {
+			return v, nil
+		}
+		if turn := stream.current(); turn > 0 {
+			switch delta.Kind {
+			case seamllm.DeltaText:
+				if delta.Text != "" {
+					stream.sawText()
+					publish("chat/delta", map[string]any{"turn": turn, "text": delta.Text})
+				}
+			case seamllm.DeltaReasoning:
+				// 思考内容单独走一条事件，宿主可以把它显示成可折叠的“思考过程”。
+				if delta.Text != "" {
+					publish("chat/reasoning", map[string]any{"turn": turn, "text": delta.Text})
+				}
+			}
+		}
+		return v, nil
+	}, kernel.WithTimeout(2*time.Second))
+	app.Root().OnWaterfall(seamtools.EventPreExecute, func(_ context.Context, _ *kernel.Context, input any, next kernel.Next) (any, error) {
+		if call, ok := input.(*seamtools.CallInfo); ok && call != nil {
+			if turn := stream.current(); turn > 0 {
+				stream.toolStarted(call.ID)
+				publish("chat/tool", map[string]any{
+					"turn": turn, "id": call.ID, "name": call.Name,
+					"args": string(call.Args), "status": "running",
+				})
+			}
+		}
+		return next(input)
+	}, kernel.WithTimeout(2*time.Second))
+	app.Root().On(seamtools.EventResult, func(_ context.Context, _ *kernel.Context, args []any) (any, error) {
+		if len(args) == 0 {
+			return nil, nil
+		}
+		payload, ok := args[0].(map[string]any)
+		if !ok {
+			return nil, nil
+		}
+		call, callOK := payload["call"].(seamtools.CallInfo)
+		result, resultOK := payload["result"].(seamtools.Result)
+		if !callOK || !resultOK {
+			return nil, nil
+		}
+		turn := stream.current()
+		if turn <= 0 {
+			return nil, nil
+		}
+		status := string(result.Status)
+		if status == "" {
+			status = string(seamtools.StatusOK)
+		}
+		publish("chat/tool", map[string]any{
+			"turn": turn, "id": call.ID, "name": call.Name,
+			"args": string(call.Args), "status": status,
+			"text":       blockText(result.Content, 8<<10),
+			"durationMs": stream.toolTook(call.ID).Milliseconds(),
+		})
+		return nil, nil
+	})
+
 	profile := map[string]any{
 		"name": name, "model": actualModel, "workspace": workspace,
 		"pid": os.Getpid(), "preset": presetPath, "instruction": instruction,
@@ -207,6 +285,8 @@ func run() error {
 		}
 		agentMu.Lock()
 		defer agentMu.Unlock()
+		stream.begin(in.Turn)
+		defer stream.end()
 		sess := defaultSess
 		if in.BotID > 0 {
 			if s, ok := sessions[in.BotID]; ok {
@@ -228,8 +308,12 @@ func run() error {
 			logger.Error("agent 运行失败", "error", err)
 			return nil, seamrpc.Internal("agent 运行失败")
 		}
-		if err := streamText(chatCtx, server, in.Turn, res.Text); err != nil {
-			return nil, err
+		// 模型没有给出文本增量时(例如非流式 provider),退回整段回放,
+		// 宿主仍然能看到逐字出现的回答。
+		if !stream.streamed() {
+			if err := streamText(chatCtx, server, in.Turn, res.Text); err != nil {
+				return nil, err
+			}
 		}
 		_ = server.Publish("chat/done", map[string]int{"turn": in.Turn})
 		return map[string]any{
@@ -261,6 +345,102 @@ func streamText(ctx context.Context, server seamrpc.Server, turn int, text strin
 	return nil
 }
 
+// turnStream 记录当前 chat.send 的轮次与工具起始时间。
+//
+// 一个进程同一时刻只跑一轮(chat.send 持有 agentMu),所以这些监听可以
+// 用同一个轮次号;工具由 agent-loop 并行执行,起始时间按调用 id 记。
+type turnStream struct {
+	mu     sync.Mutex
+	turn   int
+	texted bool
+	starts map[string]time.Time
+}
+
+func newTurnStream() *turnStream {
+	return &turnStream{starts: map[string]time.Time{}}
+}
+
+func (s *turnStream) begin(turn int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.turn = turn
+	s.texted = false
+	s.starts = map[string]time.Time{}
+}
+
+func (s *turnStream) end() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.turn = 0
+	s.starts = map[string]time.Time{}
+}
+
+func (s *turnStream) current() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.turn
+}
+
+func (s *turnStream) sawText() {
+	s.mu.Lock()
+	s.texted = true
+	s.mu.Unlock()
+}
+
+func (s *turnStream) streamed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.texted
+}
+
+func (s *turnStream) toolStarted(id string) {
+	if id == "" {
+		return
+	}
+	s.mu.Lock()
+	s.starts[id] = time.Now()
+	s.mu.Unlock()
+}
+
+func (s *turnStream) toolTook(id string) time.Duration {
+	if id == "" {
+		return 0
+	}
+	s.mu.Lock()
+	start, ok := s.starts[id]
+	if ok {
+		delete(s.starts, id)
+	}
+	s.mu.Unlock()
+	if !ok {
+		return 0
+	}
+	return time.Since(start)
+}
+
+// blockText 把工具结果的文本块拼成一段,并限制回传体积。
+func blockText(blocks []seamllm.Block, limit int) string {
+	var b strings.Builder
+	for _, blk := range blocks {
+		if blk.Kind != seamllm.BlockText || blk.Text == "" {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(blk.Text)
+	}
+	out := strings.TrimSpace(b.String())
+	if limit > 0 && len(out) > limit {
+		cut := limit
+		for cut > 0 && !utf8.RuneStart(out[cut]) {
+			cut--
+		}
+		out = out[:cut] + "…"
+	}
+	return out
+}
+
 type llmOverride struct {
 	Provider string
 	Endpoint string
@@ -281,6 +461,13 @@ func loadManifests(presetPath, workspace, name, instruction string, ov llmOverri
 		case "fs-local":
 			setConfig(m, "workspace", workspace)
 			setConfig(m, "tmp", filepath.Join(workspace, ".ada-tmp"))
+		case "shell-local":
+			// 使用 workspace 服务时根由链解析,不要覆盖成宿主工作区;
+			// 独立模式(shell 工具)则让命令在机器人工作区里执行。
+			if enabledManifest(manifests, "workspace-local") == nil {
+				setConfig(m, "workspace", workspace)
+				setConfig(m, "tmp", filepath.Join(workspace, ".ada-tmp"))
+			}
 		case "system-prompt":
 			identity := "你是 " + name + "，一个在本地工作目录里运行的 agent。"
 			if strings.TrimSpace(instruction) != "" {
@@ -344,6 +531,16 @@ func applyLLMOverride(manifests []*plugin.Manifest, ov llmOverride) error {
 func findManifest(manifests []*plugin.Manifest, id string) *plugin.Manifest {
 	for _, m := range manifests {
 		if m.ID == id {
+			return m
+		}
+	}
+	return nil
+}
+
+// enabledManifest 只返回启用中的插件;preset 的清单里也含被 disable 的插件。
+func enabledManifest(manifests []*plugin.Manifest, id string) *plugin.Manifest {
+	for _, m := range manifests {
+		if m.ID == id && !m.Disabled {
 			return m
 		}
 	}
