@@ -202,6 +202,7 @@ try {
         }
         "fs-local" = @{ workspace = "workspace"; tmp = "workspace/.ada-tmp" }
         # 记忆工具默认随包启用;模型需要知道什么时候写入/检索/忘记。
+        "memory-helper" = @{ autoRecall = $true }
         "system-prompt" = @{
             tools = "长期记忆:`n- 用户要求记住事实/偏好时调用 memory_write;`n- 回答涉及既往信息时先 memory_search 再引用;`n- 用户要求忘记时调用 memory_forget。"
         }
@@ -224,6 +225,7 @@ try {
                 path = "data/workspace-replay.jsonl"; models = $replayModels; defaultModel = "replay"
             }
             "fs-local" = @{ workspace = ""; tmp = "workspace/.ada-tmp" }
+            "memory-helper" = @{ autoRecall = $true }
             "system-prompt" = @{
                 tools = "长期记忆:`n- 用户要求记住事实/偏好时调用 memory_write;`n- 回答涉及既往信息时先 memory_search 再引用;`n- 用户要求忘记时调用 memory_forget。"
             }

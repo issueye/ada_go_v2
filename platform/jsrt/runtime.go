@@ -1487,10 +1487,15 @@ func (r *Runtime) invokeWaterfall(ctx context.Context, id uint64, input any, nex
 	for {
 		select {
 		case got := <-res:
-			return got.value, got.err
+			if got.err != nil {
+				return got.value, got.err
+			}
+			// JS 只能返回 JSON;还原成输入类型后,内核的 `v.(*T)` 才能看到改写。
+			return coerceWaterfall(input, got.value), nil
 		case req := <-nextReq:
 			// 在监听器所在的 goroutine 上继续下游,与内核 waterfall 语义一致。
-			v, nextErr := next(req.value)
+			// 下游如果是 Go 处理器,它期望的是类型化输入,因此 next 参数也先还原。
+			v, nextErr := next(coerceWaterfall(input, req.value))
 			nextResp <- wfValue{value: v, err: nextErr}
 		case <-ctx.Done():
 			r.interrupt(ctx.Err())

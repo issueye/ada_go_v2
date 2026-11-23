@@ -104,6 +104,9 @@ JS 侧 `ctx` 目前有六个能力:
 **waterfall 语义**:
 - JS 处理器签名 `(input, next) => any`;调用 `next(v)` 会**同步**回到监听器所在的 goroutine 继续下游,拿到下游结果后返回给 JS;
 - 不调用 `next` 即短路(否决),其返回值成为整条链的结果——与内核 waterfall 一致;
+- **类型还原**:输入是「指向结构体的指针」(如 `*llm.Request`、`*prompts.Assembly`、
+  `*tools.CallInfo`)时,`next` 参数与 JS 返回值会按 JSON 解码回同一类型;
+  否则下游的 `v.(*T)` 断言失败,JS 改写会被静默丢弃。其它形态(标量/map/切片)原样透传;
 - 重复调用 `next` 抛错,避免重复执行下游副作用;
 - **同一运行时不允许嵌套调用**(`ErrReentrant`):worker 正阻塞等待宿主响应 `next` 时再次投递任务必然死锁;跨运行时的链是安全的;
 - 取消/超时沿用 `Interrupt`;若 worker 正阻塞在 `next` 上,宿主会送一条错误结果把它放出来,避免 goroutine 泄漏。
@@ -129,7 +132,7 @@ out, err := svc.Call(ctx, "render")        // 方法调用转发到 JS worker
 |---|---|
 | C1 单 goroutine | `jsrt.worker` 是唯一接触 `moejs.Runtime` 的 goroutine |
 | C2 字节码不可序列化 | Artifact 只存 JS 源文本;不缓存字节码 |
-| C3 跨边界只传 JSON | 调用参数、事件载荷、方法参数、waterfall 的输入与 `next` 返回值都经 JSON 编解码 |
+| C3 跨边界只传 JSON | 调用参数、事件载荷、方法参数、waterfall 的输入与 `next` 返回值都经 JSON 编解码;结构体指针输入在返回时按 JSON 还原类型 |
 | C4 裸 Runtime 无环境能力 | 只有 `ctx.log/provide/emit/on/effect/waterfall`;默认零权限 |
 | P5 注册有主 | JS 的 provide/on/effect/waterfall 都经暂存提交,卸载时按序回收 |
 | P7 门禁确定 | waterfall 的 `next` 往返是同步的,超时/中断会确定性阻断;不允许重复 `next` |
@@ -161,6 +164,7 @@ out, err := svc.Call(ctx, "render")        // 方法调用转发到 JS worker
 | JS effect 逆序清理 + 失败上报 | ✅ | `jsrt.TestHostEffect`、`bridge.TestJSEffectErrorSurfacesOnDispose` |
 | 运行期 emit(处理器里再 emit) | ✅ | `bridge.TestJSPluginRunsInKernel`、`jsrt.TestRuntimeEmitReentrantGuard` |
 | JS waterfall 改写/否决 + 重复 next + 嵌套防护 | ✅ | `jsrt.TestInvokeWaterfall`、`jsrt.TestWaterfallDoubleNextFails`、`jsrt.TestWaterfallReentrantFails`、`bridge.TestJSPluginRunsInKernel` |
+| JS waterfall 改写结构体指针输入后类型还原 | ✅ | `jsrt.TestWaterfallCoercesStructPointer`、`bridge.TestJSMemoryAutoRecall` |
 | ctx 能力未启用/参数非法时报错 | ✅ | `jsrt.TestHostCallbackErrorsSurfaceInJS`、`jsrt.TestHostOnRejectsNonFunction` |
 | JS 工具的原生 fs 继承调用 ctx(含 workspace 绑定) | ✅ | `bridge.TestJSNativeFSInheritsCallBinding` |
 | CJS(`require`/`module.exports`) | ❌ | design §10 规定走离线 Bundle,M2 未做 |

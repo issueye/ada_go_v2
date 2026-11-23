@@ -3,6 +3,7 @@ package bridge_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -151,5 +152,83 @@ func TestJSToolMemory(t *testing.T) {
 	}
 	if store.Version != 1 || len(store.Records) != 0 {
 		t.Fatalf("记忆文件结构不正确: %+v", store)
+	}
+}
+
+// TestJSToolMemoryPin 验证 pinned 记录不被容量淘汰,全部 pinned 时写入会明确报错。
+func TestJSToolMemoryPin(t *testing.T) {
+	dir := t.TempDir()
+	app := kernel.New(kernel.Options{})
+	t.Cleanup(func() { _ = app.Stop(context.Background()) })
+
+	mountBuiltin(t, app, "seam-tools", nil)
+	mountBuiltin(t, app, "seam-fs", nil)
+	mountBuiltin(t, app, "fs-local", map[string]any{"workspace": dir})
+
+	manifest, err := plugin.Load("../../plugins/tool/memory-helper")
+	if err != nil {
+		t.Fatalf("读取清单失败: %v", err)
+	}
+	lookup := loader.Lookup(loader.Options{Go: builtins.Plugins()})
+	p, err := lookup(manifest)
+	if err != nil {
+		t.Fatalf("构造插件失败: %v", err)
+	}
+	// 关闭近似去重:本用例只测淘汰与 pinned,不能让「临时记忆 N」被合并成一条。
+	f, err := app.Plugin(p, kernel.NewConfig(map[string]any{"maxRecords": 50, "dedupeThreshold": 0}))
+	if err != nil {
+		t.Fatalf("挂载插件失败: %v", err)
+	}
+	if err := f.Ready(context.Background()); err != nil {
+		t.Fatalf("插件未就绪: %v", err)
+	}
+	raw, _ := app.Root().Service("tools")
+	reg := raw.(*tools.Registry)
+
+	call := func(args map[string]any) string {
+		t.Helper()
+		data, _ := json.Marshal(args)
+		res, err := reg.Invoke(context.Background(), tools.CallInfo{Name: "memory_write", Args: data})
+		if err != nil || res.Status != tools.StatusOK || len(res.Content) == 0 {
+			t.Fatalf("memory_write 失败: %v %+v", err, res)
+		}
+		return res.Content[0].Text
+	}
+
+	// 重要度最低但 pinned:它必须在 50 条上限下仍被保留。
+	call(map[string]any{"text": "固定记忆:不要淘汰这一条", "importance": 1, "pinned": true})
+	for i := 0; i < 50; i++ {
+		call(map[string]any{"text": "临时记忆 " + fmt.Sprint(i), "importance": 2})
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, ".ada", "memory.json"))
+	if err != nil {
+		t.Fatalf("记忆文件不存在: %v", err)
+	}
+	if !strings.Contains(string(data), "固定记忆") {
+		t.Fatalf("pinned 记录被淘汰了: %s", data)
+	}
+	var store struct {
+		Records []struct {
+			Text   string `json:"text"`
+			Pinned bool   `json:"pinned"`
+		} `json:"records"`
+	}
+	if err := json.Unmarshal(data, &store); err != nil {
+		t.Fatalf("记忆文件不是合法 JSON: %v", err)
+	}
+	if len(store.Records) != 50 {
+		t.Fatalf("记录数应为 50,实际 %d", len(store.Records))
+	}
+	// 把剩余 48 条 unpinned 逐条挤出去(每次写入淘汰一条),然后容量全部是 pinned。
+	call(map[string]any{"text": "第二条固定记忆", "importance": 1, "pinned": true})
+	for i := 0; i < 48; i++ {
+		call(map[string]any{"text": "又一条 pinned " + fmt.Sprint(i), "importance": 1, "pinned": true})
+	}
+	// 再写一条 pinned 时已无可淘汰项;必须报错,不能静默丢数据。
+	data, _ = json.Marshal(map[string]any{"text": "溢出 pinned", "pinned": true})
+	res, err := reg.Invoke(context.Background(), tools.CallInfo{Name: "memory_write", Args: data})
+	if err != nil || res.Status != tools.StatusError {
+		t.Fatalf("全部 pinned 时应报错,实际 %v %+v", err, res)
 	}
 }

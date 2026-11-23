@@ -929,7 +929,7 @@ func TestAgentMemoryScriptPlugin(t *testing.T) {
 	preset := f.Name()
 	_ = f.Close()
 	t.Cleanup(func() { _ = os.Remove(preset) })
-	body := `{"name":"memory-test","plugins":["../agent/plugins","../../plugins/tool/memory-helper"],"disable":["llm-openai","session-jsonl"],"patch":{"agent-loop":{"model":"replay"},"llm-replay":{"path":"examples/memory-ts/replay.jsonl"},"fs-local":{"workspace":"` + strings.ReplaceAll(workspace, `\`, `\\`) + `"}}}`
+	body := `{"name":"memory-test","plugins":["../agent/plugins","../../plugins/tool/memory-helper"],"disable":["llm-openai","session-jsonl"],"patch":{"agent-loop":{"model":"replay"},"llm-replay":{"path":"examples/memory-ts/replay.jsonl"},"memory-helper":{"autoRecall":true},"fs-local":{"workspace":"` + strings.ReplaceAll(workspace, `\`, `\\`) + `"}}}`
 	if err := os.WriteFile(preset, []byte(body), 0o644); err != nil {
 		t.Fatalf("写临时 preset 失败: %v", err)
 	}

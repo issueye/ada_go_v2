@@ -24,6 +24,7 @@ type ToolSpec = {
 type Ctx = {
   log: (msg: string) => void
   tool: (spec: ToolSpec, handler: (args: any) => any) => void
+  waterfall?: (event: string, handler: (input: any, next: (v: any) => any) => any) => void
 }
 
 // Config 与 preset 里 memory-helper 的 patch 对应;缺省值在 normalizeConfig 补齐。
@@ -36,6 +37,11 @@ type Config = {
   defaultScope?: string
   dedupeThreshold?: number
   maxSummaryChars?: number
+  // autoRecall 打开后,在每次模型请求前按最后一条用户消息自动召回(top N)。
+  autoRecall?: boolean
+  recallLimit?: number
+  recallMaxChars?: number
+  recallMinScore?: number
 }
 type Settings = {
   path: string
@@ -46,6 +52,10 @@ type Settings = {
   defaultScope: Scope
   dedupeThreshold: number
   maxSummaryChars: number
+  autoRecall: boolean
+  recallLimit: number
+  recallMaxChars: number
+  recallMinScore: number
 }
 
 type Scope = "project" | "user" | "global"
@@ -58,6 +68,8 @@ type MemoryRecord = {
   createdAt: string
   updatedAt: string
   fingerprint: string
+  // pinned 的记忆不会被容量/文件上限自动淘汰;需要先手动解除或删除。
+  pinned?: boolean
 }
 type MemoryStore = { version: number; updatedAt: string; records: MemoryRecord[] }
 type Hit = { record: MemoryRecord; score: number }
@@ -145,6 +157,8 @@ function normalizeConfig(raw: Config | undefined): Settings {
   if (!Number.isFinite(dedupe)) dedupe = 0.85
   if (dedupe < 0) dedupe = 0
   if (dedupe > 1) dedupe = 1
+  let recallMinScore = Number(c.recallMinScore)
+  if (!Number.isFinite(recallMinScore) || recallMinScore < 0) recallMinScore = 0
   return {
     path,
     maxRecords: clampInt(c.maxRecords, 2000, 50, 10000),
@@ -154,6 +168,10 @@ function normalizeConfig(raw: Config | undefined): Settings {
     defaultScope,
     dedupeThreshold: dedupe,
     maxSummaryChars: clampInt(c.maxSummaryChars, 240, 60, 1000),
+    autoRecall: c.autoRecall === true,
+    recallLimit: clampInt(c.recallLimit, 5, 1, 20),
+    recallMaxChars: clampInt(c.recallMaxChars, 1200, 200, 8000),
+    recallMinScore,
   }
 }
 
@@ -478,7 +496,8 @@ function normalizeRecord(value: any): MemoryRecord | null {
   const fingerprint = typeof value.fingerprint === "string" && value.fingerprint !== ""
     ? value.fingerprint
     : fingerprintOf(text)
-  return { id: value.id, text, tags, scope, importance, createdAt, updatedAt, fingerprint }
+  const pinned = value.pinned === true
+  return { id: value.id, text, tags, scope, importance, createdAt, updatedAt, fingerprint, pinned }
 }
 
 function loadStore(s: Settings): MemoryStore {
@@ -513,28 +532,38 @@ function loadStore(s: Settings): MemoryStore {
   }
 }
 
+// evictIndex 返回「最该被淘汰」的下标:先按重要度、再按更新时间;
+// pinned 记录不参与淘汰,全部 pinned 时返回 -1(由调用方报错,不静默丢数据)。
 function evictIndex(records: MemoryRecord[]): number {
-  let idx = 0
-  for (let i = 1; i < records.length; i++) {
-    const cur = records[i]
-    const low = records[idx]
-    if (cur.importance < low.importance) idx = i
-    else if (cur.importance === low.importance && cur.updatedAt < low.updatedAt) idx = i
+  let idx = -1
+  for (let i = 0; i < records.length; i++) {
+    if (records[i].pinned === true) continue
+    if (idx < 0 || lowerPriority(records[i], records[idx])) idx = i
   }
   return idx
 }
 
+function lowerPriority(a: MemoryRecord, b: MemoryRecord): boolean {
+  if (a.importance !== b.importance) return a.importance < b.importance
+  return a.updatedAt < b.updatedAt
+}
+
 function saveStore(s: Settings, store: MemoryStore): number {
+  const evictOne = () => {
+    const idx = evictIndex(store.records)
+    if (idx < 0) throw new Error("记忆已满且全部 pinned;请先解除 pinned 或 memory_forget")
+    store.records.splice(idx, 1)
+  }
   let evicted = 0
   while (store.records.length > s.maxRecords) {
-    store.records.splice(evictIndex(store.records), 1)
+    evictOne()
     evicted++
   }
   store.updatedAt = nowISO()
   let body = JSON.stringify(store)
   let guard = 0
   while (utf8Len(body) > MAX_FILE_BYTES && store.records.length > 1 && guard < 200) {
-    store.records.splice(evictIndex(store.records), 1)
+    evictOne()
     evicted++
     guard++
     store.updatedAt = nowISO()
@@ -592,11 +621,12 @@ function findNearDuplicate(s: Settings, store: MemoryStore, scope: Scope, text: 
   return best
 }
 
-function mergeInto(rec: MemoryRecord, text: string, tags: string[], importance: number, now: string): void {
+function mergeInto(rec: MemoryRecord, text: string, tags: string[], importance: number, pinned: boolean, now: string): void {
   for (let i = 0; i < tags.length; i++) {
     if (rec.tags.indexOf(tags[i]) < 0 && rec.tags.length < MAX_TAGS) rec.tags.push(tags[i])
   }
   if (importance > rec.importance) rec.importance = importance
+  if (pinned) rec.pinned = true
   // 新内容明显更长时替换正文,否则保留原文:合并的目标是去重,不是覆盖历史事实。
   if (text.length > rec.text.length * 1.25) {
     rec.text = text
@@ -607,6 +637,7 @@ function mergeInto(rec: MemoryRecord, text: string, tags: string[], importance: 
 
 function renderMeta(rec: MemoryRecord): string {
   let out = "scope=" + rec.scope + ", p" + rec.importance
+  if (rec.pinned === true) out += ", pinned"
   if (rec.tags.length > 0) out += ", tags=" + rec.tags.join("/")
   return out
 }
@@ -617,6 +648,7 @@ function renderRecord(rec: MemoryRecord): string {
     "id: " + rec.id,
     "scope: " + rec.scope,
     "importance: " + rec.importance,
+    "pinned: " + (rec.pinned === true ? "true" : "false"),
     "tags: " + (rec.tags.length > 0 ? rec.tags.join(", ") : "(无)"),
     "created: " + rec.createdAt,
     "updated: " + rec.updatedAt,
@@ -632,6 +664,7 @@ function memoryWrite(s: Settings, args: any): string {
   const scope = normalizeScope(s, args === undefined ? undefined : args.scope)
   const tags = normalizeTags(args === undefined ? undefined : args.tags)
   const importance = normalizeImportance(args === undefined ? undefined : args.importance, 3)
+  const pinned = args !== undefined && args.pinned === true
   const store = loadStore(s)
   const fingerprint = fingerprintOf(text)
   const now = nowISO()
@@ -643,7 +676,7 @@ function memoryWrite(s: Settings, args: any): string {
   }
   if (target === null) target = findNearDuplicate(s, store, scope, text)
   if (target !== null) {
-    mergeInto(target, text, tags, importance, now)
+    mergeInto(target, text, tags, importance, pinned, now)
     const evicted = saveStore(s, store)
     let msg = "与已有记忆 #" + shortId(target.id) + " 合并(" + renderMeta(target) + ")。当前共 " + store.records.length + " 条。"
     if (evicted > 0) msg += " 已淘汰 " + evicted + " 条低价值记忆。"
@@ -659,6 +692,7 @@ function memoryWrite(s: Settings, args: any): string {
     createdAt: now,
     updatedAt: now,
     fingerprint,
+    pinned,
   }
   store.records.push(record)
   const evicted = saveStore(s, store)
@@ -684,7 +718,8 @@ function memorySearch(s: Settings, args: any): string {
     const hit = hits[i]
     const rec = hit.record
     lines.push((i + 1) + ". #" + shortId(rec.id) + " [相关度 " + hit.score.toFixed(2) +
-      ", " + rec.scope + ", p" + rec.importance + "] " + summary(rec.text, s.maxSummaryChars))
+      ", " + rec.scope + ", p" + rec.importance + (rec.pinned === true ? ", pinned" : "") + "] " +
+      summary(rec.text, s.maxSummaryChars))
     if (rec.tags.length > 0) lines.push("   tags: " + rec.tags.join(", "))
   }
   return lines.join("\n")
@@ -719,8 +754,9 @@ function memoryList(s: Settings, args: any): string {
   ]
   for (let i = start; i < end; i++) {
     const rec = items[i]
-    lines.push("#" + shortId(rec.id) + " p" + rec.importance + " " + rec.scope + " " +
-      dateOnly(rec.updatedAt) + " " + summary(rec.text, s.maxSummaryChars))
+    lines.push("#" + shortId(rec.id) + " p" + rec.importance + " " + rec.scope +
+      (rec.pinned === true ? " [pin]" : "") + " " + dateOnly(rec.updatedAt) + " " +
+      summary(rec.text, s.maxSummaryChars))
     if (rec.tags.length > 0) lines.push("   tags: " + rec.tags.join(", "))
   }
   return lines.join("\n")
@@ -749,6 +785,10 @@ function memoryUpdate(s: Settings, args: any): string {
   if (args !== undefined && args.importance !== undefined) {
     const importance = normalizeImportance(args.importance, 3)
     if (importance !== rec.importance) { rec.importance = importance; changed = true }
+  }
+  if (args !== undefined && args.pinned !== undefined) {
+    const pinned = args.pinned === true
+    if (pinned !== (rec.pinned === true)) { rec.pinned = pinned; changed = true }
   }
   if (!changed) throw new Error("没有需要更新的字段")
   for (let i = 0; i < store.records.length; i++) {
@@ -806,11 +846,103 @@ function memoryStats(s: Settings): string {
   ].join("\n")
 }
 
+// ---------- 自动召回 ----------
+
+// lastUserText 取最后一条用户消息的文本块。多步循环里最后一条 user 就是本轮输入,
+// 工具结果不算查询,否则召回会被工具输出带偏。
+function lastUserText(messages: any[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m === null || typeof m !== "object" || m.role !== "user") continue
+    const content = Array.isArray(m.content) ? m.content : []
+    let text = ""
+    for (let j = 0; j < content.length; j++) {
+      const block = content[j]
+      if (block !== null && typeof block === "object" && typeof block.text === "string" &&
+        (block.kind === "text" || block.kind === undefined)) {
+        text += block.text + "\n"
+      }
+    }
+    const trimmed = text.trim()
+    if (trimmed !== "") return trimmed.length > 2000 ? trimmed.slice(0, 2000) : trimmed
+  }
+  return ""
+}
+
+// recallDigest 只产出「值得塞进提示」的短摘要:不复制正文、不带内部元数据,
+// 并按 recallMaxChars 截断,避免自动召回把上下文预算吃光。
+function recallDigest(s: Settings, query: string): string {
+  const store = loadStore(s)
+  const hits = rank(store.records, query, "", [], s.recallLimit)
+  const lines: string[] = []
+  let used = 0
+  for (let i = 0; i < hits.length; i++) {
+    const hit = hits[i]
+    if (hit.score < s.recallMinScore) continue
+    const rec = hit.record
+    let line = "- #" + shortId(rec.id) + " [" + rec.scope + ", p" + rec.importance + "] " +
+      summary(rec.text, 160)
+    if (used + line.length > s.recallMaxChars) {
+      if (lines.length === 0) line = line.slice(0, s.recallMaxChars)
+      else break
+    }
+    lines.push(line)
+    used += line.length
+  }
+  if (lines.length === 0) return ""
+  return "【长期记忆】以下是与当前请求相关的记忆,引用时以它们为准;不相关可以忽略:\n" +
+    lines.join("\n")
+}
+
+// applyAutoRecall 是 llm/request 的中间件:先让下游处理请求,再按需插入一条
+// system 消息。召回失败不能让模型请求失败,所以异常只记日志并原样返回。
+//
+// 注意:JS 返回的是 JSON 对象;jtsr(执行层)会把它还原成 *llm.Request,
+// 因此 agent-loop 能看到新增的 system 消息(见 platform/jsrt/waterfall_coerce.go)。
+function applyAutoRecall(s: Settings, ctx: Ctx, req: any, next: (v: any) => any): any {
+  const out = next(req)
+  if (!s.autoRecall) return out
+  try {
+    const base = out !== null && typeof out === "object" ? out : req
+    if (base === null || typeof base !== "object") return out
+    const messages = Array.isArray(base.messages) ? base.messages : null
+    if (messages === null) return out
+    const query = lastUserText(messages)
+    if (query === "") return out
+    // 已经注入过(同一请求被重复派发)就不要重复占预算。
+    for (let i = 0; i < messages.length; i++) {
+      const m = messages[i]
+      if (m === null || typeof m !== "object" || m.role !== "system") continue
+      const blocks = Array.isArray(m.content) ? m.content : []
+      for (let j = 0; j < blocks.length; j++) {
+        const b = blocks[j]
+        if (b !== null && typeof b === "object" && typeof b.text === "string" &&
+          b.text.indexOf("【长期记忆】") === 0) return out
+      }
+    }
+    const digest = recallDigest(s, query)
+    if (digest === "") return out
+    // 插在首条 system(角色/规则)之后,保持系统提示在最前面。
+    const at = messages.length > 0 ? 1 : 0
+    messages.splice(at, 0, { role: "system", content: [{ kind: "text", text: digest }] })
+    return out
+  } catch (err) {
+    ctx.log("memory auto-recall 跳过: " + errorText(err))
+    return out
+  }
+}
+
 // ---------- 注册 ----------
 
 export function apply(ctx: Ctx, config?: Config): void {
   const s = normalizeConfig(config)
-  ctx.log("memory-helper 装配完成(memory=" + s.path + ", maxRecords=" + s.maxRecords + ")")
+  ctx.log("memory-helper 装配完成(memory=" + s.path + ", maxRecords=" + s.maxRecords +
+    ", autoRecall=" + (s.autoRecall ? "on" : "off") + ")")
+
+  if (s.autoRecall) {
+    if (typeof ctx.waterfall !== "function") throw new Error("autoRecall 需要宿主提供 ctx.waterfall")
+    ctx.waterfall("llm/request", (req: any, next: (v: any) => any) => applyAutoRecall(s, ctx, req, next))
+  }
 
   ctx.tool(
     {
@@ -824,6 +956,7 @@ export function apply(ctx: Ctx, config?: Config): void {
           tags: { type: "array", items: { type: "string" }, description: "可选标签,最多 8 个" },
           scope: { type: "string", enum: ["project", "user", "global"], description: "作用域,默认 project" },
           importance: { type: "integer", minimum: 1, maximum: 5, description: "重要度 1-5,默认 3" },
+          pinned: { type: "boolean", description: "固定该记忆,不参与容量/文件上限自动淘汰" },
         },
       },
     },
@@ -896,6 +1029,7 @@ export function apply(ctx: Ctx, config?: Config): void {
           tags: { type: "array", items: { type: "string" }, description: "替换标签" },
           scope: { type: "string", enum: ["project", "user", "global"], description: "新的作用域" },
           importance: { type: "integer", minimum: 1, maximum: 5, description: "新的重要度" },
+          pinned: { type: "boolean", description: "是否固定该记忆(不参与自动淘汰)" },
         },
       },
     },

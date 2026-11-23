@@ -36,11 +36,11 @@ examples/memory-ts/
 
 | 工具 | 参数 | 行为 |
 |---|---|---|
-| `memory_write` | `text`(必填)、`tags`、`scope`、`importance` | 新增;精确或近似重复会合并到已有记录 |
+| `memory_write` | `text`(必填)、`tags`、`scope`、`importance`、`pinned` | 新增;精确或近似重复会合并到已有记录 |
 | `memory_search` | `query`(必填)、`scope`、`tags`、`limit` | 关键词检索,返回短 id + 相关度 + 摘要 |
 | `memory_read` | `id`(必填,支持唯一前缀) | 读取完整正文与元数据 |
 | `memory_list` | `scope`、`tags`、`limit`、`offset` | 按重要度/更新时间倒序分页 |
-| `memory_update` | `id`(必填)+ 任一可改字段 | 修正正文/标签/作用域/重要度 |
+| `memory_update` | `id`(必填)+ 任一可改字段 | 修正正文/标签/作用域/重要度/`pinned` |
 | `memory_forget` | `id` | 物理删除一条记忆 |
 | `memory_stats` | — | 总数、作用域分布、常见标签、词条规模 |
 
@@ -60,7 +60,8 @@ examples/memory-ts/
   "importance": 4,
   "createdAt": "2026-11-23T...",
   "updatedAt": "2026-11-23T...",
-  "fingerprint": "sha256(规范化正文)"
+  "fingerprint": "sha256(规范化正文)",
+  "pinned": false
 }
 ```
 
@@ -104,6 +105,8 @@ embedding provider(见 §11)。
   设成 `1` 关闭近似去重,设成 `0` 完全关闭合并。
 - **淘汰**:写入后记录数超过 `maxRecords`,或 JSON 超过 3 MiB 时,按
   「重要度低 → 更新早」逐个淘汰,并在工具结果里明确告诉模型淘汰了几条。
+- **`pinned` 保护**:`pinned: true` 的记录不参与自动淘汰;全部记录都 pinned 且仍超限时,
+  写入直接报错(不静默丢数据),需要先 `memory_update` 解除或 `memory_forget`。
 
 ## 7. 配置
 
@@ -119,8 +122,29 @@ preset 里对 `memory-helper` 的 patch 会作为 `apply(ctx, config)` 的第二
 | `defaultScope` | `project` | 未传 `scope` 时的作用域 |
 | `dedupeThreshold` | 0.85(0–1) | 近似去重阈值 |
 | `maxSummaryChars` | 240(60–1000) | 检索/列表里的正文摘要长度 |
+| `autoRecall` | `false` | 每次模型请求前按最后一条用户消息自动召回 |
+| `recallLimit` | 5(1–20) | 自动召回最多几条 |
+| `recallMaxChars` | 1200(200–8000) | 注入的回忆摘要总字符上限 |
+| `recallMinScore` | 0(≥0) | 自动召回的最低相关度 |
 
 作用域固定为 `project` / `user` / `global`;工具参数里传未知值会被拒绝,不做静默归一。
+
+### 7.1 自动召回(llm/request 中间件)
+
+`autoRecall: true` 时插件在 `llm/request` 上注册一个 waterfall:
+
+1. 先调 `next(req)` 让下游策略跑完;
+2. 从请求的 `messages` 里取**最后一条 user 消息**作为查询(工具结果不算查询);
+3. 用同一套 BM25 排序取 top `recallLimit` 条,受 `recallMinScore` 与 `recallMaxChars` 约束;
+4. 在首条 system 提示之后插入一条 `system` 消息,正文以 `【长期记忆】` 开头;
+5. 没有命中、查询为空、记忆文件读失败都**原样放行**——召回失败不能让模型请求失败。
+
+这条链路能成立,是因为执行层的 waterfall 现在会把 JS 返回的 JSON 还原成输入的具体类型
+(`*llm.Request`),否则 `agent-loop` 的 `v.(*llm.Request)` 会失败、消息被丢弃
+(见 [m2-execution.md](m2-execution.md) §3 的 waterfall 语义)。
+
+自动召回只覆盖 LLM 请求;`prompts/assemble` 的静态 Section 仍不参与,所以系统提示里的
+使用规则(`system-prompt.tools`)仍然保留,两者互补。
 
 ## 8. 运行
 
@@ -135,7 +159,7 @@ go run ./cmd/ada agent --preset examples/memory-ts/memory.preset.json -message "
 ## 9. 测试
 
 ```powershell
-go test ./platform/bridge -run 'TestJSToolMemory|TestNodeCrypto'
+go test ./platform/bridge -run 'TestJSToolMemory|TestJSMemoryAutoRecall|TestNodeCrypto'
 go test ./platform/host/cli -run 'TestUpMemoryScriptPlugin|TestAgentMemoryScriptPlugin'
 ```
 
@@ -143,6 +167,9 @@ go test ./platform/host/cli -run 'TestUpMemoryScriptPlugin|TestAgentMemoryScript
 |---|---|
 | `node:crypto` 形状与 SHA-256/UUID | `platform/bridge.TestNodeCrypto` |
 | 写入→合并→中文检索→读取→更新→列表→统计→删除 | `platform/bridge.TestJSToolMemory` |
+| `pinned` 不被容量淘汰 + 全部 pinned 时明确报错 | `platform/bridge.TestJSToolMemoryPin` |
+| `llm/request` 自动召回 + JS 返回值还原成 `*llm.Request` | `platform/bridge.TestJSMemoryAutoRecall` |
+| JS waterfall 改写结构体指针输入 | `platform/jsrt.TestWaterfallCoercesStructPointer` |
 | 清单/编译/工具注册 | `platform/host/cli.TestUpMemoryScriptPlugin` |
 | 真实 agent 回路 + 文件落盘 | `platform/host/cli.TestAgentMemoryScriptPlugin` |
 
@@ -158,8 +185,8 @@ go test ./platform/host/cli -run 'TestUpMemoryScriptPlugin|TestAgentMemoryScript
    `audit-log` 记录工具调用本身。
 5. **记忆不是会话事实**:文件在 `.ada/` 下,不写 session 事件;fork/resume/replay 不会
    自动同步记忆,多会话共享同一文件。
-6. **无自动召回**:TS 侧不能改写 prompt(waterfall 的 Go 结构体不会从 JS 对象回填),
-   因此需要模型主动 `memory_search`;示例 preset 用 `system-prompt.tools` 给出使用规则。
+6. **自动召回只覆盖 llm/request**:`prompts/assemble` 的静态 Section 仍不参与;注入的是
+   一条 system 消息,不改变首条系统提示。`autoRecall` 默认关,发布 preset 才打开。
 7. **`node:crypto` 只收字符串**:跨边界不传 Buffer/TypedArray,`Hash.update` 收到非字符串
    会明确报 `TypeError`,不是静默按 UTF-8 近似。
 
@@ -168,5 +195,6 @@ go test ./platform/host/cli -run 'TestUpMemoryScriptPlugin|TestAgentMemoryScript
 1. 让 `ada:fs` 暴露「带版本的读改写」或锁文件原语,把并发写做成事务;
 2. 增加 embedding provider(可复用 `llm-openai` 的 `/embeddings`),检索改成
    词典 + 向量混合排序;
-3. 给 `prompts/assemble` 与 `llm/request` 补 JS 可回填的载荷形态,支持每轮自动召回;
-4. 记忆分片/命名空间(按项目、按用户)与过期策略进 preset 字段。
+3. 让 `prompts/assemble` 也暴露 JS 可回填的语义(现在是静态 Section),减少一条 system 消息;
+4. 记忆分片/命名空间(按项目、按用户)与过期策略进 preset 字段;
+5. 召回命中后回写 `lastUsedAt`/`uses`,用于「常用优先」排序(需要可写的读路径)。

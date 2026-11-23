@@ -85,6 +85,44 @@ export function run(ctx: Ctx) {
 	}
 }
 
+// 13.1 JS 中间件改写「指向结构体的指针」输入时,返回值必须还原成同一类型,
+// 否则内核的 `v.(*T)` 断言会失败,改写被静默丢弃。
+type probeInput struct {
+	Value string `json:"value"`
+	Count int    `json:"count"`
+}
+
+func TestWaterfallCoercesStructPointer(t *testing.T) {
+	_, invokes := waterfallRuntime(t, `type Ctx = { waterfall: (e: string, h: (x: any, next: (v: any) => any) => any) => void }
+export function run(ctx: Ctx) {
+  ctx.waterfall("struct", (x, next) => { const out = next(x); out.value = out.value + "-js"; out.count = out.count + 1; return out })
+  ctx.waterfall("short", (x, _next) => { x.value = x.value + "-short"; return x })
+}`)
+
+	next := func(v any) (any, error) { return v, nil }
+	in := &probeInput{Value: "go", Count: 1}
+	got, err := invokes["struct"](context.Background(), in, next)
+	if err != nil {
+		t.Fatalf("调用 struct 失败: %v", err)
+	}
+	p, ok := got.(*probeInput)
+	if !ok {
+		t.Fatalf("返回值应还原成 *probeInput,实际 %T", got)
+	}
+	if p.Value != "go-js" || p.Count != 2 {
+		t.Fatalf("JS 改写未生效: %+v", p)
+	}
+
+	got, err = invokes["short"](context.Background(), &probeInput{Value: "go", Count: 1}, next)
+	if err != nil {
+		t.Fatalf("调用 short 失败: %v", err)
+	}
+	p, ok = got.(*probeInput)
+	if !ok || p.Value != "go-short" {
+		t.Fatalf("短路返回也应还原类型: %T %+v", got, got)
+	}
+}
+
 // 14. 同一运行时在等待 next 时被再次调用必然死锁,必须快速失败。
 func TestWaterfallReentrantFails(t *testing.T) {
 	_, invokes := waterfallRuntime(t, `type Ctx = { waterfall: (e: string, h: (x: any, next: (v: any) => any) => any) => void }
