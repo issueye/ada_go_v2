@@ -65,6 +65,10 @@ try {
     }
     New-Item -ItemType Directory -Force -Path $pkg | Out-Null
 
+    # 装配基目录锚点:ada-rpc-agent 从 preset 目录向上找 go.mod 或 .ada-base。
+    # 发布包没有 go.mod，靠这个文件让 preset 里 data/workspace 的相对路径落在包根。
+    Set-Content -LiteralPath (Join-Path $pkg ".ada-base") -Value "ada_go_v2 package root" -Encoding utf8
+
     if (-not $SkipBuild) {
         # 用当前宿主(PowerShell 5.1 或 pwsh 7)启动子脚本:两者语法已兼容,
         # 不在没有 pwsh 的机器上硬编码解释器名。

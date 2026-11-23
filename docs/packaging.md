@@ -61,6 +61,7 @@ dist/ada-<version>-<goos>-<goarch>/
   docs/
     a.txt                       # 只读示例工作区
   package.json                  # version/commit/goos/goarch/plugins/binaries
+  .ada-base                     # 装配基目录锚点:preset 里 data/workspace 相对路径的根
   README.txt
 ```
 
@@ -102,8 +103,9 @@ bin/ada plan --preset presets/workspace-release.preset.json
 1. **Go 内置插件自动导出,TS 插件按目录复制**:`builtins-dump` 只包含 Go 插件;
    `text-helper` / `shell-helper` 由脚本单独复制源码与清单。其它 TS 脚本插件仍需在发布项目里
    提供源码/Artifact 与清单。
-2. **preset 路径依赖包根目录**:`llm-replay`、`fs-local.workspace` 是相对进程 cwd 的配置,
-   必须在包根目录运行;`ada-rpc-agent` 由宿主设置 cwd/环境变量。
+2. **preset 路径以包根为装配基目录**:`llm-replay`、`fs-local.workspace` 等配置是相对装配基目录的,
+   包根由脚本写入的 `.ada-base` 锚点标记;`ada` CLI 从包根运行即可,`ada-rpc-agent` 从 preset 目录
+   向上找 `go.mod` 或 `.ada-base`,所以桌面宿主可以直接把 `Agent preset` 指向 `presets/agent-release.preset.json`。
 3. **没有真实端点自动探测**:真实 preset 的 endpoint/model 只来自参数,不在脚本里猜。
 4. **zip 只是本地产物**:未做签名/公证/安装器;发布签名仍走 `install` 的密钥体系。
 5. **交叉编译不能在本机执行自检**:这是有意跳过,不代表包已验证目标平台的运行时行为。

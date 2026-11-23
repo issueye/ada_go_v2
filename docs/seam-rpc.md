@@ -519,7 +519,7 @@ func Plugin() kernel.Plugin // 提供 "rpc"(空 Chain)与 "rpc-transport"(Regist
 | **P1** | `rpc-net`(tcp loopback + unix;Windows AF_UNIX);权限/stale/Addr;集成测试 | ✅ Linux/macOS/Windows 全绿;`unix` 权限测试在支持平台通过 |
 | **P2** | `rpc-pipe`(Windows 命名管道 + ACL + 拒绝远程客户端);非 Windows 空实现 | ✅ Windows CI/本机 `go test ./plugins/provider/rpc-pipe`;`GOOS=linux` 构建通过 |
 | **P3** | `rpc-guard` + `rpc-observe`;caps 语法 `rpc.call`/`rpc.listen`;audit 接入;principal 改写 | ✅ `go test -race ./plugins/policy/rpc-guard ./plugins/policy/rpc-observe`;caps 拒绝接 `caps/deny` |
-| **P4** | TLS/远程 TCP、`SO_PEERCRED`、宿主接入(`ada serve --rpc` 或 desktop Transport 可选) | ⚠️ TLS + 远程 TCP 已落地(`rpc-tls`);`SO_PEERCRED` 待做;宿主接入原型 `cmd/ada-rpc-agent` 已落地(每机器人一个进程、workspace 为工作目录、`bot.info`/`chat.send`;见该目录 README) |
+| **P4** | TLS/远程 TCP、`SO_PEERCRED`、宿主接入(`ada serve --rpc` 或 desktop Transport 可选) | ⚠️ TLS + 远程 TCP 已落地(`rpc-tls`);`SO_PEERCRED` 待做;宿主接入原型 `cmd/ada-rpc-agent` 已落地(每机器人一个进程、workspace 为工作目录、`bot.info`/`chat.send`,并按运行时地址/客户端名挂 `rpc-guard` + `rpc-observe`;见该目录 README) |
 
 预算(超了先拆或写 ADR):seam ≤ 400 行;`rpc-json` ≤ 1200(ADR 0009);`rpc-net` ≤ 400;`rpc-pipe` ≤ 500(仅 windows 文件);`rpc-tls` ≤ 300;`rpc-guard` ≤ 400;`rpc-observe` ≤ 200。
 

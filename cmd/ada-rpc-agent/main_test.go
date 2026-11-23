@@ -1,13 +1,76 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	seamllm "github.com/issueye/ada_go_v2/plugins/seam/llm"
 )
 
+func TestAssemblyBaseFindsPackageMarker(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, packageBaseMarker), []byte("root\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	presets := filepath.Join(dir, "presets")
+	if err := os.MkdirAll(presets, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := assemblyBase(presets); got != dir {
+		t.Fatalf("assemblyBase(%q)=%q, want %q", presets, got, dir)
+	}
+}
+
+func TestIdentityForTrimsInstruction(t *testing.T) {
+	got := identityFor("代码助手", "  先读文件  ")
+	want := "你是 代码助手，一个在本地工作目录里运行的 agent。\n先读文件"
+	if got != want {
+		t.Errorf("identity=%q, want %q", got, want)
+	}
+	if got := identityFor("代码助手", "  "); strings.HasSuffix(got, "\n") {
+		t.Errorf("空指令不应留下尾部换行: %q", got)
+	}
+}
+
+func TestApplyPersonaReplacesDefaultIdentity(t *testing.T) {
+	base := identityFor("机器人", "")
+	system := "## Identity\n" + base + "\n\n## Rules\n- 不要执行危险命令"
+	req := &seamllm.Request{
+		Messages: []seamllm.Message{{
+			Role:    seamllm.RoleSystem,
+			Content: []seamllm.Block{{Kind: seamllm.BlockText, Text: system}},
+		}},
+	}
+	persona := identityFor("第二机器人", "只读 a.txt")
+	applyPersona(req, base, persona)
+	text := req.Messages[0].Content[0].Text
+	if !strings.Contains(text, "第二机器人") || !strings.Contains(text, "只读 a.txt") {
+		t.Errorf("身份没有被替换: %q", text)
+	}
+	if strings.Contains(text, base) {
+		t.Errorf("默认身份仍然存在: %q", text)
+	}
+	if !strings.Contains(text, "## Rules") {
+		t.Errorf("非身份段被破坏: %q", text)
+	}
+
+	// 身份与默认值相同(第一个机器人)时不应改写提示。
+	same := &seamllm.Request{
+		Messages: []seamllm.Message{{
+			Role:    seamllm.RoleSystem,
+			Content: []seamllm.Block{{Kind: seamllm.BlockText, Text: system}},
+		}},
+	}
+	applyPersona(same, base, base)
+	if same.Messages[0].Content[0].Text != system {
+		t.Errorf("相同身份不应改写提示: %q", same.Messages[0].Content[0].Text)
+	}
+}
+
 func TestLoadManifestsPatchesAgentForTheWorkingDirectory(t *testing.T) {
-	root := moduleRoot(".")
+	root := assemblyBase(".")
 	if root == "" {
 		t.Fatal("module root not found")
 	}
@@ -35,8 +98,20 @@ func TestLoadManifestsPatchesAgentForTheWorkingDirectory(t *testing.T) {
 	}
 }
 
+func TestSessionKey(t *testing.T) {
+	if got := sessionKey(3, "42"); got != "session:42" {
+		t.Errorf("sessionKey(3,42) = %q", got)
+	}
+	if got := sessionKey(3, " "); got != "bot:3" {
+		t.Errorf("空 sessionId 应退回 bot 键, got %q", got)
+	}
+	if got := sessionKey(0, ""); got != "default" {
+		t.Errorf("无 bot 无 session 应落到默认会话, got %q", got)
+	}
+}
+
 func TestProviderOverrideSwitchesPreset(t *testing.T) {
-	root := moduleRoot(".")
+	root := assemblyBase(".")
 	if root == "" {
 		t.Fatal("module root not found")
 	}

@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -26,10 +27,13 @@ import (
 	"github.com/issueye/ada_go_v2/platform/plugin"
 	"github.com/issueye/ada_go_v2/platform/preset"
 	agentloop "github.com/issueye/ada_go_v2/plugins/core/agent-loop"
+	rpcguard "github.com/issueye/ada_go_v2/plugins/policy/rpc-guard"
+	rpcobserve "github.com/issueye/ada_go_v2/plugins/policy/rpc-observe"
 	openai "github.com/issueye/ada_go_v2/plugins/provider/llm-openai"
 	rpcjson "github.com/issueye/ada_go_v2/plugins/provider/rpc-json"
 	rpcnet "github.com/issueye/ada_go_v2/plugins/provider/rpc-net"
 	rpcpipe "github.com/issueye/ada_go_v2/plugins/provider/rpc-pipe"
+	seamapproval "github.com/issueye/ada_go_v2/plugins/seam/approval"
 	seamllm "github.com/issueye/ada_go_v2/plugins/seam/llm"
 	seamrpc "github.com/issueye/ada_go_v2/plugins/seam/rpc"
 	seamsession "github.com/issueye/ada_go_v2/plugins/seam/session"
@@ -51,6 +55,10 @@ const (
 	envLLMEndpoint = "ADA_LLM_ENDPOINT"
 	envLLMModel    = "ADA_LLM_MODEL"
 	envLLMAPIKey   = "ADA_LLM_API_KEY"
+
+	// packageBaseMarker 是发布包的装配基目录锚点;发布包没有 go.mod，
+	// preset 里的 data/workspace 相对路径靠它落到包根(见 docs/packaging.md)。
+	packageBaseMarker = ".ada-base"
 )
 
 func main() {
@@ -90,10 +98,10 @@ func run() error {
 		}
 	}
 
-	// Presets often use paths relative to the ada_go_v2 module root (for example
-	// llm-replay's replay.jsonl). Assemble in that base directory, then return
-	// to the selected working directory before serving.
-	base := firstNonEmpty(os.Getenv(envPresetBase), moduleRoot(filepath.Dir(presetPath)), filepath.Dir(presetPath))
+	// Presets often use paths relative to the assembly base (the ada_go_v2 module
+	// root in a checkout, the package root in a release). Assemble in that base
+	// directory, then return to the selected working directory before serving.
+	base := firstNonEmpty(os.Getenv(envPresetBase), assemblyBase(filepath.Dir(presetPath)), filepath.Dir(presetPath))
 	restoreCwd := false
 	if base != "" && !samePath(base, workspace) {
 		if err := os.Chdir(base); err != nil {
@@ -111,6 +119,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	baseIdentity := identityFor(name, instruction)
 	actualModel := firstNonEmpty(presetModel(manifests), model)
 	report := assemble.Plan(manifests)
 	if !report.OK() {
@@ -150,6 +159,24 @@ func run() error {
 			return fmt.Errorf("挂载 rpc: %w", err)
 		}
 	}
+	// 协议底座之外再套门禁与观察:允许的客户端名与方法固定，监听地址由宿主本次传入,
+	// 所以白名单在运行时按环境拼出来，而不是写死在 preset 里(门禁必须是装饰器)。
+	guardConfig := map[string]any{
+		"peers":   []string{client},
+		"methods": []string{"bot.info", "chat.send", "chat.approve"},
+		"listen":  []string{addr.String()},
+	}
+	for _, mount := range []struct {
+		plugin kernel.Plugin
+		config kernel.Config
+	}{
+		{rpcguard.Plugin(), kernel.NewConfig(guardConfig)},
+		{rpcobserve.Plugin(), kernel.NewConfig(nil)},
+	} {
+		if _, err := app.Plugin(mount.plugin, mount.config); err != nil {
+			return fmt.Errorf("挂载 rpc 策略: %w", err)
+		}
+	}
 	chain, err := kernel.Service[*seamrpc.Chain](app.Root(), "rpc")
 	if err != nil {
 		return err
@@ -167,7 +194,7 @@ func run() error {
 		return fmt.Errorf("agent 服务类型不正确: %T", raw)
 	}
 	ctx := context.Background()
-	sessions := map[int]seamsession.Session{}
+	sessions := map[string]seamsession.Session{}
 	open := func(title string) (seamsession.Session, error) {
 		return ag.Open(ctx, seamsession.Meta{Title: title})
 	}
@@ -175,6 +202,9 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("打开会话: %w", err)
 	}
+	// 默认 session 用环境里的身份；chat.send 带来的机器人身份按 session 覆盖。
+	personas := newPersonaStore()
+	personas.set(defaultSess.ID(), sessionPersona{name: name, instruction: instruction})
 
 	server, err := svc.Listen(ctx, addr, seamrpc.ServerOptions{
 		Auth:    seamrpc.Auth{Mode: seamrpc.AuthToken, Token: token},
@@ -260,6 +290,50 @@ func run() error {
 		return nil, nil
 	})
 
+	// 每 session 的身份:宿主在 chat.send 里带上机器人名与指令，这里按 session
+	// 替换装配期的默认身份段;模型与 provider 仍是进程级(见 README 已知边界)。
+	app.Root().OnWaterfall(seamllm.EventRequest, func(_ context.Context, _ *kernel.Context, input any, next kernel.Next) (any, error) {
+		v, err := next(input)
+		if err != nil {
+			return v, err
+		}
+		req, ok := v.(*seamllm.Request)
+		if !ok || req == nil {
+			return v, nil
+		}
+		if persona, ok := personas.get(req.SessionID); ok {
+			applyPersona(req, baseIdentity, persona.identity())
+		}
+		return v, nil
+	}, kernel.WithTimeout(2*time.Second))
+
+	// 只有 preset 里装了 seam/approval 时才接审批:宿主用 chat/approval + chat.approve
+	// 承担审批界面;没有装审批的 preset 行为不变(工具策略照旧 fail-closed)。
+	if v, ok := app.Root().TryService("approval"); ok {
+		if registry, ok := v.(*seamapproval.Registry); ok && registry != nil {
+			bridge := newApprovalBridge(server, stream)
+			if _, err := registry.Register(bridge); err != nil {
+				logger.Warn("注册桌面审批人失败", "error", err)
+			} else if _, err := server.Handle("chat.approve", func(_ context.Context, params json.RawMessage) (any, error) {
+				var in struct {
+					ID     string `json:"id"`
+					Allow  bool   `json:"allow"`
+					Reason string `json:"reason"`
+				}
+				if err := json.Unmarshal(params, &in); err != nil || in.ID == "" {
+					return nil, seamrpc.Invalid("chat.approve 需要 id")
+				}
+				dec := seamapproval.Decision{Allow: in.Allow, Reason: in.Reason, Approver: bridge.Name()}
+				if err := bridge.decide(in.ID, dec); err != nil {
+					return nil, err
+				}
+				return map[string]any{"id": in.ID, "allow": in.Allow}, nil
+			}); err != nil {
+				return err
+			}
+		}
+	}
+
 	profile := map[string]any{
 		"name": name, "model": actualModel, "workspace": workspace,
 		"pid": os.Getpid(), "preset": presetPath, "instruction": instruction,
@@ -272,10 +346,14 @@ func run() error {
 	var agentMu sync.Mutex
 	if _, err := server.Handle("chat.send", func(chatCtx context.Context, params json.RawMessage) (any, error) {
 		var in struct {
-			Turn    int    `json:"turn"`
-			Text    string `json:"text"`
-			BotID   int    `json:"botId"`
-			BotName string `json:"botName"`
+			Turn        int    `json:"turn"`
+			Text        string `json:"text"`
+			BotID       int    `json:"botId"`
+			BotName     string `json:"botName"`
+			Instruction string `json:"instruction"`
+			// SessionID 是宿主侧对话 id:同一个机器人可以有多个对话,每个对话一个
+			// agent session(模型上下文互不影响)。旧客户端不带它时退回每 bot 一个 session。
+			SessionID string `json:"sessionId"`
 		}
 		if err := json.Unmarshal(params, &in); err != nil {
 			return nil, seamrpc.Invalid("chat.send 参数非法: " + err.Error())
@@ -288,24 +366,35 @@ func run() error {
 		stream.begin(in.Turn)
 		defer stream.end()
 		sess := defaultSess
-		if in.BotID > 0 {
-			if s, ok := sessions[in.BotID]; ok {
+		key := sessionKey(in.BotID, in.SessionID)
+		if key != "default" {
+			if s, ok := sessions[key]; ok {
 				sess = s
 			} else {
 				title := firstNonEmpty(in.BotName, name)
 				s, err := open(title)
 				if err == nil {
-					sessions[in.BotID] = s
+					sessions[key] = s
 					sess = s
 				}
 			}
 		}
+		personas.set(sess.ID(), sessionPersona{
+			name: firstNonEmpty(in.BotName, name), instruction: in.Instruction,
+		})
 		res, err := ag.Run(chatCtx, sess, in.Text)
 		if err != nil {
 			if chatCtx.Err() != nil {
 				return nil, chatCtx.Err()
 			}
 			logger.Error("agent 运行失败", "error", err)
+			// 宿主需要可读的失败原因：EINTERNAL 不回细节，日志在子进程里，
+			// 所以这里单独发一条 chat/error(事件只做通知，不是门禁)。
+			reason := strings.TrimSpace(err.Error())
+			if reason == "" {
+				reason = "agent 运行失败"
+			}
+			publish("chat/error", map[string]any{"turn": in.Turn, "reason": reason})
 			return nil, seamrpc.Internal("agent 运行失败")
 		}
 		// 模型没有给出文本增量时(例如非流式 provider),退回整段回放,
@@ -323,6 +412,18 @@ func run() error {
 		return err
 	}
 	return server.Serve(ctx)
+}
+
+// sessionKey 把宿主的一个对话映射到 agent session:sessionId 优先，其次按 botId，
+// 都没有时落到默认会话。旧客户端不带 sessionId，行为与之前一致。
+func sessionKey(botID int, sessionID string) string {
+	if id := strings.TrimSpace(sessionID); id != "" {
+		return "session:" + id
+	}
+	if botID > 0 {
+		return fmt.Sprintf("bot:%d", botID)
+	}
+	return "default"
 }
 
 func streamText(ctx context.Context, server seamrpc.Server, turn int, text string) error {
@@ -418,6 +519,145 @@ func (s *turnStream) toolTook(id string) time.Duration {
 	return time.Since(start)
 }
 
+// sessionPersona 是宿主为单个机器人指定的身份与指令。
+//
+// 一个进程里的多个机器人共享 preset、模型与 provider，但身份不应共享:装配期写入
+// system-prompt 的 identity 是所有 session 的默认值，chat.send 带来的身份在
+// llm/request 里按 session 替换掉默认身份段(provider/模型仍是进程级)。
+type sessionPersona struct {
+	name        string
+	instruction string
+}
+
+func (p sessionPersona) identity() string { return identityFor(p.name, p.instruction) }
+
+// personaStore 记录 session → 宿主传入的身份;chat.send 串行执行，读写都加锁。
+type personaStore struct {
+	mu        sync.Mutex
+	bySession map[string]sessionPersona
+}
+
+func newPersonaStore() *personaStore {
+	return &personaStore{bySession: map[string]sessionPersona{}}
+}
+
+func (s *personaStore) set(sessionID string, p sessionPersona) {
+	if sessionID == "" {
+		return
+	}
+	s.mu.Lock()
+	s.bySession[sessionID] = p
+	s.mu.Unlock()
+}
+
+func (s *personaStore) get(sessionID string) (sessionPersona, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.bySession[sessionID]
+	return p, ok
+}
+
+// approvalBridge 把 seam/approval 的升级请求转给桌面宿主:发 chat/approval 事件，
+// 再等 chat.approve 方法回写决定。没有宿主、超时、格式非法一律按拒绝(fail-closed)。
+type approvalBridge struct {
+	server seamrpc.Server
+	stream *turnStream
+	seq    atomic.Uint64
+
+	mu      sync.Mutex
+	pending map[string]chan seamapproval.Decision
+}
+
+func newApprovalBridge(server seamrpc.Server, stream *turnStream) *approvalBridge {
+	return &approvalBridge{server: server, stream: stream, pending: map[string]chan seamapproval.Decision{}}
+}
+
+// Name 是审批人名;approval 注册表按名字排序选默认审批人。
+func (b *approvalBridge) Name() string { return "desktop-rpc" }
+
+// Approve 发一条 chat/approval 事件并等待宿主决定。
+//
+// 请求必须发生在某一轮里，否则宿主无法把审批路由到对应机器人;超时/取消按拒绝处理。
+func (b *approvalBridge) Approve(ctx context.Context, req seamapproval.Request) (seamapproval.Decision, error) {
+	turn := b.stream.current()
+	if turn <= 0 {
+		return seamapproval.Decision{Allow: false, Reason: "审批请求不在轮次内"},
+			seamrpc.Denied("审批请求不在轮次内")
+	}
+	id := req.ID
+	if id == "" {
+		id = fmt.Sprintf("ap-%d", b.seq.Add(1))
+	}
+	timeout := req.Timeout
+	if timeout <= 0 {
+		timeout = seamapproval.DefaultTimeout
+	}
+	ch := make(chan seamapproval.Decision, 1)
+	b.mu.Lock()
+	b.pending[id] = ch
+	b.mu.Unlock()
+	defer func() {
+		b.mu.Lock()
+		delete(b.pending, id)
+		b.mu.Unlock()
+	}()
+
+	payload := map[string]any{
+		"turn": turn, "id": id, "source": req.Source, "op": req.Op,
+		"target": seamapproval.RedactTarget(req.Target), "reason": req.Reason,
+		"timeoutMs": timeout.Milliseconds(),
+	}
+	if err := b.server.Publish("chat/approval", payload); err != nil {
+		return seamapproval.Decision{Allow: false, Reason: "无法通知宿主"}, err
+	}
+	select {
+	case dec := <-ch:
+		return dec, nil
+	case <-ctx.Done():
+		return seamapproval.Decision{Allow: false, Reason: "宿主未答复"},
+			seamrpc.Denied("审批超时或已取消")
+	}
+}
+
+// decide 回写一次审批决定;未知或已结束的 id 返回 EINVALID。
+func (b *approvalBridge) decide(id string, dec seamapproval.Decision) error {
+	b.mu.Lock()
+	ch, ok := b.pending[id]
+	b.mu.Unlock()
+	if !ok {
+		return seamrpc.Invalid("审批请求不存在或已结束: " + id)
+	}
+	select {
+	case ch <- dec:
+	default:
+	}
+	return nil
+}
+
+// applyPersona 用该 session 的身份替换系统提示里的默认身份段。
+// 只替换装配期写入的 identity 原文，rules/tools 段与预算裁剪结果不动;替换发生在
+// 预算裁剪之后，长度由宿主传入值约束(宿主负责别塞超长指令)。
+func applyPersona(req *seamllm.Request, base, identity string) {
+	if req == nil || identity == "" || identity == base {
+		return
+	}
+	for i := range req.Messages {
+		msg := &req.Messages[i]
+		if msg.Role != seamllm.RoleSystem {
+			continue
+		}
+		for j := range msg.Content {
+			block := &msg.Content[j]
+			if block.Kind != seamllm.BlockText || !strings.Contains(block.Text, base) {
+				continue
+			}
+			block.Text = strings.Replace(block.Text, base, identity, 1)
+			return
+		}
+		return
+	}
+}
+
 // blockText 把工具结果的文本块拼成一段,并限制回传体积。
 func blockText(blocks []seamllm.Block, limit int) string {
 	var b strings.Builder
@@ -469,17 +709,25 @@ func loadManifests(presetPath, workspace, name, instruction string, ov llmOverri
 				setConfig(m, "tmp", filepath.Join(workspace, ".ada-tmp"))
 			}
 		case "system-prompt":
-			identity := "你是 " + name + "，一个在本地工作目录里运行的 agent。"
-			if strings.TrimSpace(instruction) != "" {
-				identity += "\n" + instruction
-			}
-			setConfig(m, "identity", identity)
+			setConfig(m, "identity", identityFor(name, instruction))
 		}
 	}
 	if err := applyLLMOverride(manifests, ov); err != nil {
 		return nil, err
 	}
 	return manifests, nil
+}
+
+// identityFor 拼出 system-prompt 的身份段。
+//
+// 装配期与每 session 的替换都走这一条规则，替换时才能按原文精确匹配;
+// 指令做 TrimSpace 是为了让「同一个值来自环境变量或 chat.send」不产生两个版本。
+func identityFor(name, instruction string) string {
+	out := "你是 " + name + "，一个在本地工作目录里运行的 agent。"
+	if ins := strings.TrimSpace(instruction); ins != "" {
+		out += "\n" + ins
+	}
+	return out
 }
 
 // applyLLMOverride lets the desktop host choose the provider without editing
@@ -596,17 +844,20 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// moduleRoot walks up from start until it finds the ada_go_v2 go.mod. It lets
-// presets that reference repository-relative files keep working when the bot
-// process is started in another working directory.
-func moduleRoot(start string) string {
+// assemblyBase walks up from start until it finds an assembly base anchor:
+// go.mod in a source checkout, .ada-base in a release package. It lets presets
+// that reference base-relative files (llm-replay's replay.jsonl, workspace roots)
+// keep working when the bot process is started in another working directory.
+func assemblyBase(start string) string {
 	dir, err := filepath.Abs(start)
 	if err != nil {
 		return ""
 	}
 	for {
-		if fi, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil && !fi.IsDir() {
-			return dir
+		for _, anchor := range []string{"go.mod", packageBaseMarker} {
+			if fi, err := os.Stat(filepath.Join(dir, anchor)); err == nil && !fi.IsDir() {
+				return dir
+			}
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {

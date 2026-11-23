@@ -48,7 +48,9 @@ fs-sandbox / shell-guard ──可选 inject "approval"──▶ 拒绝时 Ask()
 
 ## 4. 偏差与边界
 
-1. **审批人**:`approval-deny`(默认拒绝)与 `approval-cli`(交互式 y/yes)已落地;桌面 UI 审批与 `core/approval`(M4.5)未实现。
+1. **审批人**:`approval-deny`(默认拒绝)、`approval-cli`(交互式 y/yes)与桌面桥的 `desktop-rpc`
+   (`cmd/ada-rpc-agent` 在 preset 装了 `seam-approval` 时注册,经 `chat/approval`/`chat.approve` 往返)
+   已落地;`core/approval`(M4.5)未实现。桌面审批仍由宿主负责超时/取消,超时按拒绝。
 2. **`approval/requested` 已实现**:`Registry.SetNotifier` 在 `Ask` 等待决定前广播;没有审批人时不广播(fail-closed 先决)。
 3. **批准绕过沙箱判定**:批准后的放行由策略层决定,OS 级后端尚未实现「按批准临时提升模式」。
 4. **caps 已存在、尚未与审批合并**:`caps-gate`/`shell-guard` 做静态能力授权,`approval` 做动态升级;两者仍是两条独立闸门,没有「批准后临时提权」的统一模型。
