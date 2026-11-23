@@ -54,7 +54,7 @@ import (
 	seamshell "github.com/issueye/ada_go_v2/plugins/seam/shell"
 	seamtools "github.com/issueye/ada_go_v2/plugins/seam/tools"
 	seamworkspace "github.com/issueye/ada_go_v2/plugins/seam/workspace"
-	toolworkspace "github.com/issueye/ada_go_v2/plugins/tool/workspace"
+	toolworkspace "github.com/issueye/ada_go_v2/plugins/tool/workspace-helper"
 )
 
 // Plugins 返回编译进宿主的内置 Go 插件注册表。
@@ -81,7 +81,7 @@ func Plugins() map[string]func() kernel.Plugin {
 		"seam-workspace":   seamworkspace.Plugin,
 		"workspace-local":  workspacelocal.Plugin,
 		"workspace-guard":  workspaceguard.Plugin,
-		"tool-workspace":   toolworkspace.Plugin,
+		"workspace-helper": toolworkspace.Plugin,
 		"seam-shell":       seamshell.Plugin,
 		"shell-local":      shelllocal.Plugin,
 		"shell-guard":      shellguard.Plugin,

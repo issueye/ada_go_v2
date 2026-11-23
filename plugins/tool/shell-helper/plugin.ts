@@ -1,4 +1,4 @@
-// tool-shell 的 TS 实现:把 shell seam 暴露成模型工具 run_shell。
+// shell-helper 的 TS 实现:把 shell seam 暴露成模型工具 run_shell。
 //
 // 安全边界仍属于 shell 实现与策略(shell-guard/sandbox/approval),本插件只做
 // 参数映射与结果整理。命令执行走宿主注入模块 ada:shell 的结构化 exec:
@@ -138,7 +138,7 @@ export function apply(ctx: Ctx, cfg?: Config): void {
   if (maxTimeout > 1800) maxTimeout = 1800
   maxTimeout = Math.floor(maxTimeout)
 
-  ctx.log("tool-shell(ts) 装配完成,program=" + program + ", maxTimeout=" + maxTimeout + "s")
+  ctx.log("shell-helper(ts) 装配完成,program=" + program + ", maxTimeout=" + maxTimeout + "s")
 
   ctx.tool(
     {

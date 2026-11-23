@@ -1,4 +1,4 @@
-// Package toolworkspace 是 `tool/workspace`:把工作区查询暴露成只读模型工具。
+// Package toolworkspace 是 `workspace-helper`:把工作区查询暴露成只读模型工具。
 //
 // 它不提供切换工具:工作区根属于宿主选择,模型只能查询自己所在的工作区。
 // 工具结果只包含 Info,绝不包含 Target.Host。
@@ -17,7 +17,7 @@ import (
 )
 
 // PluginName 是插件 id 与工具来源。
-const PluginName = "tool-workspace"
+const PluginName = "workspace-helper"
 
 const (
 	infoTool = "workspace_info"
@@ -31,7 +31,7 @@ type infoOutput struct {
 	Workspace workspace.Info `json:"workspace"`
 }
 
-// Plugin 返回 tool-workspace 插件:inject tools 与 workspace,注册两个只读工具。
+// Plugin 返回 workspace-helper 插件:inject tools 与 workspace,注册两个只读工具。
 func Plugin() kernel.Plugin {
 	return kernel.Func(PluginName, func(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, error) {
 		registry, err := kernel.Service[*tools.Registry](ctx, "tools")

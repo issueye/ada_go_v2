@@ -1644,7 +1644,7 @@ preset 的形态（数据，不是代码）：
     { "id": "fs-local",     "plugin": "provider/fs-local" },
     { "id": "fs-sandbox",   "plugin": "policy/fs-sandbox" },
     { "id": "text-helper",  "plugin": "tool/text-helper" },
-    { "id": "tool-shell",   "plugin": "tool/shell" },
+    { "id": "shell-helper", "plugin": "tool/shell-helper" },
     { "id": "compaction",   "plugin": "core/compaction-basic" },
     { "id": "approval",     "plugin": "core/approval", "config": { "mode": "ask" } }
   ]

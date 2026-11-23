@@ -25,7 +25,7 @@
 | C4c 脚本持久化工具 | `examples/task-ts/plugins/task-helper`、`platform/bridge`(`ada:fs`) | `cli.TestUpTaskScriptPlugin`、`cli.TestAgentTaskScriptPlugin`;真实端点手工 | 任务文件不是会话事实;read-modify-write 无事务 |
 | C4d 脚本命令工具 | `examples/command-ts/plugins/command-helper`、`ada:shell` | `cli.TestUpCommandScriptPlugin`、`cli.TestAgentCommandScriptPlugin`;真实端点手工 | 白名单不是安全边界;无 shell 解析 |
 | C4e 脚本文本工具 | `examples/text-ts/plugins/text-helper`、`ada:fs` | `cli.TestUpTextScriptPlugin`、`cli.TestAgentTextScriptPlugin`;真实端点手工 | 搜索字面量/无正则;fs-local 路径约束 |
-| C4f TS shell 工具 | `plugins/tool/shell`(TS)、`platform/bridge`(`ada:shell.exec`/结构化工具结果)、`platform/jsrt` | `bridge.TestJSToolResultMapping`、`TestJSShellExecStructured`、`cli.TestAgentToolShellScriptPlugin` | 仍是策略/沙箱之外的执行入口;发布安全边界见 tool-shell.md |
+| C4f TS shell 工具 | `plugins/tool/shell-helper`(TS)、`platform/bridge`(`ada:shell.exec`/结构化工具结果)、`platform/jsrt` | `bridge.TestJSToolResultMapping`、`TestJSShellExecStructured`、`cli.TestAgentToolShellScriptPlugin` | 仍是策略/沙箱之外的执行入口;发布安全边界见 tool-shell-helper.md |
 | C4g Node 内置模块 | `platform/jsrt`、`platform/jsrt/nodemods`、moejs `node` 包 | `bridge.TestNodeBuiltins`、`TestNodeChildProcess`、`TestNodeHTTPDNSNet`、`TestNodeHTTPError`、`TestNodeFSDisabledByPolicy` | `node:fs/path/os/events/util/assert/url/querystring/string_decoder/process/child_process/http/https/dns/net/buffer`;有 fs/workspace 策略时 `node:fs` 不可用;网络模块不做 `net-guard` 限制(ADR 0011/0012,已移除该策略);无 `createServer`/`listen` |
 | C5 agent-loop | `plugins/core/agent-loop` | `agentloop.TestTurnWithReplayAndTool`、`TestContextBudgetReturnsECONTEXT`、`TestCompactionFitsBudget`、`TestParallelTools` | 并行工具(maxParallelTools);contextBudget + compaction-basic;模型摘要可选;无 core/agent 拆分 |
 | C6 最小 preset + golden | `examples/agent` | `ada plan/up --preset examples/agent/agent.preset.json`;事件序列 golden;`TestRealAgentTurn` 实测真实端点 tool call | 默认回放模型;真实端点需 env |
@@ -73,7 +73,7 @@
 | workspace 契约与链 | `plugins/seam/workspace` | `workspace`(5) | Chain/绑定/错误码;seam 无实现 |
 | 本地工作区 provider | `plugins/provider/workspace-local` | `workspace-local`(8) | 多根/只读/符号链接;根在装配期校验 |
 | 路径策略 | `plugins/policy/workspace-guard` | `workspace-guard`(5) | 段前缀 + 单段 glob;非完整 gitignore |
-| 工作区查询工具 | `plugins/tool/workspace` | `tool-workspace`(3) | 只读;结果不含宿主根 |
+| 工作区查询工具 | `plugins/tool/workspace-helper` | `workspace-helper`(3) | 只读;结果不含宿主根 |
 | fs/shell 托管解析 | `provider/fs-local`、`provider/shell-local` | `fs-local` 托管模式 3 例、`shell-local` 托管模式 3 例 | 旧 preset 仍走独立模式;`/tmp` 仍本地 |
 | 会话绑定 / CLI | `core/agent-loop`、`platform/host/cli` | `agentloop.TestWorkspaceBindingPropagates`、`cli.TestAgentWorkspace` | 绑定来自 `session.Meta.Workspace`;模型无切换工具 |
 | 真实端点回归 | `examples/workspace/real.preset.json`、`platform/bridge.TestJSNativeFSInheritsCallBinding` | 2026-11-21 手工:docs 查询/读取、docs 只读写拒绝、repo 写读、policy 拒绝、workspace_list、shell 托管 cwd | JS 原生 fs/shell 已继承工具 ctx;事件/waterfall 回调仍用事件 ctx(落 `Current`) |

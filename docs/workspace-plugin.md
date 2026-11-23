@@ -3,7 +3,7 @@
 > 状态：**v1 已实现（W1–W9，2026-11-21）**。契约、provider、工具、策略、fs/shell 托管模式、
 > 会话绑定、CLI 与示例都已落地；多根挂载、远程工作区、prompt 动态段仍按 §2.2 延期。
 > 归属：能力按三段式拆成 `seam/workspace` + `provider/workspace-local` + `policy/workspace-guard`；
-> 模型工具放 `tool/workspace`；会话绑定只改 `core/agent-loop` 的上下文传播，不新增 core 插件。
+> 模型工具放 `workspace-helper`；会话绑定只改 `core/agent-loop` 的上下文传播，不新增 core 插件。
 
 ### 实现文件
 
@@ -11,7 +11,7 @@
 |---|---|---|
 | W1 | [`plugins/seam/workspace`](../plugins/seam/workspace/workspace.go) | Chain/绑定/错误码契约测试 |
 | W2 | [`plugins/provider/workspace-local`](../plugins/provider/workspace-local/workspace_local.go) | 多根/越界/只读/符号链接/切换测试 |
-| W3 | [`plugins/tool/workspace`](../plugins/tool/workspace/workspace.go) | info/list、绑定、无 provider 测试 |
+| W3 | [`plugins/tool/workspace-helper`](../plugins/tool/workspace-helper/workspace.go) | info/list、绑定、无 provider 测试 |
 | W4 | [`plugins/provider/fs-local`](../plugins/provider/fs-local/fs_local.go) | 独立/托管/不一致/未就绪测试 |
 | W5 | [`plugins/provider/shell-local`](../plugins/provider/shell-local/shell_local.go) | 默认 cwd/绑定/只读/不一致测试 |
 | W6 | [`plugins/core/agent-loop`](../plugins/core/agent-loop/agent_loop.go) | 绑定传播到工具 ctx |
@@ -61,7 +61,7 @@
 | 它定义宿主资源「工作区根」的接口吗？ | 是 → `plugins/seam/workspace`（只有类型/接口/错误/事件） |
 | 它实现一个本地目录工作区吗？ | 是 → `plugins/provider/workspace-local` |
 | 它确定性地拒绝某次写/执行吗？ | 是 → `plugins/policy/workspace-guard`（装饰器） |
-| 它给模型提供查询工具吗？ | 是 → `plugins/tool/workspace` |
+| 它给模型提供查询工具吗？ | 是 → `plugins/tool/workspace-helper` |
 | 会话如何带上工作区？ | 已有 `session.Meta.Workspace`；`core/agent-loop` 把它转成调用上下文 |
 
 **为什么不是 `core/workspace`**：工作区是宿主持有的资源边界，不是 agent 循环的一部分。把它放 core 会让 fs/shell 反过来依赖 core，破坏「能力 = seam」。**为什么不是只加一个 preset 字段**：那样仍然没有会话绑定，也没有单一解析路径。
@@ -78,7 +78,7 @@ provider/workspace-local ──Info/ResolveHost──▶ fs-local / shell-local
         │ 可选策略
 policy/workspace-guard（忽略规则、只读之外的拒绝）
         │
-tool/workspace（workspace_info / workspace_list，只读）
+workspace-helper（workspace_info / workspace_list，只读）
 
 session.Meta.Workspace ──agent-loop 上下文──▶ resolver 选择绑定
 ```
@@ -89,7 +89,7 @@ session.Meta.Workspace ──agent-loop 上下文──▶ resolver 选择绑定
 seam/workspace   ✗→ provider/policy/core/tool
 provider/workspace-local ✓→ seam/workspace + kernel
 policy/workspace-guard  ✓→ seam/workspace
-tool/workspace          ✓→ seam/workspace + seam/tools
+workspace-helper        ✓→ seam/workspace + seam/tools
 fs-local / shell-local  ✓→ seam/workspace（可选，仅解析）
 agent-loop              ✓→ seam/workspace（只做 ctx 绑定，不访问实现）
 ```
@@ -368,7 +368,7 @@ if id := sess.Meta().Workspace; id != "" {
 
 ## 9. 工具
 
-`plugins/tool/workspace`，只读，不提供切换：
+`plugins/tool/workspace-helper`，只读，不提供切换：
 
 | 工具 | 参数 | 返回 |
 |---|---|---|
@@ -426,7 +426,7 @@ if id := sess.Meta().Workspace; id != "" {
 | 有 | 有 | 与 workspace 根不同 | `ECONFLICT`，装配失败 |
 | 有 | 有 | 空，但 `/tmp` 配置存在 | `/workspace` 托管，`/tmp` 仍本地 |
 
-旧 preset 不需要改；`fs-local` / `shell-local` 声明了可选依赖 `workspace`，所以旧 preset 的 `ada plan` 会多一条「可选依赖未提供」警告，这是 P6「依赖永不静默」的预期行为。新 preset 若要用工作区能力，加 `seam-workspace` → `workspace-local` →（可选）`workspace-guard` → `tool-workspace`。
+旧 preset 不需要改；`fs-local` / `shell-local` 声明了可选依赖 `workspace`，所以旧 preset 的 `ada plan` 会多一条「可选依赖未提供」警告，这是 P6「依赖永不静默」的预期行为。新 preset 若要用工作区能力，加 `seam-workspace` → `workspace-local` →（可选）`workspace-guard` → `workspace-helper`。
 
 ## 13. 测试矩阵
 
@@ -459,7 +459,7 @@ if id := sess.Meta().Workspace; id != "" {
 |---|---|---|---|
 | W1 | `seam/workspace` 类型 + Chain + 上下文 helper + 契约测试 | 276 / 400 | ✅ 已完成 |
 | W2 | `provider/workspace-local` 多根解析 + 路径安全 + 测试 | ~270 / 800 | ✅ 已完成 |
-| W3 | `tool/workspace` 两个只读工具 + 测试 | ~135 / 800 | ✅ 已完成 |
+| W3 | `workspace-helper` 两个只读工具 + 测试 | ~135 / 800 | ✅ 已完成 |
 | W4 | `fs-local` 托管模式 + 兼容矩阵测试 | 总 ≤ 800 | ✅ 已完成 |
 | W5 | `shell-local` 托管模式 + 测试 | 总 ≤ 800 | ✅ 已完成 |
 | W6 | `agent-loop` 绑定传播 + 测试 | 少量 | ✅ 已完成 |

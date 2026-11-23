@@ -2,7 +2,7 @@
 
 > 给在本仓库工作的 AI 代理与人类协作者。**动代码之前先读这一份**；它与设计文档冲突时，以本文件的红线为准，并立刻提 issue 修正文档。
 
-**当前阶段:M1 内核、M2 执行层、M3 装配、M4 编排(`sched`/`quota`/`flow`(含 fanout/subflow)/`bundle`,内核回收 + 装配层 on-demand 延迟激活(含 onService/onCron/onEvent 触发 helper)+ jobs 跨进程锁)、M4.5 Agent Core 第一刀(`prompts`/`llm`/`tools`/`agent-loop` + `provider/llm-openai`/`llm-replay` + `provider/session-jsonl`(每会话 actor) + `core/session-stats`(turn-stats 投影) + `core/compaction-basic`(确定性摘要) + `agent-loop` 并行工具 + `policy/approval-gate`/`llm-retry`/`tool-timeout` + 最小 preset,已跑通「用户消息 → 模型 → 工具 → 结果」的最小回路)、M5 安全(`fs`/`fs-local`/`fs-sandbox`、`shell`/`shell-local`/`shell-guard`、`sandbox`/`sandbox-none`、`fs-redact` 脱敏、`fs-observe`/`shell-observe` 观察事件、`audit-log` 审计落盘、`shell-redact` 输出脱敏,且 fs/shell 策略已调用 sandbox.Resolve、可升级拒绝走 approval(含 CLI 交互审批)、caps 静态授权 + `caps-gate` 调用点强制(fs/shell)、install 校验/原子落盘/本机索引/CLI 安装同意、`platform/host/cli`/`platform/host/server`/`platform/host/desktop`(视图映射骨架)/`platform/host/registry`(只读仓库服务)宿主适配器(共享 `platform/host/builtins` 内置插件)、网络直连(`node:http`/`net`/`dns` 走宿主标准库,无 `seam/net`/`net-guard`,见 ADR 0011/0012)、`secrets`(seam/secrets + provider/secrets-env + secrets-guard 授权)、`workspace`(seam/workspace + provider/workspace-local + workspace-guard + tool/workspace + fs/shell 托管解析 + 会话绑定)已落地**,M5 剩余 desktop 真实窗口/OS 级沙箱(Linux 后端;见 ADR 0001,复议 2027-01-15);C13 拒绝矩阵与 `ada inspect --chain` 已落地;RPC P0–P4(TLS) 已落地(`rpc-guard`/`rpc-observe`/`rpc-tls`,`SO_PEERCRED` 待做)。本文件始终生效:先用它约束设计,再用它约束实现。
+**当前阶段:M1 内核、M2 执行层、M3 装配、M4 编排(`sched`/`quota`/`flow`(含 fanout/subflow)/`bundle`,内核回收 + 装配层 on-demand 延迟激活(含 onService/onCron/onEvent 触发 helper)+ jobs 跨进程锁)、M4.5 Agent Core 第一刀(`prompts`/`llm`/`tools`/`agent-loop` + `provider/llm-openai`/`llm-replay` + `provider/session-jsonl`(每会话 actor) + `core/session-stats`(turn-stats 投影) + `core/compaction-basic`(确定性摘要) + `agent-loop` 并行工具 + `policy/approval-gate`/`llm-retry`/`tool-timeout` + 最小 preset,已跑通「用户消息 → 模型 → 工具 → 结果」的最小回路)、M5 安全(`fs`/`fs-local`/`fs-sandbox`、`shell`/`shell-local`/`shell-guard`、`sandbox`/`sandbox-none`、`fs-redact` 脱敏、`fs-observe`/`shell-observe` 观察事件、`audit-log` 审计落盘、`shell-redact` 输出脱敏,且 fs/shell 策略已调用 sandbox.Resolve、可升级拒绝走 approval(含 CLI 交互审批)、caps 静态授权 + `caps-gate` 调用点强制(fs/shell)、install 校验/原子落盘/本机索引/CLI 安装同意、`platform/host/cli`/`platform/host/server`/`platform/host/desktop`(视图映射骨架)/`platform/host/registry`(只读仓库服务)宿主适配器(共享 `platform/host/builtins` 内置插件)、网络直连(`node:http`/`net`/`dns` 走宿主标准库,无 `seam/net`/`net-guard`,见 ADR 0011/0012)、`secrets`(seam/secrets + provider/secrets-env + secrets-guard 授权)、`workspace`(seam/workspace + provider/workspace-local + workspace-guard + workspace-helper + fs/shell 托管解析 + 会话绑定)已落地**,M5 剩余 desktop 真实窗口/OS 级沙箱(Linux 后端;见 ADR 0001,复议 2027-01-15);C13 拒绝矩阵与 `ada inspect --chain` 已落地;RPC P0–P4(TLS) 已落地(`rpc-guard`/`rpc-observe`/`rpc-tls`,`SO_PEERCRED` 待做)。本文件始终生效:先用它约束设计,再用它约束实现。
 
 ---
 
@@ -93,7 +93,7 @@
 | [tool-task-helper.md](docs/tool-task-helper.md) | 脚本插件示例:TS task-helper + 注入 ada:fs |
 | [tool-command-helper.md](docs/tool-command-helper.md) | 脚本插件示例:TS command-helper + 注入 ada:shell |
 | [tool-text-helper.md](docs/tool-text-helper.md) | 唯一文件工具:text-helper(TS)+ ada:fs 读写/编辑/搜索/列目录 |
-| [tool-shell.md](docs/tool-shell.md) | TS 工具插件:tool-shell + ada:shell.exec(含 moejs/bridge 扩展) |
+| [tool-shell-helper.md](docs/tool-shell-helper.md) | TS 工具插件:shell-helper + ada:shell.exec(含 moejs/bridge 扩展) |
 | [node-compat.md](docs/node-compat.md) | Node 内置模块兼容层:node:fs/path/os/events/util 等 |
 | [adr/0001](docs/adr/0001-deferred-m5-scope.md) | ADR:OS 级沙箱与真实桌面窗口延期(复议 2027-01-15) |
 | [adr/0002](docs/adr/0002-host-budget-exception.md) | ADR:host 层代码预算例外 |
@@ -109,7 +109,7 @@
 | [adr/0012](docs/adr/0012-remove-seam-net.md) | ADR:移除 seam/net、net-http、net-guard、net-observe |
 | [seam-secrets.md](docs/seam-secrets.md) | M5 secret 能力:seam/secrets 与 provider/secrets-env |
 | [seam-fs.md](docs/seam-fs.md) | M5 安全第一刀:seam/fs、fs-local 实现与 fs-sandbox 策略 |
-| [workspace-plugin.md](docs/workspace-plugin.md) | 工作区:seam/workspace、workspace-local、workspace-guard、tool/workspace 与会话绑定 |
+| [workspace-plugin.md](docs/workspace-plugin.md) | 工作区:seam/workspace、workspace-local、workspace-guard、workspace-helper 与会话绑定 |
 | [seam-shell.md](docs/seam-shell.md) | M5 安全第二刀:seam/shell、shell-local 实现与 shell-guard 策略 |
 | [seam-sandbox.md](docs/seam-sandbox.md) | M5 安全第三刀:seam/sandbox 与 sandbox-none(policy-only) |
 | [seam-approval.md](docs/seam-approval.md) | M5 安全第四刀:seam/approval、approval-deny 与 fs 升级审批 |
@@ -258,7 +258,7 @@ platform/host/*   ✓→ 全部
 - **内置工具插件一律用 `<xx>-helper` 命名**：目录 `plugins/tool/<xx>-helper`，id 与目录同名，如 `text-helper`、`shell-helper`、`git-helper`。`<xx>` 是工具面向的领域（`text`/`shell`/`git`/`task`/`command`/`workspace`），不是实现方式。
   - 为什么：`helper` 直接表明「这是一组给模型用的工具」，与 seam（契约）、provider（实现）、policy（门禁）的命名区分开；`tool-fs` 这类前缀与目录 `plugins/tool/` 重复，`fs`/`shell` 裸名又会和 `fs-local`/`shell-local` 这类 provider 撞语义。
   - 适用范围：仅 `plugins/tool/*`。seam/provider/policy/core 继续用原来的 `seam-`/`provider-`/`policy-`/`core-` 及实现名（`fs-local`、`shell-guard`），不套用本规则。
-  - 存量例外：`tool-shell`、`tool-workspace` 尚未改名（应为 `shell-helper`、`workspace-helper`），复议日期 2026-12-31；新插件不再新增例外。
+  - 现状：`text-helper`、`shell-helper`、`workspace-helper` 以及示例里的 `git-helper`/`task-helper`/`command-helper` 均已符合本规则；新增插件不再允许例外。
 - 服务名：小写单数（`llm`、`tools`、`session`、`prompts`）。
 - 事件名：`域/动词`，全小写，如 `turn/before`、`tools/pre-execute`、`fs/observe`；**新增事件必须写进对应契约文档**。
   - 两个命名空间不得混用：**总线事件**用服务复数（`tools/*`、`llm/*`），**会话事件类型**用单数（`tool/result`、`assistant/message`），见 `seam-api.md` §1.7。

@@ -86,7 +86,7 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 | [tool-task-helper.md](docs/tool-task-helper.md) | 脚本插件示例:TS task-helper + 注入 ada:fs |
 | [tool-command-helper.md](docs/tool-command-helper.md) | 脚本插件示例:TS command-helper + 注入 ada:shell |
 | [tool-text-helper.md](docs/tool-text-helper.md) | 唯一文件工具:text-helper(TS)+ ada:fs 读写/编辑/搜索/列目录 |
-| [tool-shell.md](docs/tool-shell.md) | TS 工具插件:tool-shell + ada:shell.exec(含 moejs/bridge 扩展) |
+| [tool-shell-helper.md](docs/tool-shell-helper.md) | TS 工具插件:shell-helper + ada:shell.exec(含 moejs/bridge 扩展) |
 | [node-compat.md](docs/node-compat.md) | Node 内置模块兼容层:node:fs/path/os/events/util 等 |
 | [adr/0001](docs/adr/0001-deferred-m5-scope.md) | ADR:延迟 OS 级沙箱与真实桌面窗口(复议 2027-01-15) |
 | [adr/0002](docs/adr/0002-host-budget-exception.md) | ADR:host 层代码预算例外(CLI 适配器) |
@@ -103,7 +103,7 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 | [seam-secrets.md](docs/seam-secrets.md) | M5 secret 能力:seam/secrets 与 provider/secrets-env |
 | [seam-session.md](docs/seam-session.md) | seam/session 与 session-memory |
 | [seam-fs.md](docs/seam-fs.md) | M5:seam/fs、fs-local 与 fs-sandbox |
-| [workspace-plugin.md](docs/workspace-plugin.md) | 工作区:seam/workspace、workspace-local、workspace-guard、tool/workspace、会话绑定与 fs/shell 托管解析 |
+| [workspace-plugin.md](docs/workspace-plugin.md) | 工作区:seam/workspace、workspace-local、workspace-guard、workspace-helper、会话绑定与 fs/shell 托管解析 |
 | [seam-shell.md](docs/seam-shell.md) | M5:seam/shell、shell-local 与 shell-guard |
 | [seam-sandbox.md](docs/seam-sandbox.md) | M5:seam/sandbox 与 sandbox-none |
 | [seam-approval.md](docs/seam-approval.md) | M5:seam/approval、approval-deny 与升级审批 |
@@ -144,7 +144,7 @@ go run ./cmd/ada up --preset examples/secrets/secrets.preset.json # M5:secrets �
 go run ./cmd/ada agent --preset examples/git-ts/git.preset.json -message "看看 git 状态" # 脚本插件 + 注入模块
 go run ./cmd/ada agent --preset examples/task-ts/task.preset.json -message "添加任务并列出" # 脚本插件 + ada:fs
 go run ./cmd/ada agent --preset examples/command-ts/command.preset.json -message "执行 git --version" # 脚本插件 + 受控命令
-go run ./cmd/ada agent --preset examples/tool-shell-ts/shell.preset.json -message "执行命令" # TS 工具插件 + ada:shell.exec
+go run ./cmd/ada agent --preset examples/shell-helper-ts/shell.preset.json -message "执行命令" # TS 工具插件 + ada:shell.exec
 go run ./cmd/ada agent --preset examples/text-ts/text.preset.json -message "写文件、替换并搜索" # 脚本插件 + 文本工具
 go run ./cmd/ada agent --preset examples/workspace/workspace.preset.json --workspace docs -message "查询工作区并读取 a.txt" # 工作区绑定 + 只读 docs
 go run ./cmd/ada agent --preset examples/workspace/real.preset.json --workspace docs -message "查询工作区并读取 a.txt" # 工作区真实端点(需 ADA_LLM_API_KEY)
@@ -163,7 +163,7 @@ pwsh scripts/bench.ps1                       # 性能预算:≤20 μs/次、50 �
 
 Node 内置模块:`node:fs`/`node:fs/promises`/`node:buffer`(moejs `node` 包)与 `node:path`/`node:os`/`node:events`/`node:util`/`node:assert`/`node:url`/`node:querystring`/`node:string_decoder`/`node:process`/`node:child_process`/`node:http`/`node:https`/`node:dns`/`node:dns/promises`/`node:net`(宿主 embed);`node:fs` 在 fs/workspace 有策略装饰器时不可用,避免绕过安全链;网络模块直连标准库,`seam/net` 与 `net-guard` 已移除(见 [ADR 0011](docs/adr/0011-node-network-direct.md)、[ADR 0012](docs/adr/0012-remove-seam-net.md))。见 [node-compat.md](docs/node-compat.md)。
 
-已完成:`platform/kernel/`、`platform/kernel/schema`、`cmd/ada`、`cmd/ada-demo`、`cmd/ada-ts-demo`、`platform/compile/`、`platform/jsrt/`、`platform/bridge/`、`platform/plugin/`、`platform/preset/`、`platform/assemble/`(含延迟激活)、`platform/loader/`、`platform/sched/`、`platform/quota/`、`platform/flow/`、`platform/bundle/`、`platform/expr/`、`plugins/seam/session` + `provider/session-memory`、`plugins/seam/prompts` + `core/system-prompt`、`plugins/seam/llm` + `provider/llm-replay`/`provider/llm-openai`、`plugins/seam/tools` + `tool/text-helper`/`tool/shell`(TS)、`policy/approval-gate`/`policy/llm-retry`/`policy/tool-timeout`、`core/agent-loop`、`examples/agent`(最小 preset + 回放脚本)、`plugins/seam/fs` + `provider/fs-local` + `policy/fs-sandbox`、`plugins/seam/shell` + `provider/shell-local` + `policy/shell-guard`、`plugins/policy/fs-redact`/`fs-observe`/`shell-observe`/`shell-redact`、`plugins/seam/sandbox` + `provider/sandbox-none`、`plugins/seam/approval` + `provider/approval-deny`/`approval-cli`、`plugins/seam/workspace` + `provider/workspace-local` + `policy/workspace-guard` + `tool/workspace`、`examples/workspace`、`platform/caps/`、`platform/install/`、`platform/host/cli`、`platform/host/server`、`platform/host/builtins`、`platform/host/desktop`(视图映射骨架)、`platform/host/registry`、`scripts/build.ps1`、`scripts/package.ps1`、`scripts/tools/builtins-dump`、`scripts/guard.ps1`、`scripts/bench.ps1`、`docs/m4.5-agent-core.md`、`docs/kernel-api.md`、`docs/m2-execution.md`、`docs/m3-assembly.md`、`docs/m4-orchestration.md`、`docs/m4-flow.md`、`docs/seam-session.md`、`docs/seam-fs.md`、`docs/workspace-plugin.md`、`docs/packaging.md`、`docs/seam-shell.md`、`docs/seam-sandbox.md`、`docs/seam-approval.md`、`docs/adr/0001-deferred-m5-scope.md`、`docs/adr/0002-host-budget-exception.md`。
+已完成:`platform/kernel/`、`platform/kernel/schema`、`cmd/ada`、`cmd/ada-demo`、`cmd/ada-ts-demo`、`platform/compile/`、`platform/jsrt/`、`platform/bridge/`、`platform/plugin/`、`platform/preset/`、`platform/assemble/`(含延迟激活)、`platform/loader/`、`platform/sched/`、`platform/quota/`、`platform/flow/`、`platform/bundle/`、`platform/expr/`、`plugins/seam/session` + `provider/session-memory`、`plugins/seam/prompts` + `core/system-prompt`、`plugins/seam/llm` + `provider/llm-replay`/`provider/llm-openai`、`plugins/seam/tools` + `tool/text-helper`/`tool/shell-helper`(TS)、`policy/approval-gate`/`policy/llm-retry`/`policy/tool-timeout`、`core/agent-loop`、`examples/agent`(最小 preset + 回放脚本)、`plugins/seam/fs` + `provider/fs-local` + `policy/fs-sandbox`、`plugins/seam/shell` + `provider/shell-local` + `policy/shell-guard`、`plugins/policy/fs-redact`/`fs-observe`/`shell-observe`/`shell-redact`、`plugins/seam/sandbox` + `provider/sandbox-none`、`plugins/seam/approval` + `provider/approval-deny`/`approval-cli`、`plugins/seam/workspace` + `provider/workspace-local` + `policy/workspace-guard` + `workspace-helper`、`examples/workspace`、`platform/caps/`、`platform/install/`、`platform/host/cli`、`platform/host/server`、`platform/host/builtins`、`platform/host/desktop`(视图映射骨架)、`platform/host/registry`、`scripts/build.ps1`、`scripts/package.ps1`、`scripts/tools/builtins-dump`、`scripts/guard.ps1`、`scripts/bench.ps1`、`docs/m4.5-agent-core.md`、`docs/kernel-api.md`、`docs/m2-execution.md`、`docs/m3-assembly.md`、`docs/m4-orchestration.md`、`docs/m4-flow.md`、`docs/seam-session.md`、`docs/seam-fs.md`、`docs/workspace-plugin.md`、`docs/packaging.md`、`docs/seam-shell.md`、`docs/seam-sandbox.md`、`docs/seam-approval.md`、`docs/adr/0001-deferred-m5-scope.md`、`docs/adr/0002-host-budget-exception.md`。
 
 剩余:M4.5 的 token 计数、投影检查点持久化、`core/agent` 拆分与摘要质量评估;M5 的 OS 级沙箱与真实桌面窗口(ADR 0001);RPC 的 `SO_PEERCRED`/宿主接入;UI 框架仍为提案。**不做 v1 插件迁移。**
 

@@ -15,7 +15,7 @@
 1. 编译全部入口到 `dist/<name>/bin/`;
 2. 运行 `builtins-dump`,**从编译进宿主的 `builtins.Plugins()` 枚举所有 Go 插件**,
    用 `kernel.Plugin` 的 `Provide()`/`Inject()` 自动生成 `plugins/<id>/plugin.json`;
-3. 把 TS 实现的 `plugins/tool/shell` 复制为 `plugins/tool-shell/`(源码 + 清单);
+3. 把 TS 实现的 `plugins/tool/shell-helper` 复制为 `plugins/shell-helper/`(源码 + 清单);
 4. 生成只引用包内 `../plugins`、`workspace/`、`data/` 的 preset;
 5. 用打包后的二进制执行 `ada plan` 自检(同平台时);
 6. 打 zip。
@@ -48,7 +48,7 @@ dist/ada-<version>-<goos>-<goarch>/
   plugins/
     <id>/plugin.json            # 由 builtins 自动导出的全部 Go 内置插件
     text-helper/                # TS 实现:plugin.json + plugin.ts
-    tool-shell/                 # TS 实现:plugin.json + plugin.ts
+    shell-helper/               # TS 实现:plugin.json + plugin.ts
   presets/
     agent-release.preset.json
     workspace-release.preset.json
@@ -74,13 +74,13 @@ bin/ada.exe agent --preset presets/workspace-release.preset.json --workspace doc
 
 ## 4. preset 的 allowlist
 
-`plugins/` 包含 **47 个 Go 内置插件 + 2 个 TS 插件(`text-helper`、`tool-shell`)**,但发布 preset
+`plugins/` 包含 **47 个 Go 内置插件 + 2 个 TS 插件(`text-helper`、`shell-helper`)**,但发布 preset
 只启用栈内插件,其余全部写入 `disable`:
 
 - `agent-release`: agent-loop、session-memory/stats、system-prompt、seam-llm + llm-replay、
   seam-fs + fs-local、seam-tools、compaction-basic、text-helper(TS),以及 shell 栈
-  (seam-shell + shell-local + shell-guard + seam-sandbox + sandbox-none + tool-shell TS);
-- `workspace-release`: 再增加 seam/workspace + workspace-local + workspace-guard + tool-workspace,
+  (seam-shell + shell-local + shell-guard + seam-sandbox + sandbox-none + shell-helper TS);
+- `workspace-release`: 再增加 seam/workspace + workspace-local + workspace-guard + workspace-helper,
   不启用 shell 栈;
 - `agent-real-release`(可选): 用 `llm-openai` 替换 `llm-replay`,同样带 shell 栈。
 
@@ -100,7 +100,7 @@ bin/ada plan --preset presets/workspace-release.preset.json
 ## 6. 边界
 
 1. **Go 内置插件自动导出,TS 插件按目录复制**:`builtins-dump` 只包含 Go 插件;
-   `text-helper` / `tool-shell` 由脚本单独复制源码与清单。其它 TS 脚本插件仍需在发布项目里
+   `text-helper` / `shell-helper` 由脚本单独复制源码与清单。其它 TS 脚本插件仍需在发布项目里
    提供源码/Artifact 与清单。
 2. **preset 路径依赖包根目录**:`llm-replay`、`fs-local.workspace` 是相对进程 cwd 的配置,
    必须在包根目录运行;`ada-rpc-agent` 由宿主设置 cwd/环境变量。

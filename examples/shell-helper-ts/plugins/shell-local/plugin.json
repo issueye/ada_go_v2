@@ -4,5 +4,5 @@
   "version": "0.1.0",
   "kind": "go",
   "inject": {"required": ["shell"]},
-  "config": {"workspace": "examples/tool-shell-ts/workspace"}
+  "config": {"workspace": "examples/shell-helper-ts/workspace"}
 }

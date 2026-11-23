@@ -1,6 +1,6 @@
-# tool-shell:把 shell seam 暴露成模型工具(TS 实现)
+# shell-helper:把 shell seam 暴露成模型工具(TS 实现)
 
-`plugins/tool/shell` 属于 **tool 插件**,当前用 **TypeScript** 实现:它把 `seam/shell`
+`plugins/tool/shell-helper` 属于 **tool 插件**,当前用 **TypeScript** 实现:它把 `seam/shell`
 的命令执行映射成模型可调用的 `run_shell`。启用它是「agent 可以执行命令」的唯一显式开关;
 是否真的允许某条命令、在哪个目录、能跑多久,由 shell 实现与策略(`shell-guard`、`sandbox`、
 可选的 `approval`/`caps`)决定。本插件不做白名单、审批或沙箱判断。
@@ -75,7 +75,7 @@ ada_chat 按 `turn` + `id` 更新对话里的工具卡片;卡片默认折叠,只
 - 命令输出回到模型的体积上限为 64 KiB(UTF-8 安全截断);`shell-local` 自身还有 4 MiB 上限并置
   `Truncated`。
 
-> 注意:`tool-shell` 把 `program`/`args` 直接交给 shell 实现,**不会设置 `Command.Shell=true`**。
+> 注意:`shell-helper` 把 `program`/`args` 直接交给 shell 实现,**不会设置 `Command.Shell=true`**。
 > 因此 `shell-guard.allowShell` 对 `run_shell` 不构成门禁;真正的 workspace-write 放行由
 > `sandbox-none` 完成。发布前若要收紧,应在 `shell-guard` 中增加针对 shell 程序的显式门禁,
 > 或改为设置 `Command.Shell` 并走 `shell-local.allowShell`。
@@ -83,19 +83,19 @@ ada_chat 按 `turn` + `id` 更新对话里的工具卡片;卡片默认折叠,只
 ## 示例
 
 ```powershell
-go run ./cmd/ada up --preset examples/tool-shell-ts/shell.preset.json
-go run ./cmd/ada agent --preset examples/tool-shell-ts/shell.preset.json -message "执行命令"
+go run ./cmd/ada up --preset examples/shell-helper-ts/shell.preset.json
+go run ./cmd/ada agent --preset examples/shell-helper-ts/shell.preset.json -message "执行命令"
 ```
 
-示例 preset 组合了 agent 栈、shell 栈与 TS `tool-shell`;回放脚本让模型调用
-`run_shell` 执行 `echo tool-shell-ts`。
+示例 preset 组合了 agent 栈、shell 栈与 TS `shell-helper`;回放脚本让模型调用
+`run_shell` 执行 `echo shell-helper-ts`。
 
 ## 测试
 
 ```powershell
 go test ./platform/bridge -run 'JSTool|JSShell'
 go test ./platform/host/cli -run 'ToolShell'
-go test ./plugins/...   # 不再有 tool-shell 的 Go 包
+go test ./plugins/...   # 不再有 shell-helper 的 Go 包
 ```
 
 覆盖:当前平台默认 shell、`ada:shell.exec` 结构化结果、`ctx.tool` 超时映射、结构化工具结果

@@ -645,7 +645,7 @@ const maxShellExecBytes = 256 << 10
 
 // shellExecResult 是 ada:shell.exec 的结构化返回值。
 //
-// 字段名与 Go 侧 tool-shell 的 Details 保持接近;Mode/Backend 为空时表示
+// 字段名与 shell-helper 的 Details 保持接近;Mode/Backend 为空时表示
 // 当前 shell 实现没有从 sandbox 回填 Facts(已知边界)。
 type shellExecResult struct {
 	Stdout     string `json:"stdout"`

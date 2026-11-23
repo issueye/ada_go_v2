@@ -816,7 +816,7 @@ func TestAgentCommandScriptPlugin(t *testing.T) {
 	}
 }
 
-// 35.1 tool-shell(TS 实现)装配:检查 TS 工具注册到 tools 服务。
+// 35.1 shell-helper(TS 实现)装配:检查 TS 工具注册到 tools 服务。
 func TestUpToolShellScriptPlugin(t *testing.T) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -826,13 +826,13 @@ func TestUpToolShellScriptPlugin(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chdir(cwd) })
-	code, out, errOut := run("up", "--preset", "examples/tool-shell-ts/shell.preset.json")
-	if code != 0 || !strings.Contains(out, "tool-shell") {
-		t.Fatalf("tool-shell 装配失败: code=%d err=%s out=%s", code, errOut, out)
+	code, out, errOut := run("up", "--preset", "examples/shell-helper-ts/shell.preset.json")
+	if code != 0 || !strings.Contains(out, "shell-helper") {
+		t.Fatalf("shell-helper 装配失败: code=%d err=%s out=%s", code, errOut, out)
 	}
 }
 
-// 35.2 tool-shell(TS 实现)端到端:run_shell 经 ada:shell.exec 执行真实命令。
+// 35.2 shell-helper(TS 实现)端到端:run_shell 经 ada:shell.exec 执行真实命令。
 func TestAgentToolShellScriptPlugin(t *testing.T) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -842,9 +842,9 @@ func TestAgentToolShellScriptPlugin(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chdir(cwd) })
-	code, out, errOut := run("agent", "--preset", "examples/tool-shell-ts/shell.preset.json", "-message", "执行命令")
-	if code != 0 || !strings.Contains(out, "命令执行完成: tool-shell-ts") {
-		t.Fatalf("tool-shell 运行失败: code=%d err=%s out=%s", code, errOut, out)
+	code, out, errOut := run("agent", "--preset", "examples/shell-helper-ts/shell.preset.json", "-message", "执行命令")
+	if code != 0 || !strings.Contains(out, "命令执行完成: shell-helper-ts") {
+		t.Fatalf("shell-helper 运行失败: code=%d err=%s out=%s", code, errOut, out)
 	}
 }
 

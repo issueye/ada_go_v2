@@ -11,7 +11,7 @@ import (
 	"github.com/issueye/ada_go_v2/plugins/provider/workspace-local"
 	"github.com/issueye/ada_go_v2/plugins/seam/tools"
 	"github.com/issueye/ada_go_v2/plugins/seam/workspace"
-	toolworkspace "github.com/issueye/ada_go_v2/plugins/tool/workspace"
+	toolworkspace "github.com/issueye/ada_go_v2/plugins/tool/workspace-helper"
 )
 
 func setup(t *testing.T, root string) (*kernel.App, *tools.Registry) {

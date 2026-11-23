@@ -91,11 +91,11 @@ try {
         throw "导出内置插件清单失败(exit $LASTEXITCODE)"
     }
 
-    # text-helper / tool-shell 是 TS 插件,不在 builtins-dump 的导出范围;
+    # text-helper / shell-helper 是 TS 插件,不在 builtins-dump 的导出范围;
     # 复制源码与清单,让发布 preset 与开发 preset 使用同一份插件目录。
     $tsPlugins = @(
         @{ Src = "plugins/tool/text-helper"; Name = "text-helper" },
-        @{ Src = "plugins/tool/shell"; Name = "tool-shell" }
+        @{ Src = "plugins/tool/shell-helper"; Name = "shell-helper" }
     )
     foreach ($ts in $tsPlugins) {
         $dest = Join-Path $plugins $ts.Name
@@ -116,11 +116,11 @@ try {
     )
     # shell 栈只在 agent preset 里打开;workspace preset 保持无命令执行。
     $shellAllow = @(
-        "seam-shell", "shell-local", "shell-guard", "seam-sandbox", "sandbox-none", "tool-shell"
+        "seam-shell", "shell-local", "shell-guard", "seam-sandbox", "sandbox-none", "shell-helper"
     )
     $agentAllow = $agentBase + $shellAllow
     $workspaceAllow = $agentBase + @(
-        "seam-workspace", "tool-workspace", "workspace-guard", "workspace-local"
+        "seam-workspace", "workspace-helper", "workspace-guard", "workspace-local"
     )
     $missing = @($agentAllow | Where-Object { $_ -notin $ids })
     if ($missing.Count -gt 0) {
@@ -157,7 +157,7 @@ try {
         "sandbox-none" = @{ mode = "workspace-write" }
         "shell-local" = @{ workspace = "workspace"; tmp = "workspace/.ada-tmp" }
         "shell-guard" = @{ backend = "sandbox-none"; allowShell = $false }
-        "tool-shell" = @{ program = $shellProgram; args = $shellArgs; maxTimeoutSeconds = 120 }
+        "shell-helper" = @{ program = $shellProgram; args = $shellArgs; maxTimeoutSeconds = 120 }
     }
 
     $agentPatch = [ordered]@{
