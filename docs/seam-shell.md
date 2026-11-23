@@ -30,7 +30,8 @@ plugins/policy/shell-guard/     策略:只读白名单、shell 模式默认拒�
 ## 3. 安全不变量(实现侧)
 
 - **无 shell 默认**:`exec.CommandContext(program, args...)`,程序名有空白直接拒绝。
-- **环境净化**:子进程 `Env` 只含受管变量;宿主 `SECRET`/未声明变量不可见。
+- **环境净化**:子进程 `Env` 只含受管变量;宿主 `SECRET`/未声明变量不可见。变量名匹配在
+  Windows 上大小写不敏感;`PATH`/`PATHEXT` 缺失时补系统默认值(不覆盖显式值)。
 - **超时终止**:`context.WithTimeout` + 显式 `terminate`;POSIX 用进程组杀整棵树。
 - **输出上限**:收集器截断并取消命令;超限返回 `Truncated=true`(不是静默截断)。
 - **工作目录**:虚拟路径解析,`..`/反斜杠/NUL/未知根拒绝。
@@ -50,6 +51,11 @@ plugins/policy/shell-guard/     策略:只读白名单、shell 模式默认拒�
 7. **流式顺序**:stdout/stderr 由两个 reader 并发推送,`Seq` 只保证每路递增,不保证两路全序。
 8. **后台任务**:超过 30s 的命令被拒绝(未接 jobs seam)。
 9. **Windows 路径特性**(盘符/UNC/保留名)未覆盖;`Dir` 的符号链接已解析并校验 root(`TestDirSymlinkEscape`)。
+10. **Windows 环境变量名大小写与 PATH 兜底**:系统环境块常见写法是 `Path`/`SystemRoot`,而白名单按
+    `PATH`/`SYSTEMROOT` 书写;实现按大小写不敏感匹配,避免整条 PATH 被丢弃导致
+    `where`/`git`/`curl` 等外部命令全部「不是内部或外部命令」。若父进程完全没有 PATH/PATHEXT
+    (被启动器/快捷方式裁剪),补 `%SystemRoot%\System32` 等系统目录与默认扩展名,但**不覆盖**
+    显式 PATH——环境净化仍是策略默认值。
 
 ### 4.1 脱敏限制
 
@@ -77,6 +83,8 @@ plugins/policy/shell-guard/     策略:只读白名单、shell 模式默认拒�
 |---|---|
 | 基本执行:输出/退出码/耗时/Facts | `shelllocal.TestRunEcho` |
 | 环境净化与未白名单注入 | `shelllocal.TestEnvIsolation` |
+| Windows 变量名大小写(`Path`/`SystemRoot`) | `shelllocal.TestManagedEnvWindowsNameCase`、`TestRunSeesMixedCasePath` |
+| PATH/PATHEXT 缺失时补系统默认值 | `shelllocal.TestManagedEnvWindowsPathFallback`、`TestManagedEnvWindowsPathKept` |
 | `Program` 含空白拒绝 | `shelllocal.TestRejectsProgramWithSpace` |
 | 超时(`ETIMEOUT`)且及时返回 | `shelllocal.TestTimeout` |
 | 输出上限截断 | `shelllocal.TestOutputTruncation` |

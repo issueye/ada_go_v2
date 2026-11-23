@@ -359,7 +359,7 @@ type Chunk struct {
 ### 4.2 规则
 
 1. **无 shell**：`Shell=false` 时用 `exec.CommandContext(program, args...)`，参数不经 shell 解析；`Shell=true` 需要 `shell.exec.shell` 能力 + policy 放行（默认拒绝，DSH 的 bash 工具也是这套取舍）。
-2. **环境净化**：`Env` 只给「清单声明 ∩ 宿主存在」的变量，加受管前缀 `ADA_*`；**密钥永不进 env**（用 `seam/secrets` 按名取）。
+2. **环境净化**：`Env` 只给「清单声明 ∩ 宿主存在」的变量，加受管前缀 `ADA_*`；**密钥永不进 env**（用 `seam/secrets` 按名取）。变量名在 Windows 上按大小写不敏感匹配（系统常见写法是 `Path`/`SystemRoot`）；`PATH`/`PATHEXT` 完全缺失时补系统默认值，否则子进程里的外部命令会全部找不到（见 [seam-shell.md](seam-shell.md) §4）。
 3. **进程树**：超时/取消时杀整棵进程树（`Setpgid`/Job Object），不能只杀父进程。
 4. **输出**：累计 4 MB 截断；流式模式每 chunk ≤ 64 KiB，且回压（慢消费者阻塞 Loop）。
 5. **沙箱事实**：`Result.Facts` 必须来自 `sandbox`，并在工具结果里可见（模型会据此判断「能做什么」）。

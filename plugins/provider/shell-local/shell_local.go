@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -356,7 +357,8 @@ func (s *Shell) buildEnv(extra map[string]string) ([]string, error) {
 			if !s.env.allowed(k) {
 				return nil, seamshell.Invalid(fmt.Sprintf("shell-local: 环境变量 %q 不在白名单", k))
 			}
-			values[k] = v
+			// 注入键也走归一化,避免同一变量以两种大小写同时进入子进程。
+			values[envNameCanonical(k)] = v
 		}
 	}
 	keys := make([]string, 0, len(values))
@@ -372,6 +374,10 @@ func (s *Shell) buildEnv(extra map[string]string) ([]string, error) {
 }
 
 // managedEnv 是受管环境注册表。
+//
+// values/names 的键在 Windows 上统一为大写:环境变量名在 Windows 不区分大小写,
+// 且系统环境块常见写法是 "Path"/"SystemRoot"。按字面比较会把 PATH 整条丢掉,
+// 子进程里所有外部命令都会变成「不是内部或外部命令」。
 type managedEnv struct {
 	values map[string]string
 	names  map[string]bool
@@ -379,36 +385,82 @@ type managedEnv struct {
 
 var defaultEnvNames = []string{"PATH", "PATHEXT", "SYSTEMROOT", "HOME", "TEMP", "TMP", "USERPROFILE", "LANG", "LC_ALL"}
 
+// envNameCanonical 返回用于比较的环境变量名。
+//
+// 只影响比较键;子进程收到的仍是 "KEY=value"(Windows 不分大小写)。
+func envNameCanonical(name string) string {
+	if runtime.GOOS == "windows" {
+		return strings.ToUpper(name)
+	}
+	return name
+}
+
 func newManagedEnv(allowed []string, environ []string) *managedEnv {
 	names := map[string]bool{}
 	for _, n := range defaultEnvNames {
-		names[n] = true
+		names[envNameCanonical(n)] = true
 	}
 	for _, n := range allowed {
 		if n = strings.TrimSpace(n); n != "" {
-			names[n] = true
+			names[envNameCanonical(n)] = true
 		}
 	}
 	values := map[string]string{}
 	for _, kv := range environ {
 		key, val, ok := strings.Cut(kv, "=")
-		if !ok {
+		if !ok || key == "" {
 			continue
 		}
-		if names[key] || strings.HasPrefix(key, "ADA_") {
-			values[key] = val
-			names[key] = true
+		ck := envNameCanonical(key)
+		if names[ck] || strings.HasPrefix(ck, "ADA_") {
+			values[ck] = val
+			names[ck] = true
 		}
 	}
-	return &managedEnv{values: values, names: names}
+	env := &managedEnv{values: values, names: names}
+	env.ensureWindowsDefaults()
+	return env
+}
+
+// ensureWindowsDefaults 在 PATH/PATHEXT 缺失或为空时补系统默认值。
+//
+// 桌面宿主从快捷方式或裁剪过环境的启动器拉起 runtime 时,父进程可能没有 PATH;
+// 这时连 where/findstr/curl 都找不到,agent 会把「命令不存在」误判成环境问题。
+// 只在缺失时补,不覆盖显式 PATH(环境净化仍是策略默认值)。
+func (e *managedEnv) ensureWindowsDefaults() {
+	if runtime.GOOS != "windows" {
+		return
+	}
+	if strings.TrimSpace(e.values["PATH"]) == "" {
+		root := strings.TrimSpace(e.values["SYSTEMROOT"])
+		if root == "" {
+			// os.Getenv 在 Windows 上走 GetEnvironmentVariable,不区分大小写。
+			root = strings.TrimSpace(os.Getenv("SystemRoot"))
+		}
+		if root == "" {
+			root = `C:\Windows`
+		}
+		e.values["PATH"] = strings.Join([]string{
+			filepath.Join(root, "System32"),
+			root,
+			filepath.Join(root, "System32", "Wbem"),
+			filepath.Join(root, "System32", "WindowsPowerShell", "v1.0"),
+		}, ";")
+		e.names["PATH"] = true
+	}
+	if strings.TrimSpace(e.values["PATHEXT"]) == "" {
+		e.values["PATHEXT"] = ".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC"
+		e.names["PATHEXT"] = true
+	}
 }
 
 func (e *managedEnv) allowed(name string) bool {
-	return e.names[name] || strings.HasPrefix(name, "ADA_")
+	key := envNameCanonical(name)
+	return e.names[key] || strings.HasPrefix(key, "ADA_")
 }
 
 func (e *managedEnv) Get(name string) (string, bool) {
-	v, ok := e.values[name]
+	v, ok := e.values[envNameCanonical(name)]
 	return v, ok
 }
 
