@@ -92,7 +92,7 @@
 | [tool-git-helper.md](docs/tool-git-helper.md) | 脚本插件示例:TS git-helper + 注入 ada:shell + ctx.tool |
 | [tool-task-helper.md](docs/tool-task-helper.md) | 脚本插件示例:TS task-helper + 注入 ada:fs |
 | [tool-command-helper.md](docs/tool-command-helper.md) | 脚本插件示例:TS command-helper + 注入 ada:shell |
-| [tool-text-helper.md](docs/tool-text-helper.md) | 脚本插件示例:TS text-helper + ada:fs 读写/编辑/搜索 |
+| [tool-text-helper.md](docs/tool-text-helper.md) | 唯一文件工具:text-helper(TS)+ ada:fs 读写/编辑/搜索/列目录 |
 | [tool-shell.md](docs/tool-shell.md) | TS 工具插件:tool-shell + ada:shell.exec(含 moejs/bridge 扩展) |
 | [node-compat.md](docs/node-compat.md) | Node 内置模块兼容层:node:fs/path/os/events/util 等 |
 | [adr/0001](docs/adr/0001-deferred-m5-scope.md) | ADR:OS 级沙箱与真实桌面窗口延期(复议 2027-01-15) |
@@ -254,7 +254,11 @@ platform/host/*   ✓→ 全部
 
 ### 5.4 命名与结构约定
 
-- 目录：`plugins/seam/<name>`、`plugins/provider/<name>`、`plugins/policy/<name>`、`plugins/core/<name>`、`plugins/tool/<name>`。
+- 目录：`plugins/seam/<name>`、`plugins/provider/<name>`、`plugins/policy/<name>`、`plugins/core/<name>`、`plugins/tool/<xx>-helper`。
+- **内置工具插件一律用 `<xx>-helper` 命名**：目录 `plugins/tool/<xx>-helper`，id 与目录同名，如 `text-helper`、`shell-helper`、`git-helper`。`<xx>` 是工具面向的领域（`text`/`shell`/`git`/`task`/`command`/`workspace`），不是实现方式。
+  - 为什么：`helper` 直接表明「这是一组给模型用的工具」，与 seam（契约）、provider（实现）、policy（门禁）的命名区分开；`tool-fs` 这类前缀与目录 `plugins/tool/` 重复，`fs`/`shell` 裸名又会和 `fs-local`/`shell-local` 这类 provider 撞语义。
+  - 适用范围：仅 `plugins/tool/*`。seam/provider/policy/core 继续用原来的 `seam-`/`provider-`/`policy-`/`core-` 及实现名（`fs-local`、`shell-guard`），不套用本规则。
+  - 存量例外：`tool-shell`、`tool-workspace` 尚未改名（应为 `shell-helper`、`workspace-helper`），复议日期 2026-12-31；新插件不再新增例外。
 - 服务名：小写单数（`llm`、`tools`、`session`、`prompts`）。
 - 事件名：`域/动词`，全小写，如 `turn/before`、`tools/pre-execute`、`fs/observe`；**新增事件必须写进对应契约文档**。
   - 两个命名空间不得混用：**总线事件**用服务复数（`tools/*`、`llm/*`），**会话事件类型**用单数（`tool/result`、`assistant/message`），见 `seam-api.md` §1.7。
@@ -431,6 +435,7 @@ v1 的 `AGENTS.md` 记录了 2026-11-10 的「能力位不决定装什么」与�
 | 「为了性能，把循环放到 host」 | 不行。循环是 `core/agent-loop`；性能问题用 Go 插件实现，不是搬到 host |
 | 「先不写契约测试，功能先上」 | 不行。没有契约测试的 seam/provider 会在第一次升级时炸 |
 | 「这个 preset 字段先不加，代码里判断一下」 | 不行。preset 是数据契约；加字段，别加判断 |
+| 「工具插件叫 `tool-fs` / `fs` 更直观」 | 不行（§5.4）。内置工具插件一律 `<xx>-helper`：`helper` 说明它是「给模型的工具集」，而 `tool-` 与目录 `plugins/tool/` 重复、`fs` 会与 provider `fs-local` 撞语义 |
 | 「这个能力有安全风险，先不实现」 | 不行（§0 红线 6）。先把能力实现出来，边界做成可关闭的 `policy/*` 或 preset 字段；确实要整体不实现，写 ADR 说明威胁模型、被否决的需求与替代路径 |
 | 「默认拒绝就等于不实现」 | 不是。默认值是 preset 里的策略选择，能力本身必须存在；用「默认拒绝」掩盖「没有实现」是评审不通过的 |
 

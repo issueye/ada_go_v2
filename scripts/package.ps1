@@ -91,10 +91,10 @@ try {
         throw "导出内置插件清单失败(exit $LASTEXITCODE)"
     }
 
-    # tool-fs / tool-shell 是 TS 插件,不在 builtins-dump 的导出范围;
+    # text-helper / tool-shell 是 TS 插件,不在 builtins-dump 的导出范围;
     # 复制源码与清单,让发布 preset 与开发 preset 使用同一份插件目录。
     $tsPlugins = @(
-        @{ Src = "plugins/tool/fs"; Name = "tool-fs" },
+        @{ Src = "plugins/tool/text-helper"; Name = "text-helper" },
         @{ Src = "plugins/tool/shell"; Name = "tool-shell" }
     )
     foreach ($ts in $tsPlugins) {
@@ -112,7 +112,7 @@ try {
     $agentBase = @(
         "agent-loop", "compaction-basic", "fs-local", "llm-replay",
         "seam-fs", "seam-llm", "seam-prompts", "seam-session", "seam-tools",
-        "session-memory", "session-stats", "system-prompt", "tool-fs"
+        "session-memory", "session-stats", "system-prompt", "text-helper"
     )
     # shell 栈只在 agent preset 里打开;workspace preset 保持无命令执行。
     $shellAllow = @(

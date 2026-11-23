@@ -1,6 +1,6 @@
 {
   "name": "workspace-real",
-  "plugins": ["../agent/plugins", "plugins", "../../plugins/tool/fs"],
+  "plugins": ["../agent/plugins", "plugins", "../../plugins/tool/text-helper"],
   "disable": ["llm-replay", "session-jsonl"],
   "patch": {
     "agent-loop": {"model": "tokenharbor/deepseek-v4.1-flash:free", "maxParallelTools": 2},

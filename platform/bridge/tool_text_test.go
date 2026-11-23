@@ -30,8 +30,8 @@ func mountBuiltin(t *testing.T, app *kernel.App, id string, cfg map[string]any) 
 	}
 }
 
-// TestJSToolFS 用真实的 TS tool-fs + fs-local 覆盖读写/编辑/搜索/列目录。
-func TestJSToolFS(t *testing.T) {
+// TestJSToolText 用唯一的 TS 文件工具(text-helper)+ fs-local 覆盖读写/编辑/搜索/列目录。
+func TestJSToolText(t *testing.T) {
 	dir := t.TempDir()
 	app := kernel.New(kernel.Options{})
 	t.Cleanup(func() { _ = app.Stop(context.Background()) })
@@ -40,14 +40,14 @@ func TestJSToolFS(t *testing.T) {
 	mountBuiltin(t, app, "seam-fs", nil)
 	mountBuiltin(t, app, "fs-local", map[string]any{"workspace": dir})
 
-	manifest, err := plugin.Load("../../plugins/tool/fs")
+	manifest, err := plugin.Load("../../plugins/tool/text-helper")
 	if err != nil {
-		t.Fatalf("读取 tool-fs 清单失败: %v", err)
+		t.Fatalf("读取 text-helper 清单失败: %v", err)
 	}
 	lookup := loader.Lookup(loader.Options{Go: builtins.Plugins()})
 	p, err := lookup(manifest)
 	if err != nil {
-		t.Fatalf("构造 tool-fs 失败: %v", err)
+		t.Fatalf("构造 text-helper 失败: %v", err)
 	}
 	mount(t, app, p)
 

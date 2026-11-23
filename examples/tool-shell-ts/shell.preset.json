@@ -1,6 +1,6 @@
 {
   "name": "tool-shell-ts",
-  "plugins": ["../agent/plugins", "plugins", "../../plugins/tool/fs", "../../plugins/tool/shell"],
+  "plugins": ["../agent/plugins", "plugins", "../../plugins/tool/text-helper", "../../plugins/tool/shell"],
   "disable": ["llm-openai", "session-jsonl"],
   "patch": {
     "agent-loop": {"model": "replay"},

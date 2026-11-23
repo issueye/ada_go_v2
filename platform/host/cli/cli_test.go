@@ -881,7 +881,7 @@ func TestAgentTextScriptPlugin(t *testing.T) {
 	preset := f.Name()
 	_ = f.Close()
 	t.Cleanup(func() { _ = os.Remove(preset) })
-	body := `{"name":"text-test","plugins":["../agent/plugins","plugins"],"disable":["llm-openai","session-jsonl"],"patch":{"agent-loop":{"model":"replay"},"llm-replay":{"path":"examples/text-ts/replay.jsonl"},"fs-local":{"workspace":"` + strings.ReplaceAll(workspace, `\`, `\\`) + `"}}}`
+	body := `{"name":"text-test","plugins":["../agent/plugins","../../plugins/tool/text-helper"],"disable":["llm-openai","session-jsonl"],"patch":{"agent-loop":{"model":"replay"},"llm-replay":{"path":"examples/text-ts/replay.jsonl"},"fs-local":{"workspace":"` + strings.ReplaceAll(workspace, `\`, `\\`) + `"}}}`
 	if err := os.WriteFile(preset, []byte(body), 0o644); err != nil {
 		t.Fatalf("写临时 preset 失败: %v", err)
 	}

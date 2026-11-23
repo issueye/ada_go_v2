@@ -20,7 +20,7 @@
 | C1 session seam + memory/jsonl | `plugins/seam/session`、`plugins/provider/session-memory`/`session-jsonl`、`plugins/core/session-stats` | `session` 单测、`sessiontest`;jsonl 契约/重开/并发/半行恢复;`sessionstats` 投影 | 投影检查点未持久化;jsonl 无多进程租约 |
 | C2 prompts seam + system-prompt | `plugins/seam/prompts`、`plugins/core/system-prompt` | `prompts` 3 个用例 | 引擎在 seam 内,未拆 provider;预算为字符估算 |
 | C3 llm seam + provider | `plugins/seam/llm`、`plugins/provider/llm-replay`/`llm-openai` | `replay` 2 个用例、`openai` wire/真实端点(可选) | OpenAI 兼容端点已实测;stream 改写结果未回传;无 deepseek 专用适配 |
-| C4 tools seam + tool/fs | `plugins/seam/tools`、`plugins/tool/fs`(TS)、`platform/bridge`(`ada:fs`) | `tools` 2 个用例;`bridge.TestJSToolFS`(读/写/编辑/搜索/列目录);`cli.TestAgentReplay` | 搜索仅字面量;编辑 read-before-edit;`ada:fs.search` 参数顺序已修正 |
+| C4 tools seam + 文件工具 | `plugins/seam/tools`、`plugins/tool/text-helper`(TS)、`platform/bridge`(`ada:fs`) | `tools` 2 个用例;`bridge.TestJSToolText`(读/写/编辑/搜索/列目录);`cli.TestAgentReplay` | 搜索仅字面量;编辑 read-before-edit;`ada:fs.search` 参数顺序已修正 |
 | C4b 脚本工具 | `examples/git-ts/plugins/git-helper`、`platform/bridge`(`ctx.tool`/`ada:shell`) | `cli.TestAgentGitScriptPlugin`;真实端点手工 | 无 SDK 类型;JS→原生 shell 无 ctx 取消 |
 | C4c 脚本持久化工具 | `examples/task-ts/plugins/task-helper`、`platform/bridge`(`ada:fs`) | `cli.TestUpTaskScriptPlugin`、`cli.TestAgentTaskScriptPlugin`;真实端点手工 | 任务文件不是会话事实;read-modify-write 无事务 |
 | C4d 脚本命令工具 | `examples/command-ts/plugins/command-helper`、`ada:shell` | `cli.TestUpCommandScriptPlugin`、`cli.TestAgentCommandScriptPlugin`;真实端点手工 | 白名单不是安全边界;无 shell 解析 |

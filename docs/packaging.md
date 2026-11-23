@@ -47,7 +47,7 @@ dist/ada-<version>-<goos>-<goarch>/
     ada-ts-demo[.exe]
   plugins/
     <id>/plugin.json            # 由 builtins 自动导出的全部 Go 内置插件
-    tool-fs/                    # TS 实现:plugin.json + plugin.ts
+    text-helper/                # TS 实现:plugin.json + plugin.ts
     tool-shell/                 # TS 实现:plugin.json + plugin.ts
   presets/
     agent-release.preset.json
@@ -74,11 +74,11 @@ bin/ada.exe agent --preset presets/workspace-release.preset.json --workspace doc
 
 ## 4. preset 的 allowlist
 
-`plugins/` 包含 **47 个 Go 内置插件 + 2 个 TS 插件(`tool-fs`、`tool-shell`)**,但发布 preset
+`plugins/` 包含 **47 个 Go 内置插件 + 2 个 TS 插件(`text-helper`、`tool-shell`)**,但发布 preset
 只启用栈内插件,其余全部写入 `disable`:
 
 - `agent-release`: agent-loop、session-memory/stats、system-prompt、seam-llm + llm-replay、
-  seam-fs + fs-local、seam-tools、compaction-basic、tool-fs(TS),以及 shell 栈
+  seam-fs + fs-local、seam-tools、compaction-basic、text-helper(TS),以及 shell 栈
   (seam-shell + shell-local + shell-guard + seam-sandbox + sandbox-none + tool-shell TS);
 - `workspace-release`: 再增加 seam/workspace + workspace-local + workspace-guard + tool-workspace,
   不启用 shell 栈;
@@ -100,7 +100,7 @@ bin/ada plan --preset presets/workspace-release.preset.json
 ## 6. 边界
 
 1. **Go 内置插件自动导出,TS 插件按目录复制**:`builtins-dump` 只包含 Go 插件;
-   `tool-fs` / `tool-shell` 由脚本单独复制源码与清单。其它 TS 脚本插件仍需在发布项目里
+   `text-helper` / `tool-shell` 由脚本单独复制源码与清单。其它 TS 脚本插件仍需在发布项目里
    提供源码/Artifact 与清单。
 2. **preset 路径依赖包根目录**:`llm-replay`、`fs-local.workspace` 是相对进程 cwd 的配置,
    必须在包根目录运行;`ada-rpc-agent` 由宿主设置 cwd/环境变量。

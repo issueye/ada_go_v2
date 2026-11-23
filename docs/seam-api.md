@@ -684,7 +684,7 @@ ctx.effect('my tool', () => tools.register({ name: 'weather', input: schema /* �
 | C1 | `seam/session` + `provider/session-memory` + `provider/session-jsonl` | 事件信封、`Append/Events/Subscribe/Fork`、投影接口 | `seamtest.Session` 全绿；fork/重建 golden 通过 | 3 d |
 | C2 | `seam/prompts` + `core/system-prompt` | Section 注册、assemble waterfall、预算裁剪 | `seamtest.Prompts` 全绿；同 session 重放同 Text | 2 d |
 | C3 | `seam/llm` + `provider/llm-replay` + `provider/llm-openai` | 请求/响应类型、流式、用量、错误映射 | `seamtest.LLM` 全绿；replay 能跑无 key 快照 | 4 d |
-| C4 | `seam/tools` + `executor/native` + `tool/fs` | 注册/restrict/guard/invoke、五段管线 | `seamtest.Tools` 全绿；管线事件顺序断言 | 3 d |
+| C4 | `seam/tools` + `executor/native` + `tool/text-helper` | 注册/restrict/guard/invoke、五段管线 | `seamtest.Tools` 全绿；管线事件顺序断言 | 3 d |
 | C5 | `core/agent` + `core/agent-loop`（最小） | 一轮循环：assemble → stream → 工具 → append；取消/超时 | 跑通 1 个工具调用回合；取消后无 goroutine 泄漏 | 4 d |
 | C6 | `presets/base.preset.json` + 集成测试 | 只含 C1–C5 的最小产品 | 一条用户消息 → 模型 → 工具 → 结果 → turn/end 的事件序列 golden | 2 d |
 | C7 | 策略桩 | `policy/llm-retry`、`policy/tool-timeout`、`policy/approval-gate`（auto-allow / ask 两档） | 拒绝与超时路径有审计；重试不叠加 | 2 d |
