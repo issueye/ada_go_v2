@@ -26,7 +26,6 @@ import (
 	"github.com/issueye/ada_go_v2/platform/preset"
 	agentloop "github.com/issueye/ada_go_v2/plugins/core/agent-loop"
 	seamfs "github.com/issueye/ada_go_v2/plugins/seam/fs"
-	seamnet "github.com/issueye/ada_go_v2/plugins/seam/net"
 	seamsession "github.com/issueye/ada_go_v2/plugins/seam/session"
 	seamshell "github.com/issueye/ada_go_v2/plugins/seam/shell"
 	seamworkspace "github.com/issueye/ada_go_v2/plugins/seam/workspace"
@@ -532,7 +531,7 @@ func cmdInspect(args []string, out, errOut io.Writer) int {
 	if t.chain {
 		fmt.Fprintln(out, "chains:")
 		chains := inspectChains(app)
-		for _, name := range []string{"fs", "shell", "net", "workspace"} {
+		for _, name := range []string{"fs", "shell", "workspace"} {
 			p, ok := chains[name]
 			if !ok {
 				continue
@@ -543,7 +542,9 @@ func cmdInspect(args []string, out, errOut io.Writer) int {
 	return 0
 }
 
-// inspectChains 读取 fs/shell/net/workspace 四个 chain 的装饰器优先级(外层到内层)。
+// inspectChains 读取 fs/shell/workspace 三个 chain 的装饰器优先级(外层到内层)。
+//
+// net 链已随 ADR 0012 移除:网络不再有受控 seam,Node 网络模块直连标准库。
 func inspectChains(app *kernel.App) map[string][]int {
 	out := map[string][]int{}
 	if v, ok := app.Root().TryService("fs"); ok {
@@ -554,11 +555,6 @@ func inspectChains(app *kernel.App) map[string][]int {
 	if v, ok := app.Root().TryService("shell"); ok {
 		if c, ok := v.(*seamshell.Chain); ok {
 			out["shell"] = c.Applied()
-		}
-	}
-	if v, ok := app.Root().TryService("net"); ok {
-		if c, ok := v.(*seamnet.Chain); ok {
-			out["net"] = c.Applied()
 		}
 	}
 	if v, ok := app.Root().TryService(seamworkspace.ServiceName); ok {

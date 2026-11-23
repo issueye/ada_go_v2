@@ -81,6 +81,25 @@ func New(opts Options) (*FS, error) {
 // Name 返回 provider 名。
 func (f *FS) Name() string { return ProviderName }
 
+// Root 返回 /workspace 的宿主根,供 node:fs 安装时使用。
+//
+// 托管模式下按当前 workspace 绑定解析;独立模式直接用配置的 workspace。
+func (f *FS) Root(ctx context.Context) (string, error) {
+	if f.wschain != nil {
+		if svc, err := f.wschain.Get(); err == nil {
+			target, rerr := svc.ResolveHost(ctx, workspace.OpRead, workspace.MountRoot)
+			if rerr != nil {
+				return "", rerr
+			}
+			return target.Root, nil
+		}
+	}
+	if f.workspace == "" {
+		return "", seamfs.Invalid("fs-local: 没有可用的 workspace 根")
+	}
+	return f.workspace, nil
+}
+
 // resolve 把虚拟路径解析成宿主路径;任何越界都返回 EDENIED(source=sandbox)。
 //
 // 托管模式优先问 workspace 服务;只有服务在位但 provider 尚未就绪且本机仍配置了

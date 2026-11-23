@@ -17,7 +17,7 @@ import (
 // CodeDenied 是能力拒绝的错误码(与安全契约 EDENIED 一致)。
 const CodeDenied = "EDENIED"
 
-// Cap 是一个能力名,如 fs.read、fs.write、exec、net.fetch.example.com。
+// Cap 是一个能力名,如 fs.read、fs.write、exec、secrets.GITHUB_TOKEN。
 type Cap string
 
 // String 返回能力名。
@@ -106,16 +106,6 @@ func Parse(spec string) (Cap, error) {
 		if len(parts) != 1 && !(len(parts) == 2 && parts[1] == "isolated") {
 			return "", fmt.Errorf("caps: process 能力只能是 process 或 process.isolated,得到 %q", spec)
 		}
-	case "net":
-		if len(parts) < 2 || parts[1] != "fetch" {
-			return "", fmt.Errorf("caps: net 能力必须是 net.fetch 或 net.fetch.<host>,得到 %q", spec)
-		}
-		if len(parts) >= 3 {
-			host := strings.Join(parts[2:], ".")
-			if host == "" {
-				return "", fmt.Errorf("caps: net 能力的主机名为空: %q", spec)
-			}
-		}
 	case "secrets", "config":
 		if len(parts) != 2 || parts[1] == "" {
 			return "", fmt.Errorf("caps: %s 能力必须是 %s.<name>,得到 %q", parts[0], parts[0], spec)
@@ -166,8 +156,8 @@ func NewGrants(specs ...string) (Grants, error) {
 
 // Has 判断能力是否被授予。通配规则:逐级前缀通配。
 //
-// 例:授予 net.fetch 可以覆盖 net.fetch.example.com;授予 secrets.* 可以覆盖 secrets.GITHUB_TOKEN。
-// 通配只放宽「目标」,不放宽命名空间(fs 不会因为持有 net.fetch 而获得 fs.read)。
+// 例:授予 secrets.* 可以覆盖 secrets.GITHUB_TOKEN,授予 rpc.call 可以覆盖 rpc.call.agent.session.list。
+// 通配只放宽「目标」,不放宽命名空间(fs 不会因为持有 rpc.call 而获得 fs.read)。
 func (g Grants) Has(c Cap, target string) bool {
 	if g.set == nil {
 		return false

@@ -55,6 +55,21 @@ TS 源文件 ──compile.Build──▶ Artifact(每个文件的 JS,纯数据)
 
 **调用 ctx 传播**:`enqueue` 在 worker 执行每个任务前把任务 ctx 存入 `callCtx`,结束后清空;`__adaHost.shell` 与 `__adaHost.fs.*` 使用 `currentContext()`,因此 JS 工具的原生 fs/shell 调用会继承调用级 `workspace.Binding`、取消与超时,而不是退回 `context.Background()`。事件/waterfall 回调用事件自己的 ctx。
 
+### 2.2.1 Node 内置模块
+
+`jsrt` 同时安装一套 Node 形状的内置模块,降低脚本插件的心智负担:
+
+- `node:fs` / `node:fs/promises` / `node:buffer` 来自 moejs 的 `node` 包;
+- `node:path` / `node:os` / `node:events` / `node:util` / `node:assert` /
+  `node:url` / `node:querystring` / `node:string_decoder` / `node:process`
+  是 `platform/jsrt/nodemods` 的宿主源码(embed);
+- `node:child_process` / `node:http` / `node:https` / `node:dns` /
+  `node:dns/promises` / `node:net` 也是宿主源码,经 `__adaHost` 调用宿主能力;
+  网络模块直连标准库,仓库已无 `seam/net` 与 `net-guard`(ADR 0011/0012);
+- `node:fs` 只在 fs/workspace 链上没有策略装饰器时安装,避免绕过
+  fs-sandbox/caps/workspace-guard;
+- 旧的 `ada:fs` / `ada:shell` 仍保留,见 [node-compat.md](node-compat.md)。
+
 ### 2.3 `bridge`
 
 `bridge.Plugin` 实现 `kernel.Plugin`,入口约定与 AGENTS §6.2 一致:**`apply(ctx, config)`**。

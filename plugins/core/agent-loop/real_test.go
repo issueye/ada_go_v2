@@ -51,7 +51,7 @@ func TestRealAgentTurn(t *testing.T) {
 	mount("seam-tools", nil)
 	mount("seam-fs", nil)
 	mount("fs-local", map[string]any{"workspace": workspace})
-	mount("tool-fs", nil)
+	mountToolFS(t, app)
 	mount("agent-loop", map[string]any{"model": model})
 
 	raw, err := app.Root().Service("agent")

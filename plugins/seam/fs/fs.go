@@ -296,6 +296,26 @@ func (c *Chain) Get() (FS, error) {
 	return cur, nil
 }
 
+// Root 返回底座实现的宿主根目录。
+//
+// 它只供宿主适配层(node:fs 的根、诊断)使用,不进入 FS 接口:
+// 装饰器仍然只负责一次调用的策略,不应该被要求理解「根」。
+func (c *Chain) Root(ctx context.Context) (string, error) {
+	c.mu.Lock()
+	base := c.base
+	c.mu.Unlock()
+	if base == nil {
+		return "", seamerr.New(seamerr.ErrUnimplemented, "fs", "没有安装 fs 实现", false)
+	}
+	rooted, ok := base.(interface {
+		Root(context.Context) (string, error)
+	})
+	if !ok {
+		return "", seamerr.Unimplemented("fs", "fs 实现不暴露根目录")
+	}
+	return rooted.Root(ctx)
+}
+
 // Applied 返回装饰器的优先级序列(外层到内层,诊断用)。
 func (c *Chain) Applied() []int {
 	c.mu.Lock()

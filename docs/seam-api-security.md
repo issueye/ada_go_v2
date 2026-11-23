@@ -141,7 +141,7 @@ type Sandbox interface {
 
 type Mode string // read-only | workspace-write | danger-full-access
 
-type Op string // fs.read | fs.write | fs.edit | fs.list | shell.exec | net.fetch
+type Op string // fs.read | fs.write | fs.edit | fs.list | shell.exec
 
 type Request struct {
     SessionID string
@@ -150,7 +150,7 @@ type Request struct {
     Program   string    // 命令操作
     Args      []string
     Write     bool
-    Network   bool      // 供 policy 参考，实际网络由 seam/net 管
+    Network   bool      // 历史字段:网络已不受 seam 管控(ADR 0012),保留只为兼容 Request 结构
 }
 
 type Decision struct {
@@ -429,6 +429,6 @@ type Chunk struct {
 | C12 | 三平台后端（bwrap/landlock、seatbelt、Windows ACL） | C8–C11 | 5–8 d（可分批） |
 | C13 | 拒绝矩阵 + 审计 + `ada inspect --chain` | C8–C12 | 2 d |
 
-C13 已落地:`plugins/policy/securitymatrix`(fs/net/shell 矩阵)与 `ada inspect --chain`(fs/shell/net 装饰器优先级快照);caps 拒绝审计仍待补。
+C13 已落地:`plugins/policy/securitymatrix`(fs/shell 矩阵)与 `ada inspect --chain`(fs/shell/workspace 装饰器优先级快照);caps 拒绝审计仍待补;net 矩阵随 ADR 0012 移除。
 
 合计 **17–23 人日**；C8 必须先做（判定矩阵是所有后端的共同契约），C12 可以按平台并行。

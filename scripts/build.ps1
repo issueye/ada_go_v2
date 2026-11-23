@@ -1,4 +1,4 @@
-# 编译入口程序到本地目录。默认产出当前平台的 bin/<命令>[.exe]。
+﻿# 编译入口程序到本地目录。默认产出当前平台的 bin/<命令>[.exe]。
 # 产物不入库（.gitignore 已忽略 *.exe）；发布时用 -GOOS/-GOARCH 交叉编译。
 param(
     [string]$OutputDir = "bin",
@@ -16,7 +16,9 @@ try {
     $ext = if ($goosValue -eq "windows") { ".exe" } else { "" }
 
     $commands = @("ada", "ada-rpc-agent", "ada-demo", "ada-ts-demo")
-    $outAbs = Join-Path $root $OutputDir
+    if (-not $OutputDir) { throw "-OutputDir 不能为空" }
+    # 允许绝对路径;相对路径一律相对仓库根,避免受调用方 cwd 影响。
+    $outAbs = if ([IO.Path]::IsPathRooted($OutputDir)) { $OutputDir } else { Join-Path $root $OutputDir }
     New-Item -ItemType Directory -Force -Path $outAbs | Out-Null
 
     # 交叉编译会改变 go env；只在本脚本进程里临时设置，避免污染当前 shell。

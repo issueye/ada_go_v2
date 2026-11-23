@@ -1,12 +1,12 @@
 # 脚本插件:text-helper(TS + 注入 ada:fs)
 
-> 示例插件:脚本实现文本读写/编辑/搜索/列目录,与 Go 版 `tool/fs` 互补。
+> 示例插件:脚本实现文本读写/编辑/搜索/列目录;标准 `plugins/tool/fs` 也已是 TS 实现。
 
 ## 1. 目的
 
 | 层 | 实现 |
 |---|---|
-| Go 基线 | `plugins/tool/fs` 新增 `write_file` / `edit_file` / `search_files` / `list_dir` |
+| 标准工具 | `plugins/tool/fs`(TS)提供 `read_file` / `write_file` / `edit_file` / `search_files` / `list_dir` |
 | 脚本示例 | `examples/text-ts/plugins/text-helper` 通过注入模块 `ada:fs` 提供同类工具 |
 
 脚本插件只做参数校验与结果格式化;实际读写/搜索走 `seam/fs`。
@@ -40,7 +40,7 @@ examples/text-ts/
 export function read(path) { return host.fs.read(path) }
 export function write(path, content, createDirs) { return host.fs.write(path, content, createDirs) }
 export function edit(path, old, newText, all) { return host.fs.edit(path, old, newText, all) }
-export function search(query, path, limit) { return JSON.parse(host.fs.search(path || "/workspace", query, limit || 0)) }
+export function search(query, path, limit) { return JSON.parse(host.fs.search(query, path || "/workspace", limit || 0)) }
 export function list(path, recursive, limit) { return JSON.parse(host.fs.list(path || "/workspace", recursive, limit || 0)) }
 ```
 
@@ -58,7 +58,7 @@ go run ./cmd/ada agent --preset examples/text-ts/text.preset.json -message "写�
 
 | 场景 | 用例 |
 |---|---|
-| Go 工具全链路 | `plugins/tool/fs.TestTextTools`、`TestTextToolsErrors` |
+| 标准 TS 工具全链路 | `platform/bridge.TestJSToolFS`(读/写/编辑/搜索/列目录) |
 | 脚本装配 | `platform/host/cli.TestUpTextScriptPlugin` |
 | 脚本写/编辑 | `platform/host/cli.TestAgentTextScriptPlugin` |
 | fs-local Search | Go 工具测试覆盖(真实文件搜索) |

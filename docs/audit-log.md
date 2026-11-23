@@ -1,6 +1,6 @@
 # policy/audit-log(审计落盘)
 
-> 配套 [seam-fs.md](seam-fs.md)/[seam-shell.md](seam-shell.md)/[seam-net.md](seam-net.md)/[seam-approval.md](seam-approval.md) 的事件契约。
+> 配套 [seam-fs.md](seam-fs.md)/[seam-shell.md](seam-shell.md)/[seam-approval.md](seam-approval.md) 的事件契约。
 
 ## 1. 范围
 
@@ -16,7 +16,6 @@ plugins/policy/audit-log/   把观察/审批事件追加为 JSONL 文件
 |---|---|
 | `fs/observe` | `policy/fs-observe` |
 | `shell/observe` | `policy/shell-observe` |
-| `net/observe` | `policy/net-observe` |
 | `approval/requested` | `seam/approval` 插件 |
 | `approval/decided` | fs/shell 策略(审批结果) |
 | `caps/deny` | `caps.Broker` 拒绝回调(经 `caps-static`/策略 fallback 发事件) |

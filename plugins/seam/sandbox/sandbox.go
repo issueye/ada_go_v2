@@ -41,7 +41,6 @@ const (
 	OpFSEdit    Op = "fs.edit"
 	OpFSList    Op = "fs.list"
 	OpShellExec Op = "shell.exec"
-	OpNetFetch  Op = "net.fetch"
 )
 
 // Path 是虚拟路径(与 seam/fs 同一路径空间)。

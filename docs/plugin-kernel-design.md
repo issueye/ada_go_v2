@@ -818,7 +818,7 @@ var FSTools = kernel.Func("tools-fs", func(ctx *kernel.Context, cfg kernel.Confi
   "capabilities": [                        // 授权，不是服务可见性
     "fs.read",
     "fs.write.workspace",
-    "net.fetch.example.com"
+    "secrets.TOKEN"
   ],
 
   "config": "./config.schema.json",         // 也可内联：{ "type": "object", ... }
@@ -1227,7 +1227,6 @@ Reload(fiber)：
 |---|---|---|
 | `ada:api` | 纯类型（`export {}`），编译期擦除 | 无 |
 | `ada:fs` | `read/write/list/stat/watch`，路径限定挂载点 | `fs.read` / `fs.write` |
-| `ada:net` | `fetch`（webapi + AllowHosts） | `net.fetch.<host>` |
 | `ada:exec` | `run`（无 shell、程序级 allowlist） | `exec` |
 | `ada:proc` | 长驻进程 start/write/read/kill | `process` |
 | `ada:clock` | `now/after/timer` | 无 |
@@ -1679,7 +1678,7 @@ preset 的形态（数据，不是代码）：
 
 | 威胁 | 场景 | 对策 |
 |---|---|---|
-| 恶意插件读文件/外传 | 第三方插件偷凭据 | `fs.*` 限 `os.Root`；`net` 白名单；secret 按名授权 |
+| 恶意插件读文件/外传 | 第三方插件偷凭据 | `fs.*` 限 `os.Root`；secret 按名授权；网络出站**不做**宿主侧白名单（ADR 0011/0012，见下条说明） |
 | 恶意插件执行命令 | 下载器/挖矿 | `exec` 程序级 allowlist + 无 shell + 进程组 kill |
 | 资源耗尽 | 死循环/内存炸弹 | 预算 + `MemoryLimit` + 熔断 + 配额 |
 | 供应链投毒 | 安装包被替换 | Artifact digest + Ed25519 签名 + 固定版本 + 隔离安装目录 |
@@ -1688,6 +1687,10 @@ preset 的形态（数据，不是代码）：
 | 权限升级 | 声明 builtin 自抬身价 | 信任由**安装来源**决定，磁盘自声明降级（v1 `CapTrust` 已有） |
 
 **一个被低估的收益**：纯 Go 工具链意味着 **npm 生命周期脚本（postinstall）根本不存在**——这是 Node 插件生态最大的供应链攻击面，v2 天然消掉。
+
+**实现优先（AGENTS §0 红线 6）**：威胁模型是用来**给已实现的能力加边界**的，不是用来否决需求的。任何「出于安全考虑不提供 X」的结论必须走 ADR（说明威胁模型、被否决的具体需求、替代路径、复议日期）；更常见的正确做法是实现 X，把边界做成可关闭的 `policy/*` 或 preset 字段。默认值可以保守，但「默认拒绝」不等于「没有实现」——前者是策略，后者是能力缺失。本节余下各条都按这个顺序读：**先有能力，再有强制点**。
+
+**网络不在强制点范围内**：ADR 0011 决定 Node 网络模块直连标准库，ADR 0012 进一步移除了 `seam/net`、`net-guard`、`net-observe`。因此本表与 §13.3 都不再列 `net.fetch`；需要「能读文件但不能外传」的产品，应靠 `secrets` 按名授权 + 不在 preset 里启用网络相关工具，而不是假设出站被门禁拦住。
 
 ### 13.2 信任等级与能力上限
 
@@ -1721,7 +1724,6 @@ func (b *Broker) Authorize(ctx context.Context, p PluginRef, cap caps.Cap, targe
 | 能力 | 强制点 | 实现要点 |
 |---|---|---|
 | `fs.read` / `fs.write` | `caps/fs` | 虚拟路径重写 → `os.Root`；`..`/符号链接逐段 `EvalSymlinks`；写白名单=工作区+插件自己目录 |
-| `net.fetch.<host>` | `caps/net` | `http.Client` 的 `Allow` 逐请求（含重定向）校验 host；默认无 `Client` = 无 `fetch` |
 | `exec` | `caps/exec` | 无 shell；程序级 allowlist；超时 120s；输出 4 MB；杀进程树 |
 | `process` | `caps/process` | 生命周期 30 min；每插件 8 个；env 只给清单声明 |
 | `secrets.<name>` | `caps/secrets` | 只返回清单声明过的名字；不落日志（正则脱敏） |
@@ -1940,7 +1942,7 @@ ada_go_v2/
   platform/plugin/                     清单、发现、Artifact、安装、信任、签名
   platform/compile/                    esbuild Transform 管线、模块表、缓存、sourcemap
   platform/jsrt/                       moejs 适配：Entry/Runtime/Loop/Loader/Bridge/Budget/Breaker
-    api/                      宿主模块实现（ada:fs / ada:net / ada:clock …）
+    api/                      宿主模块实现（ada:fs / ada:exec / ada:clock …）
   platform/caps/                       能力授权与沙箱（fs/net/exec/proc/secrets/ui/config/audit）
   contrib/                    贡献目录（tools/providers/prompts/actions/routes/pages/slots/jobs）
   platform/assemble/                   Plan/Graph/Assembler/Report/Generation

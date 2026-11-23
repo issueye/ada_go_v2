@@ -1,6 +1,6 @@
 {
   "name": "agent",
-  "plugins": ["plugins"],
+  "plugins": ["plugins", "../../plugins/tool/fs"],
   "disable": ["llm-openai", "session-jsonl"],
   "patch": {
     "agent-loop": {"model": "replay"}

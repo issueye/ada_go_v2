@@ -71,7 +71,7 @@ func TestUsage(t *testing.T) {
 
 // 5. verify:未签名 ts 插件是 third-party。
 func TestVerify(t *testing.T) {
-	code, out, errOut := run("verify", "../../../examples/plugins-ts/hello-ts")
+	code, out, errOut := run("verify", "../../../examples/git-ts/plugins/git-helper")
 	if code != 0 {
 		t.Fatalf("verify 应成功,code=%d err=%s", code, errOut)
 	}
@@ -82,7 +82,15 @@ func TestVerify(t *testing.T) {
 
 // 6. inspect:挂载并输出快照。
 func TestInspect(t *testing.T) {
-	code, out, errOut := run("inspect", "--preset", "../../../examples/presets/ts-only.preset.json")
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir("../../.."); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	code, out, errOut := run("inspect", "--preset", "examples/git-ts/git.preset.json")
 	if code != 0 {
 		t.Fatalf("inspect 应成功,code=%d err=%s", code, errOut)
 	}
@@ -181,7 +189,15 @@ func TestPlanJSONLPreset(t *testing.T) {
 
 // 7. up:挂载后停止。
 func TestUp(t *testing.T) {
-	code, out, errOut := run("up", "--preset", "../../../examples/presets/ts-only.preset.json")
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir("../../.."); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	code, out, errOut := run("up", "--preset", "examples/git-ts/git.preset.json")
 	if code != 0 {
 		t.Fatalf("up 应成功,code=%d err=%s", code, errOut)
 	}
@@ -193,14 +209,14 @@ func TestUp(t *testing.T) {
 // 8. install:安装到临时目录。
 func TestInstall(t *testing.T) {
 	dest := t.TempDir()
-	code, out, errOut := run("install", "../../../examples/plugins-ts/hello-ts", "-dest", dest)
+	code, out, errOut := run("install", "../../../examples/git-ts/plugins/git-helper", "-dest", dest)
 	if code != 0 {
 		t.Fatalf("install 应成功,code=%d err=%s", code, errOut)
 	}
 	if !strings.Contains(out, "已安装") {
 		t.Fatalf("install 输出不正确:\n%s", out)
 	}
-	if _, err := os.Stat(filepath.Join(dest, "hello-ts@0.1.0", "plugin.ts")); err != nil {
+	if _, err := os.Stat(filepath.Join(dest, "git-helper@0.1.0", "plugin.ts")); err != nil {
 		t.Fatalf("安装目录缺少插件文件: %v", err)
 	}
 }
@@ -647,7 +663,19 @@ func TestCheck(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "结果: 通过") {
 		t.Fatalf("check 失败: code=%d err=%s out=%s", code, errOut, out)
 	}
-	code, out, errOut = run("check", "../../../examples/plugins-ts")
+	tsDir := t.TempDir()
+	tsPlugin := filepath.Join(tsDir, "ts-demo")
+	if err := os.MkdirAll(tsPlugin, 0o755); err != nil {
+		t.Fatalf("建 TS 目录失败: %v", err)
+	}
+	tsManifest := `{"id":"ts-demo","version":"0.1.0","kind":"ts","entry":"plugin.ts"}`
+	if err := os.WriteFile(filepath.Join(tsPlugin, "plugin.json"), []byte(tsManifest), 0o644); err != nil {
+		t.Fatalf("写 TS 清单失败: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tsPlugin, "plugin.ts"), []byte("export function apply(): void {}\n"), 0o644); err != nil {
+		t.Fatalf("写 TS 源码失败: %v", err)
+	}
+	code, out, errOut = run("check", tsDir)
 	if code != 0 || !strings.Contains(out, "编译: OK") {
 		t.Fatalf("TS check 失败: code=%d err=%s out=%s", code, errOut, out)
 	}
@@ -683,14 +711,6 @@ func TestCheckJSON(t *testing.T) {
 	}
 	if !payload.OK || !payload.PlanOK || !payload.CapsOK {
 		t.Fatalf("JSON 内容不正确: %+v", payload)
-	}
-}
-
-// M5 net/secrets 内置实现已接入宿主:示例 preset 可真实挂载。
-func TestUpNetStack(t *testing.T) {
-	code, out, errOut := run("up", "--preset", "../../../examples/net/net.preset.json")
-	if code != 0 || !strings.Contains(out, "service net") {
-		t.Fatalf("net 栈挂载失败: code=%d err=%s out=%s", code, errOut, out)
 	}
 }
 
@@ -793,6 +813,38 @@ func TestAgentCommandScriptPlugin(t *testing.T) {
 	code, out, errOut := run("agent", "--preset", "examples/command-ts/command.preset.json", "-message", "执行 git --version")
 	if code != 0 || !strings.Contains(out, "命令执行完成") {
 		t.Fatalf("command-helper 运行失败: code=%d err=%s out=%s", code, errOut, out)
+	}
+}
+
+// 35.1 tool-shell(TS 实现)装配:检查 TS 工具注册到 tools 服务。
+func TestUpToolShellScriptPlugin(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir("../../.."); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	code, out, errOut := run("up", "--preset", "examples/tool-shell-ts/shell.preset.json")
+	if code != 0 || !strings.Contains(out, "tool-shell") {
+		t.Fatalf("tool-shell 装配失败: code=%d err=%s out=%s", code, errOut, out)
+	}
+}
+
+// 35.2 tool-shell(TS 实现)端到端:run_shell 经 ada:shell.exec 执行真实命令。
+func TestAgentToolShellScriptPlugin(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir("../../.."); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	code, out, errOut := run("agent", "--preset", "examples/tool-shell-ts/shell.preset.json", "-message", "执行命令")
+	if code != 0 || !strings.Contains(out, "命令执行完成: tool-shell-ts") {
+		t.Fatalf("tool-shell 运行失败: code=%d err=%s out=%s", code, errOut, out)
 	}
 }
 

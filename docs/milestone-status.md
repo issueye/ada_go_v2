@@ -2,7 +2,7 @@
 
 > 本文件把里程碑验收项映射到**实现位置、证据命令与已知边界**。口径来源:
 > [plugin-kernel-design.md](plugin-kernel-design.md) §17、AGENTS §10。
-> 最近更新:2026-11-21(524 个 Test + 4 个 Benchmark;不做 v1 插件迁移)。
+> 最近更新:2026-11-23(532 个 Test + 4 个 Benchmark;不做 v1 插件迁移)。
 
 ## 0. 结论速览
 
@@ -20,11 +20,13 @@
 | C1 session seam + memory/jsonl | `plugins/seam/session`、`plugins/provider/session-memory`/`session-jsonl`、`plugins/core/session-stats` | `session` 单测、`sessiontest`;jsonl 契约/重开/并发/半行恢复;`sessionstats` 投影 | 投影检查点未持久化;jsonl 无多进程租约 |
 | C2 prompts seam + system-prompt | `plugins/seam/prompts`、`plugins/core/system-prompt` | `prompts` 3 个用例 | 引擎在 seam 内,未拆 provider;预算为字符估算 |
 | C3 llm seam + provider | `plugins/seam/llm`、`plugins/provider/llm-replay`/`llm-openai` | `replay` 2 个用例、`openai` wire/真实端点(可选) | OpenAI 兼容端点已实测;stream 改写结果未回传;无 deepseek 专用适配 |
-| C4 tools seam + tool/fs | `plugins/seam/tools`、`plugins/tool/fs` | `tools` 2 个用例;`toolfs.TestTextTools`/`TestTextToolsErrors`(读/写/编辑/搜索/列目录) | 搜索仅字面量;编辑 read-before-edit |
+| C4 tools seam + tool/fs | `plugins/seam/tools`、`plugins/tool/fs`(TS)、`platform/bridge`(`ada:fs`) | `tools` 2 个用例;`bridge.TestJSToolFS`(读/写/编辑/搜索/列目录);`cli.TestAgentReplay` | 搜索仅字面量;编辑 read-before-edit;`ada:fs.search` 参数顺序已修正 |
 | C4b 脚本工具 | `examples/git-ts/plugins/git-helper`、`platform/bridge`(`ctx.tool`/`ada:shell`) | `cli.TestAgentGitScriptPlugin`;真实端点手工 | 无 SDK 类型;JS→原生 shell 无 ctx 取消 |
 | C4c 脚本持久化工具 | `examples/task-ts/plugins/task-helper`、`platform/bridge`(`ada:fs`) | `cli.TestUpTaskScriptPlugin`、`cli.TestAgentTaskScriptPlugin`;真实端点手工 | 任务文件不是会话事实;read-modify-write 无事务 |
 | C4d 脚本命令工具 | `examples/command-ts/plugins/command-helper`、`ada:shell` | `cli.TestUpCommandScriptPlugin`、`cli.TestAgentCommandScriptPlugin`;真实端点手工 | 白名单不是安全边界;无 shell 解析 |
 | C4e 脚本文本工具 | `examples/text-ts/plugins/text-helper`、`ada:fs` | `cli.TestUpTextScriptPlugin`、`cli.TestAgentTextScriptPlugin`;真实端点手工 | 搜索字面量/无正则;fs-local 路径约束 |
+| C4f TS shell 工具 | `plugins/tool/shell`(TS)、`platform/bridge`(`ada:shell.exec`/结构化工具结果)、`platform/jsrt` | `bridge.TestJSToolResultMapping`、`TestJSShellExecStructured`、`cli.TestAgentToolShellScriptPlugin` | 仍是策略/沙箱之外的执行入口;发布安全边界见 tool-shell.md |
+| C4g Node 内置模块 | `platform/jsrt`、`platform/jsrt/nodemods`、moejs `node` 包 | `bridge.TestNodeBuiltins`、`TestNodeChildProcess`、`TestNodeHTTPDNSNet`、`TestNodeHTTPError`、`TestNodeFSDisabledByPolicy` | `node:fs/path/os/events/util/assert/url/querystring/string_decoder/process/child_process/http/https/dns/net/buffer`;有 fs/workspace 策略时 `node:fs` 不可用;网络模块不做 `net-guard` 限制(ADR 0011/0012,已移除该策略);无 `createServer`/`listen` |
 | C5 agent-loop | `plugins/core/agent-loop` | `agentloop.TestTurnWithReplayAndTool`、`TestContextBudgetReturnsECONTEXT`、`TestCompactionFitsBudget`、`TestParallelTools` | 并行工具(maxParallelTools);contextBudget + compaction-basic;模型摘要可选;无 core/agent 拆分 |
 | C6 最小 preset + golden | `examples/agent` | `ada plan/up --preset examples/agent/agent.preset.json`;事件序列 golden;`TestRealAgentTurn` 实测真实端点 tool call | 默认回放模型;真实端点需 env |
 | C7 策略桩 | `plugins/policy/approval-gate`、`llm-retry`、`tool-timeout` | approval-gate 2、llm-retry 3、tool-timeout 1 | 全部落地;后续可加 tool-repeat-guard 等 |
@@ -52,16 +54,15 @@
 | 审批实现 | `approval-deny`,`approval-cli` | `approval-cli`(5) | CLI y/yes 交互 |
 | 静态能力授权 | `plugins/provider/caps-static`,`platform/caps/` | `caps`(7)、`caps-static`(1) | 安装根按 index trust 回填;普通磁盘目录 third-party |
 | 调用点强制 | `policy/caps-gate` | `caps-gate`(4) | fs/shell 调用点 |
-| 网络升级审批 | `policy/net-guard` | `net-guard`(14) | 每次未授权都重新审批 |
-| C13 拒绝矩阵 | `plugins/policy/securitymatrix` | `TestFSMatrix`、`TestFSNoCapDenied`、`TestNetMatrix`、`TestShellMatrix` | 覆盖 fs/net/shell;caps 拒绝已入审计;通用 payload 脱敏待补 |
+| C13 拒绝矩阵 | `plugins/policy/securitymatrix` | `TestFSMatrix`、`TestFSNoCapDenied`、`TestShellMatrix` | 覆盖 fs/shell;caps 拒绝已入审计;通用 payload 脱敏待补 |
+| ~~网络升级审批~~ | ~~`policy/net-guard`~~ | 已移除 | ADR 0012:网络不再有受控 seam |
 
 ### 2.3 网络与 secret
 
 | 验收项 | 实现位置 | 证据 | 已知边界 |
 |---|---|---|---|
-| net seam/provider | `seam/net`,`provider/net-http` | `net-http`(8) | 超时/8MiB/重定向≤5/http(s) |
-| net 授权/私网拒绝 | `policy/net-guard` | `net-guard`(14) | 重定向逐跳 + 连接级 IP 校验;无 DNS TOCTOU |
-| net 观察 | `policy/net-observe` | `net-observe`(4) | error 已脱敏 query;不含 body |
+| Node 网络模块 | `platform/jsrt/nodemods`、`platform/bridge/node_net.go` | `TestNodeHTTPDNSNet`、`TestNodeHTTPError`、`TestNodeHTTPSInsecure` | 直连标准库,不经 seam/caps(ADR 0011/0012);无 createServer |
+| ~~net seam/provider~~ | ~~`seam/net`,`provider/net-http`~~ | 已移除 | ADR 0012:无消费者,且策略无法覆盖 Node 路径 |
 | secrets seam/provider | `seam/secrets`,`provider/secrets-env` | `secrets-env`(5) | 白名单空=拒绝;`ADA_SECRET_*` |
 | secrets 授权 | `policy/secrets-guard` | `secrets-guard`(3) | 名称正则 + principal |
 
@@ -89,8 +90,8 @@
 | 只读 HTTP API | `platform/host/server` | `platform/host/server`(14) | Token/限流/TLS/CORS 可选 |
 | 桌面映射骨架 | `platform/host/desktop` | `desktop`(4) | **无真实窗口(mygo),见 ADR 0001** |
 | 审计落盘 | `policy/audit-log` | `audit-log`(7) | 无 fsync;大小轮转 |
-| `ada inspect --chain` | `platform/host/cli` | `cli.TestInspectChain`、`cli.TestAgentWorkspace` | 显示 fs/shell/net/workspace 优先级 |
-| 内置栈接线 | `platform/host/builtins` | `builtins.TestBuiltinGoPlugins`、`cli.TestUpNetStack`/`TestUpSecretsStack` | net/secrets 已接入宿主;其它 Go 插件仍需编译时注册 |
+| `ada inspect --chain` | `platform/host/cli` | `cli.TestInspectChain`、`cli.TestAgentWorkspace` | 显示 fs/shell/workspace 优先级 |
+| 内置栈接线 | `platform/host/builtins` | `builtins.TestBuiltinGoPlugins`、`cli.TestUpSecretsStack` | secrets 已接入宿主;其它 Go 插件仍需编译时注册 |
 
 ### 2.6 RPC 通讯(P0–P4 TLS,新增能力)
 
@@ -119,7 +120,7 @@ go run ./cmd/ada agent --preset examples/workspace/workspace.preset.json --works
 
 当前实测:
 
-- 测试 **524 个 Test + 4 个 Benchmark**,`go test -race ./...` 全绿;
+- 测试 **532 个 Test + 4 个 Benchmark**,`go test -race ./...` 全绿;
 - kernel 生产 **2396 / 3000** 行;
 - host 生产 **2367 / 2500**(cli 1443 / 1500,其它最大 408 / 800);
 - bench:ServiceResolve 58ns、Emit 1.61μs、waterfall 5.55μs、50 插件 348μs;

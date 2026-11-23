@@ -48,8 +48,6 @@ func (n *None) Resolve(_ context.Context, req seamsandbox.Request) (seamsandbox.
 		case seamsandbox.OpShellExec:
 			// 只读模式是否放行命令由 shell 策略决定(白名单),这里不重复判定。
 			return allow(n.mode, "read-only: 命令交由 shell 策略判定"), nil
-		case seamsandbox.OpNetFetch:
-			return deny(n.mode, false, "read-only: 拒绝网络访问"), nil
 		}
 	case seamsandbox.ModeWorkspaceWrite:
 		switch req.Op {
@@ -60,8 +58,6 @@ func (n *None) Resolve(_ context.Context, req seamsandbox.Request) (seamsandbox.
 				return allow(n.mode, fmt.Sprintf("workspace-write: 允许写 %s", req.Path)), nil
 			}
 			return deny(n.mode, true, fmt.Sprintf("workspace-write: 只允许写 /workspace 与 /tmp,拒绝 %s", req.Path)), nil
-		case seamsandbox.OpNetFetch:
-			return deny(n.mode, false, "workspace-write: 拒绝网络访问"), nil
 		}
 	case seamsandbox.ModeDanger:
 		// 即使危险模式,插件目录仍受保护(安全契约 §1.3)。

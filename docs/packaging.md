@@ -15,9 +15,10 @@
 1. 编译全部入口到 `dist/<name>/bin/`;
 2. 运行 `builtins-dump`,**从编译进宿主的 `builtins.Plugins()` 枚举所有 Go 插件**,
    用 `kernel.Plugin` 的 `Provide()`/`Inject()` 自动生成 `plugins/<id>/plugin.json`;
-3. 生成只引用包内 `../plugins`、`workspace/`、`data/` 的 preset;
-4. 用打包后的二进制执行 `ada plan` 自检(同平台时);
-5. 打 zip。
+3. 把 TS 实现的 `plugins/tool/shell` 复制为 `plugins/tool-shell/`(源码 + 清单);
+4. 生成只引用包内 `../plugins`、`workspace/`、`data/` 的 preset;
+5. 用打包后的二进制执行 `ada plan` 自检(同平台时);
+6. 打 zip。
 
 因此发布清单不会随 `examples/` 的手写文件漂移。
 
@@ -46,6 +47,8 @@ dist/ada-<version>-<goos>-<goarch>/
     ada-ts-demo[.exe]
   plugins/
     <id>/plugin.json            # 由 builtins 自动导出的全部 Go 内置插件
+    tool-fs/                    # TS 实现:plugin.json + plugin.ts
+    tool-shell/                 # TS 实现:plugin.json + plugin.ts
   presets/
     agent-release.preset.json
     workspace-release.preset.json
@@ -71,12 +74,15 @@ bin/ada.exe agent --preset presets/workspace-release.preset.json --workspace doc
 
 ## 4. preset 的 allowlist
 
-`plugins/` 包含全部 52 个 Go 内置插件,但发布 preset 只启用栈内插件,其余全部写入 `disable`:
+`plugins/` 包含 **47 个 Go 内置插件 + 2 个 TS 插件(`tool-fs`、`tool-shell`)**,但发布 preset
+只启用栈内插件,其余全部写入 `disable`:
 
 - `agent-release`: agent-loop、session-memory/stats、system-prompt、seam-llm + llm-replay、
-  seam-fs + fs-local、seam-tools + tool-fs、compaction-basic;
-- `workspace-release`: 再增加 seam/workspace + workspace-local + workspace-guard + tool-workspace;
-- `agent-real-release`(可选): 用 `llm-openai` 替换 `llm-replay`。
+  seam-fs + fs-local、seam-tools、compaction-basic、tool-fs(TS),以及 shell 栈
+  (seam-shell + shell-local + shell-guard + seam-sandbox + sandbox-none + tool-shell TS);
+- `workspace-release`: 再增加 seam/workspace + workspace-local + workspace-guard + tool-workspace,
+  不启用 shell 栈;
+- `agent-real-release`(可选): 用 `llm-openai` 替换 `llm-replay`,同样带 shell 栈。
 
 未启用的插件仍以清单形式随包发布,方便后续在 preset 中启用;启用时必须补上它自己的配置。
 
@@ -93,8 +99,9 @@ bin/ada plan --preset presets/workspace-release.preset.json
 
 ## 6. 边界
 
-1. **只打包 Go 内置插件**:`builtins-dump` 不包含 TS 脚本插件;需要脚本插件时在发布项目里
-   单独提供源码/Artifact 与清单。
+1. **Go 内置插件自动导出,TS 插件按目录复制**:`builtins-dump` 只包含 Go 插件;
+   `tool-fs` / `tool-shell` 由脚本单独复制源码与清单。其它 TS 脚本插件仍需在发布项目里
+   提供源码/Artifact 与清单。
 2. **preset 路径依赖包根目录**:`llm-replay`、`fs-local.workspace` 是相对进程 cwd 的配置,
    必须在包根目录运行;`ada-rpc-agent` 由宿主设置 cwd/环境变量。
 3. **没有真实端点自动探测**:真实 preset 的 endpoint/model 只来自参数,不在脚本里猜。

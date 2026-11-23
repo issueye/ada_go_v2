@@ -1,4 +1,4 @@
-# 内核门禁脚本(M1 起接入 CI)。
+﻿# 内核门禁脚本(M1 起接入 CI)。
 # 用法:pwsh scripts/guard.ps1
 # 退出码非 0 表示违反 AGENTS.md §5 的硬规则。
 

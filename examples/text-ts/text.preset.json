@@ -1,6 +1,6 @@
 {
   "name": "text-ts",
-  "plugins": ["../agent/plugins", "plugins"],
+  "plugins": ["../agent/plugins", "plugins", "../../plugins/tool/fs"],
   "disable": ["llm-openai", "session-jsonl"],
   "patch": {
     "agent-loop": {"model": "replay"},

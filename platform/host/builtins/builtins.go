@@ -19,8 +19,6 @@ import (
 	fsredact "github.com/issueye/ada_go_v2/plugins/policy/fs-redact"
 	fssandbox "github.com/issueye/ada_go_v2/plugins/policy/fs-sandbox"
 	llmretry "github.com/issueye/ada_go_v2/plugins/policy/llm-retry"
-	netguard "github.com/issueye/ada_go_v2/plugins/policy/net-guard"
-	netobserve "github.com/issueye/ada_go_v2/plugins/policy/net-observe"
 	rpcguard "github.com/issueye/ada_go_v2/plugins/policy/rpc-guard"
 	rpcobserve "github.com/issueye/ada_go_v2/plugins/policy/rpc-observe"
 	secretsguard "github.com/issueye/ada_go_v2/plugins/policy/secrets-guard"
@@ -35,7 +33,6 @@ import (
 	fslocal "github.com/issueye/ada_go_v2/plugins/provider/fs-local"
 	openai "github.com/issueye/ada_go_v2/plugins/provider/llm-openai"
 	replay "github.com/issueye/ada_go_v2/plugins/provider/llm-replay"
-	nethttp "github.com/issueye/ada_go_v2/plugins/provider/net-http"
 	rpcjson "github.com/issueye/ada_go_v2/plugins/provider/rpc-json"
 	rpcnet "github.com/issueye/ada_go_v2/plugins/provider/rpc-net"
 	rpcpipe "github.com/issueye/ada_go_v2/plugins/provider/rpc-pipe"
@@ -49,7 +46,6 @@ import (
 	seamapproval "github.com/issueye/ada_go_v2/plugins/seam/approval"
 	seamfs "github.com/issueye/ada_go_v2/plugins/seam/fs"
 	seamllm "github.com/issueye/ada_go_v2/plugins/seam/llm"
-	seamnet "github.com/issueye/ada_go_v2/plugins/seam/net"
 	seamprompts "github.com/issueye/ada_go_v2/plugins/seam/prompts"
 	seamrpc "github.com/issueye/ada_go_v2/plugins/seam/rpc"
 	seamsandbox "github.com/issueye/ada_go_v2/plugins/seam/sandbox"
@@ -58,7 +54,6 @@ import (
 	seamshell "github.com/issueye/ada_go_v2/plugins/seam/shell"
 	seamtools "github.com/issueye/ada_go_v2/plugins/seam/tools"
 	seamworkspace "github.com/issueye/ada_go_v2/plugins/seam/workspace"
-	toolfs "github.com/issueye/ada_go_v2/plugins/tool/fs"
 	toolworkspace "github.com/issueye/ada_go_v2/plugins/tool/workspace"
 )
 
@@ -73,7 +68,6 @@ func Plugins() map[string]func() kernel.Plugin {
 		"seam-prompts":     seamprompts.Plugin,
 		"system-prompt":    systemprompt.Plugin,
 		"seam-tools":       seamtools.Plugin,
-		"tool-fs":          toolfs.Plugin,
 		"agent-loop":       agentloop.Plugin,
 		"session-stats":    sessionstats.Plugin,
 		"compaction-basic": compaction.Plugin,
@@ -100,10 +94,6 @@ func Plugins() map[string]func() kernel.Plugin {
 		"session-memory":   memory.Plugin,
 		"session-jsonl":    sessionjsonl.Plugin,
 		"caps-static":      capsstatic.Plugin,
-		"seam-net":         seamnet.Plugin,
-		"net-http":         nethttp.Plugin,
-		"net-guard":        netguard.Plugin,
-		"net-observe":      netobserve.Plugin,
 		"seam-secrets":     seamsecrets.Plugin,
 		"secrets-env":      secretsenv.Plugin,
 		"secrets-guard":    secretsguard.Plugin,

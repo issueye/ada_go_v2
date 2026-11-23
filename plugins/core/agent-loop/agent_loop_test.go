@@ -368,7 +368,7 @@ func TestTurnWithReplayAndTool(t *testing.T) {
 	mount("seam-tools", nil)
 	mount("seam-fs", nil)
 	mount("fs-local", map[string]any{"workspace": workspace})
-	mount("tool-fs", nil)
+	mountToolFS(t, app)
 	mount("agent-loop", map[string]any{"model": "replay"})
 
 	raw, err := app.Root().Service("agent")

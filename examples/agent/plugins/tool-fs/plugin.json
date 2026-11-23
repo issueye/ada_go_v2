@@ -1,7 +1,0 @@
-{
-  "id": "tool-fs",
-  "name": "fs tools",
-  "version": "0.1.0",
-  "kind": "go",
-  "inject": {"required": ["tools", "fs"]}
-}

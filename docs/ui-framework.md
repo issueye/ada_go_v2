@@ -850,7 +850,7 @@ event: ui/theme-changed    data: {"theme":"ada-dark"}
 | `builtin` | 是 | 是 | 按 `ui` | 按 caps |
 | `official` | 是 | 是 | 按 `ui` | 按 caps |
 | `verified` | 是 | 是 | 按 `ui` | 按 caps（exec/process 仍受信任等级限制） |
-| `third-party`（签名） | **否** | 是 | 无（`ui` 最低信任是 `verified`） | 按 caps（fs.read/net.fetch） |
+| `third-party`（签名） | **否** | 是 | 无（`ui` 最低信任是 `verified`） | 按 caps（fs.read/secrets） |
 | `third-party`（未签名） | **否** | 是 | 无 | 无（只能声明式） |
 
 声明式功能包由**宿主**执行动作并渲染，功能包本身不获得 `ui` 桥；所以第三方仍能提供只读页面，但不能自己驱动 UI 或调用动作。U2 的 iframe 隔离岛是第三方的第三条路径（默认关闭，不进主 realm），矩阵里的「否」指主 realm 自定义功能包（`.aui`）。**矩阵中的「平台 UI 调用 / Go 后端 caps」只描述服务端检查，不构成对主 realm 的沙箱**（§9.2）。**自定义 SFC 的 trust 只读 install 索引/keyring，不读清单自述**；如 copy 一个目录并改 `trust:builtin`，仍按 `third-party` 处理。

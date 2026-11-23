@@ -17,7 +17,7 @@ import (
 // PolicyName 是插件 id。
 const PolicyName = "rpc-guard"
 
-// Priority 是装饰器优先级(高者在外层);与 net-guard 同层。
+// Priority 是装饰器优先级(高者在外层);与 fs-sandbox 同层。
 const Priority = 200
 
 type Config struct {

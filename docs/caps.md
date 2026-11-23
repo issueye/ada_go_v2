@@ -12,7 +12,7 @@ plugins/provider/caps-static/  提供 "caps" 服务(*caps.Broker),让宿主/装�
 platform/assemble/                 GrantManifests:按清单 caps/trust 灌入 Broker
 ```
 
-本刀做**静态授权 + 调用点强制**:`caps-gate`(fs/shell)、`net-guard`、`secrets-guard`、`rpc-guard`
+本刀做**静态授权 + 调用点强制**:`caps-gate`(fs/shell)、`secrets-guard`、`rpc-guard`
 从 `kernel.Principal(ctx)` 取调用者身份;`kernel.Context.Context()` 已负责把 principal 传进 ctx。
 剩余的是信任来源与目标级约束(见 §5)。
 
@@ -22,7 +22,6 @@ platform/assemble/                 GrantManifests:按清单 caps/trust 灌入 Br
 fs.read | fs.write
 exec
 process | process.isolated
-net.fetch | net.fetch.<host>
 secrets.<name>
 config.<namespace>
 ui
@@ -31,14 +30,15 @@ rpc.listen.<network>
 ```
 
 - 未知命名空间、层级错误、空名一律非法(清单校验期拒绝)。
-- 通配只放宽**目标**,不放宽命名空间:`net.fetch` 覆盖 `net.fetch.example.com`;
+- 通配只放宽**目标**,不放宽命名空间:`rpc.call` 覆盖 `rpc.call.agent.session.list`;
   `secrets.*` 覆盖 `secrets.GITHUB_TOKEN`;持有 `fs.read` 不会获得 `fs.write`。
+- `net.fetch` 已随 ADR 0012 移除:网络没有受控 seam,写进清单也会被判为未知命名空间。
 
 ## 3. 信任等级
 
 | 能力 | 最低信任 |
 |---|---|
-| `fs.read` / `net.fetch` | third-party |
+| `fs.read` | third-party |
 | `fs.write` / `ui` / `config` / `secrets` / `rpc.listen` | verified |
 | `rpc.call` | third-party |
 | `exec` / `process` | official |
@@ -67,7 +67,8 @@ broker.Authorize(ctx, "plugin-a", "fs.write", "/workspace/a") // → *DeniedErro
 
 ## 5. 偏差与边界
 
-1. **调用点强制已落地(fs/shell/net/secrets)**:`policy/caps-gate`(fs/shell)与 `policy/net-guard`(net)从 `kernel.Principal(ctx)` 取调用者,向 Broker 查能力;
+1. **调用点强制已落地(fs/shell/secrets/rpc)**:`policy/caps-gate`(fs/shell)、`policy/secrets-guard`(secrets)、
+   `policy/rpc-guard`(rpc)从 `kernel.Principal(ctx)` 取调用者,向 Broker 查能力;
    缺少身份/未授权一律拒绝。`caps-gate` 优先使用注入的 `caps` 服务;`assemble.GrantManifests` 把清单 `caps`/`trust` 灌入 Broker;CLI 的 `up`/`inspect` 已通过 `applyAutoGrants` 自动接线。
 2. **trust 来源已接安装索引**:`plugin.LoadDir` 把磁盘非 Go 插件降为 `third-party`;
    `install.LoadDir` 对安装根目录按 `index.json` 回填 verified/official;直接拷入的非安装目录
@@ -79,8 +80,8 @@ broker.Authorize(ctx, "plugin-a", "fs.write", "/workspace/a") // → *DeniedErro
    (无 caps 服务时的 fallback)也发同一事件。
 5. **没有目标级约束**:`fs.write` 的「工作区 + 插件自身目录」由 sandbox/fs-local 承担,
    caps 层不重复判定路径;`exec` 的程序 allowlist 未与 caps 合并。
-6. **net/secrets 已接强制;config/ui 仍未接**:`net-guard`/`secrets-guard` 已按 principal 授权;
-   `config`/`ui` 还没有调用点。
+6. **secrets 已接强制;config/ui 仍未接**:`secrets-guard` 已按 principal 授权;
+   `config`/`ui` 还没有调用点。网络已不再是 caps 的管辖范围(ADR 0012)。
 
 ## 6. 测试矩阵
 

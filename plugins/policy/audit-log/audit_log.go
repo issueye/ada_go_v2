@@ -15,7 +15,6 @@ import (
 	"github.com/issueye/ada_go_v2/platform/kernel"
 	seamapproval "github.com/issueye/ada_go_v2/plugins/seam/approval"
 	seamfs "github.com/issueye/ada_go_v2/plugins/seam/fs"
-	seamnet "github.com/issueye/ada_go_v2/plugins/seam/net"
 	seamshell "github.com/issueye/ada_go_v2/plugins/seam/shell"
 )
 
@@ -94,7 +93,7 @@ func Plugin() kernel.Plugin {
 
 		for _, name := range []string{
 			seamfs.EventObserve, seamshell.EventObserve,
-			seamnet.EventObserve, seamapproval.EventRequested, EventApprovalDecided,
+			seamapproval.EventRequested, EventApprovalDecided,
 			caps.EventDeny,
 		} {
 			eventName := name

@@ -1,4 +1,4 @@
-// Chain 与 Registry 是 seam/rpc 的无 I/O 编排部分,与 seam/net 的 Chain 同构。
+// Chain 与 Registry 是 seam/rpc 的无 I/O 编排部分,与 seam/fs 的 Chain 同构。
 package rpc
 
 import (

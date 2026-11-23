@@ -12,15 +12,16 @@ import (
 // 1. 能力名语法:未知命名空间/层级错误/空名一律非法。
 func TestParse(t *testing.T) {
 	valid := []string{"fs.read", "fs.write", "exec", "process", "process.isolated",
-		"net.fetch.example.com", "secrets.GITHUB_TOKEN", "config.ada", "ui",
+		"secrets.GITHUB_TOKEN", "config.ada", "ui",
 		"rpc.call", "rpc.call.agent.session.list", "rpc.listen.tcp", "rpc.listen.unix"}
 	for _, spec := range valid {
 		if _, err := caps.Parse(spec); err != nil {
 			t.Fatalf("%q 应合法: %v", spec, err)
 		}
 	}
-	bad := []string{"", "fs", "fs.exec", "exec.x", "process.foo", "net.read.a",
-		"net.fetch.", "secrets", "config", "shell", "fs.read.deep",
+	bad := []string{"", "fs", "fs.exec", "exec.x", "process.foo",
+		"net.fetch.example.com", "net.fetch", "net.read.a",
+		"secrets", "config", "shell", "fs.read.deep",
 		"rpc", "rpc.x", "rpc.call.", "rpc.listen", "rpc.listen.foo"}
 	for _, spec := range bad {
 		if _, err := caps.Parse(spec); err == nil {
@@ -31,12 +32,12 @@ func TestParse(t *testing.T) {
 
 // 2. 通配:授予前缀可覆盖目标;命名空间不互相放宽。
 func TestGrantsWildcard(t *testing.T) {
-	g, err := caps.NewGrants("net.fetch", "secrets.*", "fs.read")
+	g, err := caps.NewGrants("rpc.call", "secrets.*", "fs.read")
 	if err != nil {
 		t.Fatalf("构造失败: %v", err)
 	}
-	if !g.Has("net.fetch.example.com", "example.com") {
-		t.Fatalf("net.fetch 应覆盖具体主机")
+	if !g.Has("rpc.call.agent.session.list", "") {
+		t.Fatalf("rpc.call 应覆盖具体方法")
 	}
 	if !g.Has("secrets.GITHUB_TOKEN", "") {
 		t.Fatalf("secrets.* 应覆盖具体名字")

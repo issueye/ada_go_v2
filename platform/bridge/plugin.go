@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +29,7 @@ import (
 	"github.com/issueye/ada_go_v2/plugins/seam/llm"
 	"github.com/issueye/ada_go_v2/plugins/seam/shell"
 	"github.com/issueye/ada_go_v2/plugins/seam/tools"
+	seamworkspace "github.com/issueye/ada_go_v2/plugins/seam/workspace"
 )
 
 // applyTimeout 是装配预算。装配只做编译 + 加载 + 一次 apply,
@@ -219,6 +221,42 @@ func (p *Plugin) Provide() []string { return nil }
 // 加载器尚未实现(M3)。
 func (p *Plugin) Config() *schema.Schema { return nil }
 
+// nodeOptions 决定给这个 JS 运行时装哪一层 Node 文件系统。
+//
+// node:fs 是宿主直连工作区根的第二条路径;一旦 fs/workspace 链上有策略装饰器,
+// 就不能绕过它们,只保留 node:path / node:os / node:buffer。无策略时开放读写,
+// 让插件可以按 Node 习惯工作,同时仍由 node 包把路径夹在工作区内。
+func nodeOptions(ctx *kernel.Context, fsChain *seamfs.Chain) *jsrt.NodeOptions {
+	opts := &jsrt.NodeOptions{Buffer: true}
+	if ctx == nil || fsChain == nil || len(fsChain.Applied()) > 0 {
+		return opts
+	}
+	write := true
+	if v, ok := ctx.TryService(seamworkspace.ServiceName); ok {
+		if ch, ok := v.(*seamworkspace.Chain); ok {
+			// 有 workspace 策略时 node:fs 不能绕过它;没有策略但当前根只读时只装读。
+			if len(ch.Applied()) > 0 {
+				return opts
+			}
+			if svc, err := ch.Get(); err == nil {
+				if info, ierr := svc.Current(ctx.Context()); ierr != nil || info.ReadOnly {
+					write = false
+				}
+			} else {
+				write = false
+			}
+		}
+	}
+	root, err := fsChain.Root(ctx.Context())
+	if err != nil || root == "" {
+		return opts
+	}
+	opts.FS = &jsrt.NodeFSOptions{
+		Root: root, Mount: "/workspace", Cwd: "/workspace", Write: write,
+	}
+	return opts
+}
+
 // Apply 装配 JS 运行时,调用入口模块的 apply(ctx, cfg),再提交暂存的 provide/emit。
 func (p *Plugin) Apply(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, error) {
 	// kernel.Apply 的签名没有 context(M1 冻结),这里用一个有界预算兜底。
@@ -240,14 +278,22 @@ func (p *Plugin) Apply(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, 
 	}
 	modules := map[string]*moejs.Module{}
 	if shellChain != nil {
-		m, cerr := moejs.Compile("ada:shell", "const host = globalThis.__adaHost;\nexport function run(program, args, dir) { return host.shell(program, args, dir); }\n")
+		// run 保留旧契约(返回 stdout 字符串,非零退出抛错);exec 返回结构化结果,
+		// 让脚本工具可以自己决定非零退出、stderr 与截断如何呈现给模型。
+		m, cerr := moejs.Compile("ada:shell", `const host = globalThis.__adaHost;
+export function run(program, args, dir) { return host.shell(program, args, dir); }
+export function exec(program, args, dir, options) {
+  return JSON.parse(host.shellExec(program, args, dir, JSON.stringify(options || {})));
+}
+export function platform() { return globalThis.__adaOS; }
+`)
 		if cerr != nil {
 			return nil, kernel.Wrap(kernel.CodeInvalid, cerr, "JS 插件 %s 注入模块编译失败", p.opts.Name)
 		}
 		modules["ada:shell"] = m
 	}
 	if fsChain != nil {
-		m, cerr := moejs.Compile("ada:fs", "const host = globalThis.__adaHost;\nexport function read(path) { return host.fs.read(path); }\nexport function write(path, content, createDirs) { return host.fs.write(path, content, createDirs); }\nexport function edit(path, old, newText, all) { return host.fs.edit(path, old, newText, all); }\nexport function search(query, path, limit) { return JSON.parse(host.fs.search(path || \"/workspace\", query, limit || 0)); }\nexport function list(path, recursive, limit) { return JSON.parse(host.fs.list(path || \"/workspace\", recursive, limit || 0)); }\n")
+		m, cerr := moejs.Compile("ada:fs", "const host = globalThis.__adaHost;\nexport function read(path) { return host.fs.read(path); }\nexport function write(path, content, createDirs) { return host.fs.write(path, content, createDirs); }\nexport function edit(path, old, newText, all) { return host.fs.edit(path, old, newText, all); }\nexport function search(query, path, limit) { return JSON.parse(host.fs.search(query, path || \"/workspace\", limit || 0)); }\nexport function list(path, recursive, limit) { return JSON.parse(host.fs.list(path || \"/workspace\", recursive, limit || 0)); }\n")
 		if cerr != nil {
 			return nil, kernel.Wrap(kernel.CodeInvalid, cerr, "JS 插件 %s 注入模块编译失败", p.opts.Name)
 		}
@@ -257,12 +303,20 @@ func (p *Plugin) Apply(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, 
 		Artifact: p.opts.Artifact,
 		Logf:     p.record,
 		Modules:  modules,
+		Node:     nodeOptions(ctx, fsChain),
+		// 注入宿主 OS,供 ada:shell 选择默认 shell(cmd.exe / /bin/sh)。
+		Globals: map[string]any{"__adaOS": runtime.GOOS},
 		Host: jsrt.Host{
 			Provide:   stage.provide,
 			Emit:      func(event string, payload any) error { return p.emitTo(stage, event, payload) },
 			On:        stage.on,
 			Effect:    stage.effect,
 			Waterfall: stage.waterfall,
+			// 网络能力直连标准库(ADR 0011/0012):约束只针对文件与写入,仓库已无 net seam/policy。
+			// 仍然是宿主注入的 JSON 入口,脚本没有直接 syscall 的路径。
+			HTTPDo:    nodeHTTPDo,
+			DNSLookup: nodeDNSLookup,
+			NetDial:   nodeDial,
 			Shell: func(sctx context.Context, program string, args []string, dir string) (string, error) {
 				if shellChain == nil {
 					return "", fmt.Errorf("shell 服务不可用")
@@ -286,6 +340,51 @@ func (p *Plugin) Apply(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, 
 					return "", fmt.Errorf("命令退出码 %d: %s", res.ExitCode, text)
 				}
 				return text, nil
+			},
+			ShellExec: func(sctx context.Context, program string, args []string, dir string, options string) (string, error) {
+				if shellChain == nil {
+					return "", fmt.Errorf("shell 服务不可用")
+				}
+				var opts struct {
+					TimeoutMs int64 `json:"timeoutMs"`
+				}
+				if strings.TrimSpace(options) != "" {
+					if err := json.Unmarshal([]byte(options), &opts); err != nil {
+						return "", fmt.Errorf("shell.exec 的 options 非法: %w", err)
+					}
+				}
+				sh, err := shellChain.Get()
+				if err != nil {
+					return "", err
+				}
+				res, err := sh.Run(sctx, shell.Command{
+					Program: program, Args: args, Dir: shell.Path(dir),
+					Timeout: time.Duration(opts.TimeoutMs) * time.Millisecond,
+				})
+				if err != nil {
+					return "", err
+				}
+				// 跨 JSON 边界前再收一刀:shell-local 可能返回 4 MiB,
+				// 但 AGENTS §5.6 不允许把大对象塞进 JSON。
+				stdout, stderr := res.Stdout, res.Stderr
+				truncated := res.Truncated
+				half := maxShellExecBytes / 2
+				if len(stdout) > half {
+					stdout, truncated = stdout[:half], true
+				}
+				if len(stderr) > half {
+					stderr, truncated = stderr[:half], true
+				}
+				payload, err := json.Marshal(shellExecResult{
+					Stdout: string(stdout), Stderr: string(stderr),
+					ExitCode: res.ExitCode, Truncated: truncated,
+					DurationMs: res.Duration.Milliseconds(),
+					Enforced:   res.Facts.Enforced, Backend: res.Facts.Backend, Mode: string(res.Facts.Mode),
+				})
+				if err != nil {
+					return "", err
+				}
+				return string(payload), nil
 			},
 			FSRead: func(fctx context.Context, path string) (string, error) {
 				if fsChain == nil {
@@ -376,13 +475,16 @@ func (p *Plugin) Apply(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, 
 				}
 				return string(b), nil
 			},
-			Tool: func(name, summary string, input map[string]any, readOnly bool, invoke func(ctx context.Context, args any) (any, error)) error {
+			Tool: func(name, summary string, input map[string]any, readOnly bool, timeout time.Duration, invoke func(ctx context.Context, args any) (any, error)) error {
 				if toolsReg == nil {
 					return fmt.Errorf("tools 服务不可用")
 				}
+				if timeout <= 0 {
+					timeout = 30 * time.Second
+				}
 				def := tools.ToolDef{
 					Name: name, Summary: summary, ReadOnly: readOnly,
-					Timeout: 30 * time.Second, Source: p.opts.Name,
+					Timeout: timeout, Source: p.opts.Name,
 					Input: schema.FromMap(input),
 					Handler: func(tctx context.Context, call tools.CallInfo) (tools.Result, error) {
 						var args any
@@ -394,6 +496,11 @@ func (p *Plugin) Apply(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, 
 						out, err := invoke(tctx, args)
 						if err != nil {
 							return tools.Result{Status: tools.StatusError, Content: []llm.Block{{Kind: llm.BlockText, Text: err.Error()}}}, nil
+						}
+						// 显式返回 {status, content, details, terminate} 的脚本工具按结构化结果处理;
+						// 其余返回值保持旧契约:字符串原样,对象转 JSON。
+						if res, ok := toolResultFromJS(out); ok {
+							return res, nil
 						}
 						text, ok := out.(string)
 						if !ok {
@@ -530,6 +637,77 @@ func (p *Plugin) emitTo(stage *stager, event string, payload any) error {
 		return fmt.Errorf("ctx.emit: 插件已卸载,事件未派发")
 	}
 	ctx.EmitContext(context.Background(), event, payload)
+	return nil
+}
+
+// maxShellExecBytes 是单次 shell.exec 跨 JSON 边界的输出上限(stdout+stderr)。
+const maxShellExecBytes = 256 << 10
+
+// shellExecResult 是 ada:shell.exec 的结构化返回值。
+//
+// 字段名与 Go 侧 tool-shell 的 Details 保持接近;Mode/Backend 为空时表示
+// 当前 shell 实现没有从 sandbox 回填 Facts(已知边界)。
+type shellExecResult struct {
+	Stdout     string `json:"stdout"`
+	Stderr     string `json:"stderr"`
+	ExitCode   int    `json:"exitCode"`
+	Truncated  bool   `json:"truncated"`
+	DurationMs int64  `json:"durationMs"`
+	Enforced   bool   `json:"enforced"`
+	Backend    string `json:"backend,omitempty"`
+	Mode       string `json:"mode,omitempty"`
+}
+
+// toolResultFromJS 识别脚本工具返回的结构化结果:
+// {status, content, details, terminate}。没有 status 的对象仍按旧契约转 JSON 文本。
+func toolResultFromJS(out any) (tools.Result, bool) {
+	m, ok := out.(map[string]any)
+	if !ok {
+		return tools.Result{}, false
+	}
+	status, ok := m["status"].(string)
+	if !ok || status == "" {
+		return tools.Result{}, false
+	}
+	res := tools.Result{Status: tools.Status(status), Content: blocksFromJS(m["content"])}
+	if d, ok := m["details"]; ok && d != nil {
+		if b, err := json.Marshal(d); err == nil {
+			res.Details = b
+		}
+	}
+	if t, ok := m["terminate"].(bool); ok {
+		res.Terminate = t
+	}
+	return res, true
+}
+
+// blocksFromJS 把脚本工具返回的 content 转成模型消息块。
+func blocksFromJS(v any) []llm.Block {
+	switch x := v.(type) {
+	case string:
+		if x == "" {
+			return nil
+		}
+		return []llm.Block{{Kind: llm.BlockText, Text: x}}
+	case []any:
+		out := make([]llm.Block, 0, len(x))
+		for _, item := range x {
+			switch it := item.(type) {
+			case string:
+				if it != "" {
+					out = append(out, llm.Block{Kind: llm.BlockText, Text: it})
+				}
+			case map[string]any:
+				kind := llm.BlockText
+				if k, ok := it["kind"].(string); ok && k != "" {
+					kind = llm.BlockKind(k)
+				}
+				text, _ := it["text"].(string)
+				out = append(out, llm.Block{Kind: kind, Text: text})
+			}
+		}
+		return out
+	}
 	return nil
 }
 

@@ -31,6 +31,7 @@ policy/fs-sandbox ──inject "fs"──▶ Chain.Decorate(沙箱包装,priorit
 | `FS.List` | 递归受 `MaxDepth` 约束;超过 `Limit`(默认 2000)返回 `ETOOLARGE` |
 | `Version` | 内容哈希 + mtime + size;provider 与测试共用 `VersionOf` |
 | `Chain.Decorate` | priority 高者在外层(先判);同优先级后注册者在外层 |
+| `Chain.Root` | 返回底座实现的宿主根;供 `node:fs` 安装与诊断使用,不进入 `FS` 接口 |
 | 错误码 | `EDENIED`/`ENOENT`/`EISDIR`/`ECONFLICT`/`EBINARY`/`ETOOLARGE`/`EINVALID` |
 
 `EDENIED` 的 `Message` 带 `source=sandbox|cap|approval`,便于 UI/审计区分来源。

@@ -40,9 +40,11 @@ try {
         throw "-LLMEndpoint 与 -LLMModel 必须同时提供"
     }
 
-    $pkgRel = Join-Path $OutputDir $pkgName
-    $outRoot = Join-Path $root $OutputDir
-    $pkg = Join-Path $root $pkgRel
+    if (-not $OutputDir) { throw "-OutputDir 不能为空" }
+    # 允许绝对路径;相对路径一律相对仓库根,避免受调用方 cwd 影响。
+    $outRoot = if ([IO.Path]::IsPathRooted($OutputDir)) { $OutputDir } else { Join-Path $root $OutputDir }
+    New-Item -ItemType Directory -Force -Path $outRoot | Out-Null
+    $pkg = Join-Path $outRoot $pkgName
     $binDir = Join-Path $pkg "bin"
     if ((Test-Path $pkg) -and $SkipBuild) {
         if (-not (Test-Path $binDir)) {
@@ -64,8 +66,13 @@ try {
     New-Item -ItemType Directory -Force -Path $pkg | Out-Null
 
     if (-not $SkipBuild) {
-        & pwsh -NoProfile -File (Join-Path $root "scripts/build.ps1") `
-            -OutputDir (Join-Path $pkgRel "bin") -GOOS $goosValue -GOARCH $goarchValue -StripDebug:$StripDebug
+        # 用当前宿主(PowerShell 5.1 或 pwsh 7)启动子脚本:两者语法已兼容,
+        # 不在没有 pwsh 的机器上硬编码解释器名。
+        $shell = (Get-Process -Id $PID).Path
+        $buildArgs = @("-NoProfile", "-File", (Join-Path $root "scripts/build.ps1"),
+            "-OutputDir", $binDir, "-GOOS", $goosValue, "-GOARCH", $goarchValue)
+        if ($StripDebug) { $buildArgs += "-StripDebug" }
+        & $shell @buildArgs
         if ($LASTEXITCODE -ne 0) {
             throw "编译失败(exit $LASTEXITCODE)"
         }
@@ -83,22 +90,41 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "导出内置插件清单失败(exit $LASTEXITCODE)"
     }
+
+    # tool-fs / tool-shell 是 TS 插件,不在 builtins-dump 的导出范围;
+    # 复制源码与清单,让发布 preset 与开发 preset 使用同一份插件目录。
+    $tsPlugins = @(
+        @{ Src = "plugins/tool/fs"; Name = "tool-fs" },
+        @{ Src = "plugins/tool/shell"; Name = "tool-shell" }
+    )
+    foreach ($ts in $tsPlugins) {
+        $dest = Join-Path $plugins $ts.Name
+        New-Item -ItemType Directory -Force -Path $dest | Out-Null
+        Copy-Item (Join-Path $ts.Src "plugin.json") (Join-Path $dest "plugin.json") -Force
+        Copy-Item (Join-Path $ts.Src "plugin.ts") (Join-Path $dest "plugin.ts") -Force
+    }
+
     $ids = @(Get-ChildItem $plugins -Directory | Select-Object -ExpandProperty Name | Sort-Object)
     if ($ids.Count -eq 0) {
         throw "没有导出任何内置插件"
     }
 
-    $agentAllow = @(
+    $agentBase = @(
         "agent-loop", "compaction-basic", "fs-local", "llm-replay",
         "seam-fs", "seam-llm", "seam-prompts", "seam-session", "seam-tools",
         "session-memory", "session-stats", "system-prompt", "tool-fs"
     )
-    $workspaceAllow = $agentAllow + @(
+    # shell 栈只在 agent preset 里打开;workspace preset 保持无命令执行。
+    $shellAllow = @(
+        "seam-shell", "shell-local", "shell-guard", "seam-sandbox", "sandbox-none", "tool-shell"
+    )
+    $agentAllow = $agentBase + $shellAllow
+    $workspaceAllow = $agentBase + @(
         "seam-workspace", "tool-workspace", "workspace-guard", "workspace-local"
     )
     $missing = @($agentAllow | Where-Object { $_ -notin $ids })
     if ($missing.Count -gt 0) {
-        throw "allowlist 引用了不存在的 builtin: $($missing -join ', ')"
+        throw "allowlist 引用了不存在的插件: $($missing -join ', ')"
     }
 
     $dataDir = Join-Path $pkg "data"
@@ -119,17 +145,35 @@ try {
     $disableAgent = @($ids | Where-Object { $_ -notin $agentAllow })
     $disableWorkspace = @($ids | Where-Object { $_ -notin $workspaceAllow })
 
+    if ($goosValue -eq "windows") {
+        $shellProgram = "cmd.exe"
+        $shellArgs = @("/C")
+    } else {
+        $shellProgram = "/bin/sh"
+        $shellArgs = @("-c")
+    }
+    # shell 栈的公共配置:sandbox 只在策略层生效,命令仍由用户权限执行。
+    $shellPatch = [ordered]@{
+        "sandbox-none" = @{ mode = "workspace-write" }
+        "shell-local" = @{ workspace = "workspace"; tmp = "workspace/.ada-tmp" }
+        "shell-guard" = @{ backend = "sandbox-none"; allowShell = $false }
+        "tool-shell" = @{ program = $shellProgram; args = $shellArgs; maxTimeoutSeconds = 120 }
+    }
+
+    $agentPatch = [ordered]@{
+        "agent-loop" = @{ model = "replay" }
+        "llm-replay" = [ordered]@{
+            path = "data/agent-replay.jsonl"; models = $replayModels; defaultModel = "replay"
+        }
+        "fs-local" = @{ workspace = "workspace"; tmp = "workspace/.ada-tmp" }
+    }
+    foreach ($k in $shellPatch.Keys) { $agentPatch[$k] = $shellPatch[$k] }
+
     $agentPreset = [ordered]@{
         name = "agent-release"
         plugins = @("../plugins")
         disable = $disableAgent
-        patch = [ordered]@{
-            "agent-loop" = @{ model = "replay" }
-            "llm-replay" = [ordered]@{
-                path = "data/agent-replay.jsonl"; models = $replayModels; defaultModel = "replay"
-            }
-            "fs-local" = @{ workspace = "workspace"; tmp = "workspace/.ada-tmp" }
-        }
+        patch = $agentPatch
     }
     $workspacePreset = [ordered]@{
         name = "workspace-release"
@@ -159,15 +203,17 @@ try {
     if ($LLMEndpoint -and $LLMModel) {
         $realAllow = @($agentAllow | Where-Object { $_ -ne "llm-replay" }) + @("llm-openai")
         $disableReal = @($ids | Where-Object { $_ -notin $realAllow })
+        $realPatch = [ordered]@{
+            "agent-loop" = @{ model = $LLMModel }
+            "llm-openai" = @{ endpoint = $LLMEndpoint; model = $LLMModel; apiKeyEnv = "ADA_LLM_API_KEY"; maxTokens = 512 }
+            "fs-local" = @{ workspace = "workspace"; tmp = "workspace/.ada-tmp" }
+        }
+        foreach ($k in $shellPatch.Keys) { $realPatch[$k] = $shellPatch[$k] }
         $realPreset = [ordered]@{
             name = "agent-real-release"
             plugins = @("../plugins")
             disable = $disableReal
-            patch = [ordered]@{
-                "agent-loop" = @{ model = $LLMModel }
-                "llm-openai" = @{ endpoint = $LLMEndpoint; model = $LLMModel; apiKeyEnv = "ADA_LLM_API_KEY"; maxTokens = 512 }
-                "fs-local" = @{ workspace = "workspace"; tmp = "workspace/.ada-tmp" }
-            }
+            patch = $realPatch
         }
         [System.IO.File]::WriteAllText((Join-Path $presetsDir "agent-real-release.preset.json"),
             (($realPreset | ConvertTo-Json -Depth 10) + "`n"), $utf8)
@@ -215,7 +261,7 @@ presets/ 只引用 ../plugins、workspace/ 与 data/,不包含开发目录路径
         Write-Host "交叉编译目标,跳过包内运行自检"
     }
 
-    $zip = Join-Path $root (Join-Path $OutputDir ($pkgName + ".zip"))
+    $zip = Join-Path $outRoot ($pkgName + ".zip")
     if ($NoZip) {
         if (Test-Path $zip) { Remove-Item -LiteralPath $zip -Force }
     } else {

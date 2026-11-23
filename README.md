@@ -86,6 +86,8 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 | [tool-task-helper.md](docs/tool-task-helper.md) | 脚本插件示例:TS task-helper + 注入 ada:fs |
 | [tool-command-helper.md](docs/tool-command-helper.md) | 脚本插件示例:TS command-helper + 注入 ada:shell |
 | [tool-text-helper.md](docs/tool-text-helper.md) | 脚本插件示例:TS text-helper + ada:fs 读写/编辑/搜索 |
+| [tool-shell.md](docs/tool-shell.md) | TS 工具插件:tool-shell + ada:shell.exec(含 moejs/bridge 扩展) |
+| [node-compat.md](docs/node-compat.md) | Node 内置模块兼容层:node:fs/path/os/events/util 等 |
 | [adr/0001](docs/adr/0001-deferred-m5-scope.md) | ADR:延迟 OS 级沙箱与真实桌面窗口(复议 2027-01-15) |
 | [adr/0002](docs/adr/0002-host-budget-exception.md) | ADR:host 层代码预算例外(CLI 适配器) |
 | [adr/0003](docs/adr/0003-handler-context-and-timeout-gate.md) | ADR:监听器 ctx 与 waterfall 超时闸门 |
@@ -97,7 +99,7 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 | [adr/0009](docs/adr/0009-rpc-json-budget.md) | ADR:rpc-json 单插件预算例外(已接受) |
 | [adr/0010](docs/adr/0010-session-jsonl-budget.md) | ADR:session-jsonl 单插件预算例外(已接受) |
 | [seam-rpc.md](docs/seam-rpc.md) | RPC 通讯:P0–P4(TLS) 已实现(tcp/unix/pipe、帧/握手/取消、rpc-guard/observe、tls://) |
-| [seam-net.md](docs/seam-net.md) | M5 网络能力:seam/net 与 provider/net-http |
+| [node-compat.md](docs/node-compat.md) | Node 内置模块兼容层:node:fs/path/os/events/util 等 |
 | [seam-secrets.md](docs/seam-secrets.md) | M5 secret 能力:seam/secrets 与 provider/secrets-env |
 | [seam-session.md](docs/seam-session.md) | seam/session 与 session-memory |
 | [seam-fs.md](docs/seam-fs.md) | M5:seam/fs、fs-local 与 fs-sandbox |
@@ -125,41 +127,43 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 ## 当前状态:M1 内核 + M2 执行层 + M3 装配 + M4 编排 + M4.5 Agent Core 第一刀 + M5 安全与宿主
 
 ```powershell
-go test -race -count=1 -timeout 300s ./...   # 524 个 Test + 4 个 Benchmark
+go test -race -count=1 -timeout 300s ./...   # 532 个 Test + 4 个 Benchmark
 go run ./cmd/ada-demo                        # 依赖门控 + 级联重载演示
 pwsh scripts/guard.ps1                       # 门禁:词汇/依赖/gofmt/build/vet/staticcheck/race/交叉编译/预算
 pwsh scripts/build.ps1                       # 编译入口到 bin/(-GOOS/-GOARCH 可交叉编译)
 pwsh scripts/package.ps1 -Version 0.1.0      # 编译+内置插件清单+发布 preset,产出 dist/
 go run ./cmd/ada-ts-demo                     # M2:TS 插件编译→加载→提供服务/派发事件→内核消费
 go run ./cmd/ada plan examples/plugins       # M3:读清单→依赖图→装配顺序/问题报告
-go run ./cmd/ada up examples/plugins-ts      # M3:现场编译 TS 插件并真的挂载一遍
+go run ./cmd/ada up --preset examples/git-ts/git.preset.json  # M3:现场编译 TS 插件并真的挂载一遍
 go run ./cmd/ada plan --preset examples/agent/agent.preset.json   # M4.5:最小 agent preset
 go run ./cmd/ada up --preset examples/agent/agent.preset.json     # M4.5:挂载 agent 栈(一次性)
 go run ./cmd/ada inspect --chain --preset examples/agent/agent.preset.json  # M5:装饰器链快照
 go run ./cmd/ada up --preset examples/agent/real.preset.json               # M4.5:真实 OpenAI 兼容端点(需 env)
 go run ./cmd/ada agent --preset examples/agent/agent.preset.json -message "读取 a.txt 并总结"  # M4.5:跑一轮
-go run ./cmd/ada up --preset examples/net/net.preset.json       # M5:net 栈(seam-net+net-http+net-observe)
 go run ./cmd/ada up --preset examples/secrets/secrets.preset.json # M5:secrets 栈(seam-secrets+secrets-env)
 go run ./cmd/ada agent --preset examples/git-ts/git.preset.json -message "看看 git 状态" # 脚本插件 + 注入模块
 go run ./cmd/ada agent --preset examples/task-ts/task.preset.json -message "添加任务并列出" # 脚本插件 + ada:fs
 go run ./cmd/ada agent --preset examples/command-ts/command.preset.json -message "执行 git --version" # 脚本插件 + 受控命令
+go run ./cmd/ada agent --preset examples/tool-shell-ts/shell.preset.json -message "执行命令" # TS 工具插件 + ada:shell.exec
 go run ./cmd/ada agent --preset examples/text-ts/text.preset.json -message "写文件、替换并搜索" # 脚本插件 + 文本工具
 go run ./cmd/ada agent --preset examples/workspace/workspace.preset.json --workspace docs -message "查询工作区并读取 a.txt" # 工作区绑定 + 只读 docs
 go run ./cmd/ada agent --preset examples/workspace/real.preset.json --workspace docs -message "查询工作区并读取 a.txt" # 工作区真实端点(需 ADA_LLM_API_KEY)
-go run ./cmd/ada plan --preset examples/presets/base.preset.json   # M3:preset(多目录/disabled/patch)
-go run ./cmd/ada inspect --preset examples/presets/ts-only.preset.json  # M3:诊断快照(fiber/服务/effect)
-go run ./cmd/ada verify examples/plugins-ts/hello-ts  # M5:清单/摘要/验签/信任
+go run ./cmd/ada plan --preset examples/presets/base.preset.json   # M3:preset(disabled/patch)
+go run ./cmd/ada inspect --preset examples/git-ts/git.preset.json  # M3:诊断快照(fiber/服务/effect)
+go run ./cmd/ada verify examples/git-ts/plugins/git-helper  # M5:清单/摘要/验签/信任
 go run ./cmd/ada list -dest <安装根>                 # M5:本机安装索引
 go run ./cmd/ada uninstall <id> -dest <安装根>        # M5:卸载全部版本
 go run ./cmd/ada upgrade <目录> -dest <安装根>         # M5:升级并清理旧版本
 go run ./cmd/ada rollback <id> -dest <安装根>          # M5:回滚到上一版本
 go run ./cmd/ada update <id> -repo <仓库> -dest <安装根>  # M5:离线仓库更新
 go run ./cmd/ada caps examples/plugins -json          # M5:能力自检(caps/trust → Broker)
-go run ./cmd/ada check examples/plugins-ts           # M5:清单/计划/platform/caps/编译一键校验
+go run ./cmd/ada check examples/text-ts/plugins      # M5:清单/计划/platform/caps/编译一键校验
 pwsh scripts/bench.ps1                       # 性能预算:≤20 μs/次、50 插件冷启动 ≤150 ms
 ```
 
-已完成:`platform/kernel/`、`platform/kernel/schema`、`cmd/ada`、`cmd/ada-demo`、`cmd/ada-ts-demo`、`platform/compile/`、`platform/jsrt/`、`platform/bridge/`、`platform/plugin/`、`platform/preset/`、`platform/assemble/`(含延迟激活)、`platform/loader/`、`platform/sched/`、`platform/quota/`、`platform/flow/`、`platform/bundle/`、`platform/expr/`、`plugins/seam/session` + `provider/session-memory`、`plugins/seam/prompts` + `core/system-prompt`、`plugins/seam/llm` + `provider/llm-replay`/`provider/llm-openai`、`plugins/seam/tools` + `tool/fs`、`policy/approval-gate`/`policy/llm-retry`/`policy/tool-timeout`、`core/agent-loop`、`examples/agent`(最小 preset + 回放脚本)、`plugins/seam/fs` + `provider/fs-local` + `policy/fs-sandbox`、`plugins/seam/shell` + `provider/shell-local` + `policy/shell-guard`、`plugins/policy/fs-redact`/`fs-observe`/`shell-observe`/`shell-redact`、`plugins/seam/sandbox` + `provider/sandbox-none`、`plugins/seam/approval` + `provider/approval-deny`/`approval-cli`、`plugins/seam/workspace` + `provider/workspace-local` + `policy/workspace-guard` + `tool/workspace`、`examples/workspace`、`platform/caps/`、`platform/install/`、`platform/host/cli`、`platform/host/server`、`platform/host/builtins`、`platform/host/desktop`(视图映射骨架)、`platform/host/registry`、`scripts/build.ps1`、`scripts/package.ps1`、`scripts/tools/builtins-dump`、`scripts/guard.ps1`、`scripts/bench.ps1`、`docs/m4.5-agent-core.md`、`docs/kernel-api.md`、`docs/m2-execution.md`、`docs/m3-assembly.md`、`docs/m4-orchestration.md`、`docs/m4-flow.md`、`docs/seam-session.md`、`docs/seam-fs.md`、`docs/workspace-plugin.md`、`docs/packaging.md`、`docs/seam-shell.md`、`docs/seam-sandbox.md`、`docs/seam-approval.md`、`docs/adr/0001-deferred-m5-scope.md`、`docs/adr/0002-host-budget-exception.md`。
+Node 内置模块:`node:fs`/`node:fs/promises`/`node:buffer`(moejs `node` 包)与 `node:path`/`node:os`/`node:events`/`node:util`/`node:assert`/`node:url`/`node:querystring`/`node:string_decoder`/`node:process`/`node:child_process`/`node:http`/`node:https`/`node:dns`/`node:dns/promises`/`node:net`(宿主 embed);`node:fs` 在 fs/workspace 有策略装饰器时不可用,避免绕过安全链;网络模块直连标准库,`seam/net` 与 `net-guard` 已移除(见 [ADR 0011](docs/adr/0011-node-network-direct.md)、[ADR 0012](docs/adr/0012-remove-seam-net.md))。见 [node-compat.md](docs/node-compat.md)。
+
+已完成:`platform/kernel/`、`platform/kernel/schema`、`cmd/ada`、`cmd/ada-demo`、`cmd/ada-ts-demo`、`platform/compile/`、`platform/jsrt/`、`platform/bridge/`、`platform/plugin/`、`platform/preset/`、`platform/assemble/`(含延迟激活)、`platform/loader/`、`platform/sched/`、`platform/quota/`、`platform/flow/`、`platform/bundle/`、`platform/expr/`、`plugins/seam/session` + `provider/session-memory`、`plugins/seam/prompts` + `core/system-prompt`、`plugins/seam/llm` + `provider/llm-replay`/`provider/llm-openai`、`plugins/seam/tools` + `tool/fs`/`tool/shell`(TS)、`policy/approval-gate`/`policy/llm-retry`/`policy/tool-timeout`、`core/agent-loop`、`examples/agent`(最小 preset + 回放脚本)、`plugins/seam/fs` + `provider/fs-local` + `policy/fs-sandbox`、`plugins/seam/shell` + `provider/shell-local` + `policy/shell-guard`、`plugins/policy/fs-redact`/`fs-observe`/`shell-observe`/`shell-redact`、`plugins/seam/sandbox` + `provider/sandbox-none`、`plugins/seam/approval` + `provider/approval-deny`/`approval-cli`、`plugins/seam/workspace` + `provider/workspace-local` + `policy/workspace-guard` + `tool/workspace`、`examples/workspace`、`platform/caps/`、`platform/install/`、`platform/host/cli`、`platform/host/server`、`platform/host/builtins`、`platform/host/desktop`(视图映射骨架)、`platform/host/registry`、`scripts/build.ps1`、`scripts/package.ps1`、`scripts/tools/builtins-dump`、`scripts/guard.ps1`、`scripts/bench.ps1`、`docs/m4.5-agent-core.md`、`docs/kernel-api.md`、`docs/m2-execution.md`、`docs/m3-assembly.md`、`docs/m4-orchestration.md`、`docs/m4-flow.md`、`docs/seam-session.md`、`docs/seam-fs.md`、`docs/workspace-plugin.md`、`docs/packaging.md`、`docs/seam-shell.md`、`docs/seam-sandbox.md`、`docs/seam-approval.md`、`docs/adr/0001-deferred-m5-scope.md`、`docs/adr/0002-host-budget-exception.md`。
 
 剩余:M4.5 的 token 计数、投影检查点持久化、`core/agent` 拆分与摘要质量评估;M5 的 OS 级沙箱与真实桌面窗口(ADR 0001);RPC 的 `SO_PEERCRED`/宿主接入;UI 框架仍为提案。**不做 v1 插件迁移。**
 

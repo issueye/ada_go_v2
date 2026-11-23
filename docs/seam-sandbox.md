@@ -16,7 +16,7 @@ plugins/provider/sandbox-none/  后端:policy-only(只在策略层限制,Enforce
 | 类型 | 说明 |
 |---|---|
 | `Mode` | `read-only` / `workspace-write` / `danger-full-access` |
-| `Op` | `fs.read` / `fs.write` / `fs.edit` / `fs.list` / `shell.exec` / `net.fetch` |
+| `Op` | `fs.read` / `fs.write` / `fs.edit` / `fs.list` / `shell.exec` |
 | `Request` | 会话 id + 操作 + 虚拟路径 + 程序/参数 + Write/Network |
 | `Decision` | `Allow` + `Mode` + **可展示的 Reasons** + `Escalatable`(可否走审批升级) |
 | `Facts` | `Backend` / `Mode` / `Roots` / **`Enforced`** |
@@ -24,13 +24,15 @@ plugins/provider/sandbox-none/  后端:policy-only(只在策略层限制,Enforce
 
 `Resolve` 是唯一判定入口;后端只负责执行时约束,不能自行放行。
 
+> `OpNetFetch` 已随 ADR 0012 删除:网络不再有受控 seam,沙箱不参与网络判定。
+
 ## 3. `sandbox-none` 的判定规则
 
-| 模式 | fs.read/list | fs.write/edit | shell.exec | net.fetch |
-|---|---|---|---|---|
-| read-only | 放行 | 拒绝(`Escalatable=true`) | 放行(交由 shell 策略判定) | 拒绝 |
-| workspace-write | 放行 | 仅 `/workspace` `/tmp`,否则拒绝(`Escalatable=true`) | 放行 | 拒绝 |
-| danger-full-access | 放行 | 放行 | 放行 | 放行 |
+| 模式 | fs.read/list | fs.write/edit | shell.exec |
+|---|---|---|---|
+| read-only | 放行 | 拒绝(`Escalatable=true`) | 放行(交由 shell 策略判定) |
+| workspace-write | 放行 | 仅 `/workspace` `/tmp`,否则拒绝(`Escalatable=true`) | 放行 |
+| danger-full-access | 放行 | 放行 | 放行 |
 
 拒绝一定带 `Reasons`(可直接展示),`Escalatable` 标记用于未来的审批升级。
 

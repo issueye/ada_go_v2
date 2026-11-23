@@ -1,10 +1,11 @@
 // Package securitymatrix_test 是 M5 C13 的拒绝矩阵:
 // 能力 × 目标 × 沙箱模式,并验证拒绝来源(caps / sandbox / principal)。
+//
+// net 矩阵随 ADR 0012 移除:网络不再有受控 seam,Node 模块直连标准库。
 package securitymatrix_test
 
 import (
 	"context"
-	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -15,13 +16,11 @@ import (
 	"github.com/issueye/ada_go_v2/platform/kernel"
 	capsgate "github.com/issueye/ada_go_v2/plugins/policy/caps-gate"
 	fssandbox "github.com/issueye/ada_go_v2/plugins/policy/fs-sandbox"
-	netguard "github.com/issueye/ada_go_v2/plugins/policy/net-guard"
 	shellguard "github.com/issueye/ada_go_v2/plugins/policy/shell-guard"
 	fslocal "github.com/issueye/ada_go_v2/plugins/provider/fs-local"
 	sandboxnone "github.com/issueye/ada_go_v2/plugins/provider/sandbox-none"
 	shelllocal "github.com/issueye/ada_go_v2/plugins/provider/shell-local"
 	seamfs "github.com/issueye/ada_go_v2/plugins/seam/fs"
-	seamnet "github.com/issueye/ada_go_v2/plugins/seam/net"
 	seamsandbox "github.com/issueye/ada_go_v2/plugins/seam/sandbox"
 	seamshell "github.com/issueye/ada_go_v2/plugins/seam/shell"
 )
@@ -124,38 +123,6 @@ func TestFSNoCapDenied(t *testing.T) {
 	}
 	if _, err := f.Read(context.Background(), seamfs.ReadRequest{Path: "/workspace/a.txt"}); err == nil {
 		t.Fatal("无 principal 应拒绝")
-	}
-}
-
-// fakeClient 记录最后请求,用于 net 矩阵。
-type fakeClient struct{ last seamnet.Request }
-
-func (f *fakeClient) Do(ctx context.Context, req seamnet.Request) (seamnet.Response, error) {
-	f.last = req
-	return seamnet.Response{Status: 200, URL: req.URL}, nil
-}
-
-func TestNetMatrix(t *testing.T) {
-	broker := caps.NewBroker(nil)
-	if err := broker.Grant("p", "net.fetch.example.com"); err != nil {
-		t.Fatal(err)
-	}
-	inner := &fakeClient{}
-	client := netguard.NewWithResolver(inner, broker, false, func(context.Context, string) ([]net.IP, error) {
-		return []net.IP{net.ParseIP("93.184.216.34")}, nil
-	})
-	ctx := principalCtx("p")
-	if _, err := client.Do(ctx, seamnet.Request{URL: "http://127.0.0.1/"}); err == nil {
-		t.Fatal("私网应拒绝")
-	}
-	if _, err := client.Do(ctx, seamnet.Request{URL: "http://other.example/"}); err == nil {
-		t.Fatal("未授权 host 应拒绝")
-	}
-	if _, err := client.Do(context.Background(), seamnet.Request{URL: "http://example.com/"}); err == nil {
-		t.Fatal("无 principal 应拒绝")
-	}
-	if _, err := client.Do(ctx, seamnet.Request{URL: "http://example.com/"}); err != nil {
-		t.Fatalf("已授权 host 应放行: %v", err)
 	}
 }
 

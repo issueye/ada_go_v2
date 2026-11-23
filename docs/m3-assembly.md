@@ -25,7 +25,8 @@ plugin.json ──plugin.LoadDir──▶ []*Manifest(校验过的清单)
                     ada plan / ada up / ada inspect ──▶ 计划 / 挂载 / 诊断快照
 ```
 
-**不在这一刀里**:插件安装与更新、签名校验、capability 授权、bundle/profile 的多级 patch。
+**不在这一刀里**:插件安装与更新、签名校验、capability 授权(这些在 M5 文档);
+bundle/profile 已在 `platform/bundle` 落地(见 [m4-composition.md](m4-composition.md))。
 
 ## 2. 清单(`platform/plugin/`)
 
@@ -84,11 +85,8 @@ preset 是**数据不是代码**(AGENTS §2.2 的组合数据类):产品差异�
 ```json
 {
   "name": "base",
-  "plugins": ["../plugins", "../plugins-ts"],
-  "disable": ["presenter"],
-  "patch": {
-    "hello-ts": { "name": "preset" }
-  }
+  "plugins": ["../plugins"],
+  "disable": ["presenter"]
 }
 ```
 
@@ -136,31 +134,21 @@ up, err := assemble.Up(app, manifests, plan, lookup)
 go run ./cmd/ada plan examples/plugins                 # 纯目录:顺序 + 可选依赖告警
 go run ./cmd/ada plan --preset examples/presets/base.preset.json
 go run ./cmd/ada plan --preset examples/presets/base.preset.json -json
-go run ./cmd/ada up   --preset examples/presets/ts-only.preset.json
-go run ./cmd/ada inspect --preset examples/presets/ts-only.preset.json      # 挂载并输出诊断快照
-go run ./cmd/ada inspect --preset examples/presets/ts-only.preset.json -json
-go run ./cmd/ada up   --preset examples/presets/ts-only.preset.json
+go run ./cmd/ada up      --preset examples/git-ts/git.preset.json
+go run ./cmd/ada inspect --preset examples/git-ts/git.preset.json      # 挂载并输出诊断快照
+go run ./cmd/ada inspect --preset examples/git-ts/git.preset.json -json
 ```
 
 `--preset` 的实际输出:
 
 ```
-清单(4): greeter@0.1.0(go), presenter@0.1.0(go), upper@0.1.0(go), hello-ts@0.1.0(ts)
-顺序: greeter → hello-ts → upper
+清单(3): greeter@0.1.0(go), presenter@0.1.0(go), upper@0.1.0(go)
+顺序: greeter → upper
 警告: 插件 presenter 已被 disabled,计划中排除
 结果: 可装配
 ```
 
-`ada up --preset ...` 会真的挂载、打印 fiber/服务,再停止触发清理:
-
-```
-  [js] hello-ts 装配完成,name=preset
-装配完成: hello-ts
-  fiber   hello-ts     active
-  service ts.hello     provider=hello-ts#1 dependents=0
-  [js] hello-ts 清理
-已停止。
-```
+`ada up --preset examples/git-ts/git.preset.json` 会真的挂载、打印 fiber/服务,再停止触发清理。
 
 退出码:`0` 成功 / `1` 不可装配或装配失败 / `2` 用法错误。
 
@@ -194,13 +182,13 @@ go run ./cmd/ada up   --preset examples/presets/ts-only.preset.json
 
 ## 9. 已知边界与下一步
 
-1. **install / 签名 / capability** 未做在这里(见 M5 文档):`ada plan/up` 只读本地目录。
-2. **bundle / profile 未做**:当前 preset 是单层;设计 §12.4 的多级 patch 与 profile 继承还没实现。
+1. **install / 签名 / capability** 已由 M5 落地(见 [install.md](install.md)、[caps.md](caps.md));`ada plan/up` 仍只读本地目录。
+2. **bundle / profile 已在 `platform/bundle` 落地**:preset 仍是单层;多级组合见 [m4-composition.md](m4-composition.md)。
 3. **版本约束缺失**:`inject` 只按服务名匹配,没有「期望 provider ≥ v2」;内核对 `MinVersion` 已有支持,plan 还没用上。
 4. **`ada inspect` 不含 JS 侧 effect**:bridge 的 effect 由 Apply disposer 执行,不进入内核快照(见 m2-execution §2.3)。
-5. **Go 插件无法从 CLI 动态加载**:Go 插件必须编译进宿主,CLI 只对 ts 插件完整可用。
+5. **Go 插件无法从 CLI 动态加载**:Go 插件必须编译进宿主,CLI 对 ts 插件完整可用。
 6. **隔离槽**:`Isolate` 语义还没进入清单(`isolate: { shell: true }`)。
-7. **热重载/增量编译**未做:每次 `ada up` 都是全量编译。
+7. **`ada up` 仍是全量编译**:kernel 的 `Fiber.Reload` 已支持 fiber 级热重载,但没有宿主接线。
 8. **触发 helper 已做**:`EnsureForService`/`TriggerOnCron`/`TriggerOnEvent`;真正的事件源(onPage/命令面板)仍由宿主产生。
 
 ## 10. 验证命令
@@ -209,7 +197,7 @@ go run ./cmd/ada up   --preset examples/presets/ts-only.preset.json
 go test -race -count=1 ./...                 # 含 plugin / assemble / loader / preset
 go run ./cmd/ada plan examples/plugins       # 人可读计划
 go run ./cmd/ada plan --preset examples/presets/base.preset.json
-go run ./cmd/ada up examples/plugins-ts      # 真的挂载 TS 插件
-go run ./cmd/ada inspect examples/plugins-ts # 诊断快照(fiber/服务/effect/事件)
+go run ./cmd/ada up --preset examples/git-ts/git.preset.json      # 真的挂载 TS 插件
+go run ./cmd/ada inspect --preset examples/git-ts/git.preset.json # 诊断快照(fiber/服务/effect/事件)
 pwsh scripts/guard.ps1                       # 红线门禁
 ```

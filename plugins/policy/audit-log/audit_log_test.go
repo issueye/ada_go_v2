@@ -13,7 +13,6 @@ import (
 	auditlog "github.com/issueye/ada_go_v2/plugins/policy/audit-log"
 	capsstatic "github.com/issueye/ada_go_v2/plugins/provider/caps-static"
 	seamfs "github.com/issueye/ada_go_v2/plugins/seam/fs"
-	seamnet "github.com/issueye/ada_go_v2/plugins/seam/net"
 	seamshell "github.com/issueye/ada_go_v2/plugins/seam/shell"
 )
 
@@ -56,7 +55,7 @@ func TestAppendsMultiple(t *testing.T) {
 	}
 	app.Root().Emit(seamfs.EventObserve, map[string]any{"op": "read"})
 	app.Root().Emit(seamshell.EventObserve, map[string]any{"op": "run"})
-	app.Root().Emit(seamnet.EventObserve, map[string]any{"op": "fetch"})
+	app.Root().Emit(caps.EventDeny, map[string]any{"op": "deny"})
 	data, _ := os.ReadFile(path)
 	if got := strings.Count(string(data), "\n"); got != 3 {
 		t.Fatalf("应有 3 行,实际 %d", got)

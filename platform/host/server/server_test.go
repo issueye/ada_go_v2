@@ -225,7 +225,7 @@ func TestAuth(t *testing.T) {
 // 10. verify:合法插件返回清单信息;未知路径 400。
 func TestVerify(t *testing.T) {
 	h := newHandler(t, "../../../examples")
-	rec := get(t, h, "/api/verify?path=plugins-ts/hello-ts")
+	rec := get(t, h, "/api/verify?path=git-ts/plugins/git-helper")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("verify 应 200,实际 %d: %s", rec.Code, rec.Body.String())
 	}
@@ -238,7 +238,7 @@ func TestVerify(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("响应不是合法 JSON: %v", err)
 	}
-	if payload.ID != "hello-ts" || payload.Kind != "ts" {
+	if payload.ID != "git-helper" || payload.Kind != "ts" {
 		t.Fatalf("verify 内容不正确: %+v", payload)
 	}
 	rec = get(t, h, "/api/verify?path=nope")

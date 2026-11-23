@@ -22,7 +22,6 @@ func TestResolveMatrix(t *testing.T) {
 		{"只读读", seamsandbox.ModeReadOnly, seamsandbox.Request{Op: seamsandbox.OpFSRead, Path: "/workspace/a"}, true, false},
 		{"只读写", seamsandbox.ModeReadOnly, seamsandbox.Request{Op: seamsandbox.OpFSWrite, Path: "/workspace/a"}, false, true},
 		{"只读shell", seamsandbox.ModeReadOnly, seamsandbox.Request{Op: seamsandbox.OpShellExec, Program: "echo"}, true, false},
-		{"只读网络", seamsandbox.ModeReadOnly, seamsandbox.Request{Op: seamsandbox.OpNetFetch}, false, false},
 		{"工作区写工作区", seamsandbox.ModeWorkspaceWrite, seamsandbox.Request{Op: seamsandbox.OpFSWrite, Path: "/workspace/a"}, true, false},
 		{"工作区写tmp", seamsandbox.ModeWorkspaceWrite, seamsandbox.Request{Op: seamsandbox.OpFSWrite, Path: "/tmp/a"}, true, false},
 		{"工作区写插件目录", seamsandbox.ModeWorkspaceWrite, seamsandbox.Request{Op: seamsandbox.OpFSWrite, Path: "/plugin/x/a"}, false, true},

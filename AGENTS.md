@@ -2,19 +2,53 @@
 
 > 给在本仓库工作的 AI 代理与人类协作者。**动代码之前先读这一份**；它与设计文档冲突时，以本文件的红线为准，并立刻提 issue 修正文档。
 
-**当前阶段:M1 内核、M2 执行层、M3 装配、M4 编排(`sched`/`quota`/`flow`(含 fanout/subflow)/`bundle`,内核回收 + 装配层 on-demand 延迟激活(含 onService/onCron/onEvent 触发 helper)+ jobs 跨进程锁)、M4.5 Agent Core 第一刀(`prompts`/`llm`/`tools`/`agent-loop` + `provider/llm-openai`/`llm-replay` + `provider/session-jsonl`(每会话 actor) + `core/session-stats`(turn-stats 投影) + `core/compaction-basic`(确定性摘要) + `agent-loop` 并行工具 + `policy/approval-gate`/`llm-retry`/`tool-timeout` + 最小 preset,已跑通「用户消息 → 模型 → 工具 → 结果」的最小回路)、M5 安全(`fs`/`fs-local`/`fs-sandbox`、`shell`/`shell-local`/`shell-guard`、`sandbox`/`sandbox-none`、`fs-redact` 脱敏、`fs-observe`/`shell-observe` 观察事件、`audit-log` 审计落盘、`shell-redact` 输出脱敏,且 fs/shell 策略已调用 sandbox.Resolve、可升级拒绝走 approval(含 CLI 交互审批)、caps 静态授权 + `caps-gate` 调用点强制(fs/shell)、install 校验/原子落盘/本机索引/CLI 安装同意、`platform/host/cli`/`platform/host/server`/`platform/host/desktop`(视图映射骨架)/`platform/host/registry`(只读仓库服务)宿主适配器(共享 `platform/host/builtins` 内置插件)、`net.fetch`(seam/net + provider/net-http + net-guard 授权)、`secrets`(seam/secrets + provider/secrets-env + secrets-guard 授权)、`workspace`(seam/workspace + provider/workspace-local + workspace-guard + tool/workspace + fs/shell 托管解析 + 会话绑定)已落地**,M5 剩余 desktop 真实窗口/OS 级沙箱(Linux 后端;见 ADR 0001,复议 2027-01-15);C13 拒绝矩阵与 `ada inspect --chain` 已落地;RPC P0–P4(TLS) 已落地(`rpc-guard`/`rpc-observe`/`rpc-tls`,`SO_PEERCRED` 待做)。本文件始终生效:先用它约束设计,再用它约束实现。
+**当前阶段:M1 内核、M2 执行层、M3 装配、M4 编排(`sched`/`quota`/`flow`(含 fanout/subflow)/`bundle`,内核回收 + 装配层 on-demand 延迟激活(含 onService/onCron/onEvent 触发 helper)+ jobs 跨进程锁)、M4.5 Agent Core 第一刀(`prompts`/`llm`/`tools`/`agent-loop` + `provider/llm-openai`/`llm-replay` + `provider/session-jsonl`(每会话 actor) + `core/session-stats`(turn-stats 投影) + `core/compaction-basic`(确定性摘要) + `agent-loop` 并行工具 + `policy/approval-gate`/`llm-retry`/`tool-timeout` + 最小 preset,已跑通「用户消息 → 模型 → 工具 → 结果」的最小回路)、M5 安全(`fs`/`fs-local`/`fs-sandbox`、`shell`/`shell-local`/`shell-guard`、`sandbox`/`sandbox-none`、`fs-redact` 脱敏、`fs-observe`/`shell-observe` 观察事件、`audit-log` 审计落盘、`shell-redact` 输出脱敏,且 fs/shell 策略已调用 sandbox.Resolve、可升级拒绝走 approval(含 CLI 交互审批)、caps 静态授权 + `caps-gate` 调用点强制(fs/shell)、install 校验/原子落盘/本机索引/CLI 安装同意、`platform/host/cli`/`platform/host/server`/`platform/host/desktop`(视图映射骨架)/`platform/host/registry`(只读仓库服务)宿主适配器(共享 `platform/host/builtins` 内置插件)、网络直连(`node:http`/`net`/`dns` 走宿主标准库,无 `seam/net`/`net-guard`,见 ADR 0011/0012)、`secrets`(seam/secrets + provider/secrets-env + secrets-guard 授权)、`workspace`(seam/workspace + provider/workspace-local + workspace-guard + tool/workspace + fs/shell 托管解析 + 会话绑定)已落地**,M5 剩余 desktop 真实窗口/OS 级沙箱(Linux 后端;见 ADR 0001,复议 2027-01-15);C13 拒绝矩阵与 `ada inspect --chain` 已落地;RPC P0–P4(TLS) 已落地(`rpc-guard`/`rpc-observe`/`rpc-tls`,`SO_PEERCRED` 待做)。本文件始终生效:先用它约束设计,再用它约束实现。
 
 ---
 
-## 0. 五条红线（先看这个）
+## 0. 六条红线（先看这个）
 
 1. **内核不许认识业务**。`platform/kernel/` 里出现 `Turn`、`Message`、`ToolCall`、`Model`、`Session`、`Agent` 这些词，就是设计被腐蚀的开始。
 2. **一切功能都是插件，除非它符合「不是插件」的四类之一**（§2.2）。新增功能先问「它该是哪个插件」，而不是「加在哪个函数里」。
 3. **强制逻辑不许走事件**。安全边界只允许用装饰器/服务方法；事件是广播，不是门禁。
 4. **产品差异只来自 preset + host 适配器**。任何 `if product == "coder"`、任何按产品名硬编码的插件列表，一律拒绝。
 5. **没有契约测试与文档更新的能力，不算完成**。新增 seam/provider/policy/core 插件，必须同时给：契约、实现、一致性测试、文档。
+6. **先实现，再谈安全边界**。需求先要有一个能跑通的实现；安全是**加在实现之上**的策略层，不是不实现它的理由。
 
 > 违反任何一条都需要 ADR（§12），不允许「先合进去再说」。
+
+### 0.1 第 6 条红线的可检验判据
+
+这条规则针对的不是「安全不重要」，而是「用安全当借口把所有需求都推掉」——后者会让平台长期停留在能力缺失状态，且无法评审。
+
+判据（评审时逐条对照）：
+
+| 判据 | 检查方式 |
+|---|---|
+| **能力先存在** | 需求对应的代码路径已经跑通，并有端到端测试；不是只有一句「出于安全考虑不提供」 |
+| **安全是可配置的策略** | 边界落在 `policy/*` 装饰器、preset 字段或显式开关上；默认值可以保守，但**关掉策略仍能实现该能力** |
+| **拒绝要有 ADR** | 确实需要整体不实现时，必须写 ADR（§12）：威胁模型、被否决的具体需求、替代路径、复议日期。没有 ADR 的「为了安全不做」视为**未决**，不算交付 |
+| **不预判威胁** | 没有具体攻击路径、没有产品约束依据时，不得以「可能不安全」为由降低功能范围 |
+| **区分能力与默认值** | 「默认拒绝」是策略选择，写进 preset；「不实现」是能力缺失，遮不住 |
+
+正确形态举例（同一件事的两种写法）：
+
+```text
+✗ 为了安全，不提供 node:http / net / dns
+✓ 提供 node:http / net / dns;默认策略由 preset 决定是否启用收口(见 ADR 0011)
+```
+
+```text
+✗ 因为可能被滥用，文件写入一律不支持
+✓ 实现写入;只读工作区时由 workspace 策略把写关掉(能力在,默认值保守)
+```
+
+反例识别信号：
+
+- 提交里只有删除/拒绝，没有新增可运行路径；
+- 用「安全边界」解释一个**根本没有实现**的能力；
+- 策略无法关闭（写死在 provider 里，绕不过去）；
+- 需求被拆成「等以后有安全方案再做」，且没有 issue 与复议日期。
 
 ---
 
@@ -59,6 +93,8 @@
 | [tool-task-helper.md](docs/tool-task-helper.md) | 脚本插件示例:TS task-helper + 注入 ada:fs |
 | [tool-command-helper.md](docs/tool-command-helper.md) | 脚本插件示例:TS command-helper + 注入 ada:shell |
 | [tool-text-helper.md](docs/tool-text-helper.md) | 脚本插件示例:TS text-helper + ada:fs 读写/编辑/搜索 |
+| [tool-shell.md](docs/tool-shell.md) | TS 工具插件:tool-shell + ada:shell.exec(含 moejs/bridge 扩展) |
+| [node-compat.md](docs/node-compat.md) | Node 内置模块兼容层:node:fs/path/os/events/util 等 |
 | [adr/0001](docs/adr/0001-deferred-m5-scope.md) | ADR:OS 级沙箱与真实桌面窗口延期(复议 2027-01-15) |
 | [adr/0002](docs/adr/0002-host-budget-exception.md) | ADR:host 层代码预算例外 |
 | [adr/0003](docs/adr/0003-handler-context-and-timeout-gate.md) | ADR:监听器 ctx 与 waterfall 超时闸门 |
@@ -69,7 +105,8 @@
 | [adr/0008](docs/adr/0008-desktop-webview-shell.md) | ADR(提案):桌面只做 WebView 壳 |
 | [adr/0009](docs/adr/0009-rpc-json-budget.md) | ADR:rpc-json 单插件预算例外 |
 | [adr/0010](docs/adr/0010-session-jsonl-budget.md) | ADR:session-jsonl 单插件预算例外 |
-| [seam-net.md](docs/seam-net.md) | M5 网络能力:seam/net 与 provider/net-http |
+| [adr/0011](docs/adr/0011-node-network-direct.md) | ADR:Node 网络模块直连,不接入 net-guard |
+| [adr/0012](docs/adr/0012-remove-seam-net.md) | ADR:移除 seam/net、net-http、net-guard、net-observe |
 | [seam-secrets.md](docs/seam-secrets.md) | M5 secret 能力:seam/secrets 与 provider/secrets-env |
 | [seam-fs.md](docs/seam-fs.md) | M5 安全第一刀:seam/fs、fs-local 实现与 fs-sandbox 策略 |
 | [workspace-plugin.md](docs/workspace-plugin.md) | 工作区:seam/workspace、workspace-local、workspace-guard、tool/workspace 与会话绑定 |
@@ -256,7 +293,7 @@ platform/host/*   ✓→ 全部
 ### 6.2 TypeScript 插件
 
 - ESM only；`apply(ctx, config)` 必须可重入、无模块级状态；状态进 `ctx.store`。
-- 不 import Node 内置；只允许 `ada:*` 或 Artifact 内联模块。
+- 允许 `node:*`(宿主安装的 Node 兼容模块)、`ada:*` 或 Artifact 内联模块;禁止 npm 包、磁盘模块或 `.node`。
 - 不在高频回调里做重活（`llm.stream` 的 onDelta 应只做转发/累加小量）。
 - 类型来自 `@ada/sdk`，不手写重复声明。
 
@@ -310,7 +347,7 @@ platform/host/*   ✓→ 全部
 
 ---
 
-## 9. 评审清单（12 问）
+## 9. 评审清单（13 问）
 
 1. 这段代码属于哪一层？判据是什么？（§3）
 2. 删掉它，另一个产品还能跑吗？
@@ -324,6 +361,7 @@ platform/host/*   ✓→ 全部
 10. 契约测试与 golden 加了吗？拒绝矩阵覆盖了吗？
 11. 文档与示例同步了吗？示例能在 CI 编译吗？
 12. 有没有「临时」分支、TODO 后门、常驻 flag？
+13. 需求是「真的实现了」，还是被安全理由挡在门外？（§0 红线 6）
 
 ---
 
@@ -393,6 +431,8 @@ v1 的 `AGENTS.md` 记录了 2026-11-10 的「能力位不决定装什么」与�
 | 「为了性能，把循环放到 host」 | 不行。循环是 `core/agent-loop`；性能问题用 Go 插件实现，不是搬到 host |
 | 「先不写契约测试，功能先上」 | 不行。没有契约测试的 seam/provider 会在第一次升级时炸 |
 | 「这个 preset 字段先不加，代码里判断一下」 | 不行。preset 是数据契约；加字段，别加判断 |
+| 「这个能力有安全风险，先不实现」 | 不行（§0 红线 6）。先把能力实现出来，边界做成可关闭的 `policy/*` 或 preset 字段；确实要整体不实现，写 ADR 说明威胁模型、被否决的需求与替代路径 |
+| 「默认拒绝就等于不实现」 | 不是。默认值是 preset 里的策略选择，能力本身必须存在；用「默认拒绝」掩盖「没有实现」是评审不通过的 |
 
 ---
 

@@ -11,14 +11,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/MoeForge/moejs"
 	"github.com/MoeForge/moejs/engine"
+	mojsnode "github.com/MoeForge/moejs/node"
 
 	"github.com/issueye/ada_go_v2/platform/compile"
+	"github.com/issueye/ada_go_v2/platform/jsrt/nodemods"
 )
 
 // interruptGrace 是取消后等待 worker 收尾的上限。
@@ -102,19 +108,49 @@ type Host struct {
 	Waterfall func(event string, invoke func(ctx context.Context, input any, next func(any) (any, error)) (any, error)) error
 	// Shell 是 JS 侧 ctx.shell / 注入模块的宿主实现。
 	Shell func(ctx context.Context, program string, args []string, dir string) (string, error)
+	// ShellExec 是 ada:shell.exec 的宿主实现:options 是 JSON 字符串,
+	// 返回值也是 JSON 字符串(stdout/stderr/exitCode/truncated/durationMs 等)。
+	// 与 Shell 分开是为了不破坏已有脚本插件的字符串返回契约。
+	ShellExec func(ctx context.Context, program string, args []string, dir string, options string) (string, error)
 	// Tool 是 JS 侧 ctx.tool(spec, handler) 的宿主实现;invoke 在工具被调用时执行 JS handler。
-	Tool func(name, summary string, input map[string]any, readOnly bool, invoke func(ctx context.Context, args any) (any, error)) error
+	// timeout 来自 spec.timeoutMs,0 表示使用 tools seam 的默认超时。
+	Tool func(name, summary string, input map[string]any, readOnly bool, timeout time.Duration, invoke func(ctx context.Context, args any) (any, error)) error
 	// FSRead/FSWrite 是注入模块 ada:fs 的宿主实现。
 	FSRead   func(ctx context.Context, path string) (string, error)
 	FSWrite  func(ctx context.Context, path, content string, createDirs bool) error
 	FSEdit   func(ctx context.Context, path, old, new string, all bool) (int, error)
 	FSSearch func(ctx context.Context, path, query string, limit int) (string, error)
 	FSList   func(ctx context.Context, path string, recursive bool, limit int) (string, error)
+	// HTTPDo 执行一次 HTTP(S) 请求;spec 与返回值都是 JSON 字符串。
+	// 是否受网络策略约束由宿主决定,jsrt 只负责转发。
+	HTTPDo func(ctx context.Context, spec string) (string, error)
+	// DNSLookup 解析域名;op 决定记录类型,返回值是 JSON 字符串。
+	DNSLookup func(ctx context.Context, op, host, rrtype string) (string, error)
+	// NetDial 建立一条 TCP 连接;连接句柄由运行时登记,Close 时统一关闭。
+	NetDial func(ctx context.Context, network, address string, timeout time.Duration) (NetConn, error)
 }
 
 // ErrReentrant 表示同一运行时在自己的回调链里被再次调用。
 // 此时 worker 正阻塞等待宿主响应 next,再投递任务必然死锁,所以直接失败。
 var ErrReentrant = errors.New("jsrt: 同一运行时的嵌套调用会死锁")
+
+// NodeOptions 控制 Node 内置模块的安装。
+//
+// node:path / node:os / node:buffer 始终可用;node:fs / node:fs/promises
+// 只有给出 FS 根时才可读写。Root 是宿主真实目录,Mount 是脚本看到的虚拟根。
+type NodeOptions struct {
+	FS     *NodeFSOptions
+	Buffer bool
+}
+
+// NodeFSOptions 是 node:fs 的根与写权限。
+type NodeFSOptions struct {
+	Root    string
+	Mount   string
+	Cwd     string
+	Write   bool
+	Workers int
+}
 
 // Options 描述一次运行时装配。
 type Options struct {
@@ -131,6 +167,8 @@ type Options struct {
 	Modules map[string]*moejs.Module
 	// Globals 是加载前注入的全局变量(宿主能力对象)。
 	Globals map[string]any
+	// Node 配置 Node 内置模块;nil 表示只装默认的 path/os/buffer。
+	Node *NodeOptions
 }
 
 // Runtime 是一个插件实例的 JS 世界。
@@ -143,12 +181,13 @@ type Runtime struct {
 	stopped chan struct{}
 	quitOne sync.Once
 
-	mu     sync.Mutex
-	raw    *moejs.Runtime
-	hooks  map[string]moejs.Hook
-	host   moejs.Value // 传给 apply 的 ctx 对象;只在 worker goroutine 上使用
-	broken bool
-	closed bool
+	mu      sync.Mutex
+	raw     *moejs.Runtime
+	nodeAPI *mojsnode.API
+	hooks   map[string]moejs.Hook
+	host    moejs.Value // 传给 apply 的 ctx 对象;只在 worker goroutine 上使用
+	broken  bool
+	closed  bool
 
 	// handlers 是 ctx.on 与 JS 服务方法共用的函数表。只在 worker goroutine 上读写:
 	// 注册与调用都发生在 worker 上。
@@ -163,6 +202,12 @@ type Runtime struct {
 	// callCtx 是当前 worker 任务对应的调用 ctx。只在 worker goroutine 上读写:
 	// 原生 shell/fs 回调必须沿用它,才能拿到调用级 workspace 绑定与取消信号。
 	callCtx context.Context
+
+	// netMu 保护 node:net 的连接句柄表。句柄由 worker 分配,
+	// 但 Close 可能在任意协程上关闭全部连接,所以必须加锁。
+	netMu    sync.Mutex
+	netSeq   uint64
+	netConns map[uint64]NetConn
 }
 
 // enterHost/leaveHost 标记 worker 正在进入宿主回调。
@@ -202,6 +247,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		quit:     make(chan struct{}),
 		stopped:  make(chan struct{}),
 		handlers: make(map[uint64]handlerEntry),
+		netConns: make(map[uint64]NetConn),
 	}
 	go r.worker()
 
@@ -274,6 +320,13 @@ func (r *Runtime) load() error {
 		MemoryLimit:        r.opts.MemoryLimit,
 		DisableDynamicCode: r.opts.DisableDynamicCode,
 	})
+	// node:fs 的异步回调会从 worker 池回到这个 runtime;先登记 raw。
+	r.mu.Lock()
+	r.raw = raw
+	r.mu.Unlock()
+	if err := r.installNode(raw); err != nil {
+		return err
+	}
 	// 宿主能力必须在 Load 之前注入:模块顶层就可能调用它们。
 	// 裸 Runtime 没有 console(C4),所以日志必须显式给。
 	//
@@ -311,11 +364,16 @@ func (r *Runtime) load() error {
 		}
 	}
 	host := engine.ObjectValue(ctxObj)
-	// __adaHost 是注入 moejs 模块可用的宿主能力对象(当前只有 shell)。
+	// __adaHost 是注入 moejs 模块可用的宿主能力对象。
 	hostObj := realm.NewObject()
 	if r.opts.Host.Shell != nil {
 		if err := hostObj.SetProp(realm, realm.KeyFromGoString("shell"), raw.Function("shell", 3, r.nativeShell(raw))); err != nil {
 			return fmt.Errorf("jsrt: 注入 __adaHost.shell 失败: %w", err)
+		}
+	}
+	if r.opts.Host.ShellExec != nil {
+		if err := hostObj.SetProp(realm, realm.KeyFromGoString("shellExec"), raw.Function("shellExec", 4, r.nativeShellExec(raw))); err != nil {
+			return fmt.Errorf("jsrt: 注入 __adaHost.shellExec 失败: %w", err)
 		}
 	}
 	if r.opts.Host.FSRead != nil || r.opts.Host.FSWrite != nil || r.opts.Host.FSEdit != nil || r.opts.Host.FSSearch != nil || r.opts.Host.FSList != nil {
@@ -349,6 +407,42 @@ func (r *Runtime) load() error {
 			return fmt.Errorf("jsrt: 注入 __adaHost.fs 失败: %w", err)
 		}
 	}
+	// 网络能力按用户决定不做策略限制(ADR 0011),但仍然是宿主注入:
+	// 脚本拿到的只是 JSON 进出的函数,没有直接 syscall 的路径。
+	if r.opts.Host.HTTPDo != nil {
+		if err := hostObj.SetProp(realm, realm.KeyFromGoString("httpDo"), raw.Function("httpDo", 1, r.nativeHTTPDo(raw))); err != nil {
+			return fmt.Errorf("jsrt: 注入 __adaHost.httpDo 失败: %w", err)
+		}
+	}
+	if r.opts.Host.DNSLookup != nil {
+		if err := hostObj.SetProp(realm, realm.KeyFromGoString("dnsLookup"), raw.Function("dnsLookup", 3, r.nativeDNSLookup(raw))); err != nil {
+			return fmt.Errorf("jsrt: 注入 __adaHost.dnsLookup 失败: %w", err)
+		}
+	}
+	if r.opts.Host.NetDial != nil {
+		netObj := realm.NewObject()
+		setNetFn := func(name string, length int, fn moejs.NativeFunc) error {
+			return netObj.SetProp(realm, realm.KeyFromGoString(name), raw.Function(name, length, fn))
+		}
+		if err := setNetFn("dial", 2, r.nativeNetDial(raw)); err != nil {
+			return fmt.Errorf("jsrt: 注入 __adaHost.netDial 失败: %w", err)
+		}
+		if err := setNetFn("read", 2, r.nativeNetRead(raw)); err != nil {
+			return fmt.Errorf("jsrt: 注入 __adaHost.netRead 失败: %w", err)
+		}
+		if err := setNetFn("write", 2, r.nativeNetWrite(raw)); err != nil {
+			return fmt.Errorf("jsrt: 注入 __adaHost.netWrite 失败: %w", err)
+		}
+		if err := setNetFn("close", 1, r.nativeNetClose(raw)); err != nil {
+			return fmt.Errorf("jsrt: 注入 __adaHost.netClose 失败: %w", err)
+		}
+		if err := setNetFn("addr", 1, r.nativeNetAddr(raw)); err != nil {
+			return fmt.Errorf("jsrt: 注入 __adaHost.netAddr 失败: %w", err)
+		}
+		if err := hostObj.SetProp(realm, realm.KeyFromGoString("net"), engine.ObjectValue(netObj)); err != nil {
+			return fmt.Errorf("jsrt: 注入 __adaHost.net 失败: %w", err)
+		}
+	}
 	if err := realm.Global.SetProp(realm, realm.KeyFromGoString("__adaHost"), engine.ObjectValue(hostObj)); err != nil {
 		return fmt.Errorf("jsrt: 注入 __adaHost 失败: %w", err)
 	}
@@ -377,6 +471,14 @@ func (r *Runtime) load() error {
 		if m, ok := r.opts.Modules[spec]; ok {
 			return m, nil
 		}
+		// Node 内置模块优先:node:path / node:os 是宿主源码,node:fs / node:buffer
+		// 由 moejs 的 node 包提供;未知 node:* 交给它给出明确的链接期错误。
+		if src, ok := nodemods.Source(spec); ok {
+			return compileNodeModule(spec, src)
+		}
+		if strings.HasPrefix(spec, "node:") || isNodeAlias(spec) {
+			return mojsnode.Resolver(nil)(ref, spec)
+		}
 		name, ok := r.art.Resolve(ref.Name(), spec)
 		if !ok {
 			return nil, fmt.Errorf("jsrt: 无法解析 %q(来自 %s);只允许相对导入或宿主注入模块", spec, ref.Name())
@@ -403,6 +505,114 @@ func (r *Runtime) load() error {
 	r.mu.Lock()
 	r.raw = raw
 	r.hooks = hooks
+	r.mu.Unlock()
+	return nil
+}
+
+// nodeModuleCache 缓存宿主自建 Node 模块;node:path 与 path 必须解析到同一实例。
+var nodeModuleCache sync.Map // string → *moejs.Module
+
+func compileNodeModule(spec, src string) (*moejs.Module, error) {
+	key := strings.TrimPrefix(spec, "node:")
+	if v, ok := nodeModuleCache.Load(key); ok {
+		return v.(*moejs.Module), nil
+	}
+	m, err := moejs.Compile("node:"+key, src)
+	if err != nil {
+		return nil, err
+	}
+	nodeModuleCache.Store(key, m)
+	return m, nil
+}
+
+// isNodeAlias 是 moejs node 包支持的裸模块名。
+func isNodeAlias(spec string) bool {
+	switch spec {
+	case "fs", "fs/promises", "buffer":
+		return true
+	}
+	return false
+}
+
+// nodeLoop 把 jsrt 的 worker 队列适配成 moejs node 包需要的 Loop。
+//
+// node 包的 promise 文件操作在 worker 池完成,然后 Post 回 runtime 协程结算;
+// jsrt 的 worker 一直运行到 Close,所以 Hold 是空操作,Post 走 enqueue。
+type nodeLoop struct{ r *Runtime }
+
+func (l nodeLoop) Runtime() *moejs.Runtime {
+	l.r.mu.Lock()
+	defer l.r.mu.Unlock()
+	return l.r.raw
+}
+
+func (l nodeLoop) Post(task func(*moejs.Runtime) error) bool {
+	r := l.r
+	raw := l.Runtime()
+	if raw == nil {
+		return false
+	}
+	err := r.enqueue(context.Background(), func() {
+		if err := task(raw); err != nil {
+			r.mu.Lock()
+			r.broken = true
+			r.mu.Unlock()
+		}
+	})
+	return err == nil
+}
+
+func (l nodeLoop) Hold() func() { return func() {} }
+
+// installNode 安装 Node 内置模块。
+//
+// node:path / node:os / node:buffer 始终可用;node:fs 只有给出 FS 根时才会安装。
+// 写权限由调用方(桥接层)按策略决定,jsrt 不自行放宽。
+func (r *Runtime) installNode(raw *moejs.Runtime) error {
+	info := map[string]any{
+		"platform": runtime.GOOS,
+		"arch":     runtime.GOARCH,
+		"type":     runtime.GOOS,
+		"release":  "",
+		"version":  "",
+		"cpus":     runtime.NumCPU(),
+		"totalmem": 0,
+		"freemem":  0,
+		"eol":      "\n",
+	}
+	if runtime.GOOS == "windows" {
+		info["eol"] = "\r\n"
+	}
+	if err := raw.SetGlobal("__adaOSInfo", info); err != nil {
+		return fmt.Errorf("jsrt: 注入 __adaOSInfo 失败: %w", err)
+	}
+
+	opts := mojsnode.Options{Buffer: true}
+	if n := r.opts.Node; n != nil {
+		opts.Buffer = n.Buffer
+		if n.FS != nil && strings.TrimSpace(n.FS.Root) != "" {
+			mount := n.FS.Mount
+			if mount == "" {
+				mount = "/workspace"
+			}
+			cwd := n.FS.Cwd
+			if cwd == "" {
+				cwd = mount
+			}
+			opts.FS = &mojsnode.FSOptions{
+				Root: n.FS.Root, Mount: mount, Cwd: cwd,
+				Write: n.FS.Write, Workers: n.FS.Workers,
+			}
+			// os.tmpdir() 返回 /workspace/.ada-tmp;让它在 node:fs 根内真实存在。
+			_ = os.MkdirAll(filepath.Join(n.FS.Root, ".ada-tmp"), 0o755)
+		}
+	}
+	api, err := mojsnode.Install(nodeLoop{r: r}, opts)
+	if err != nil {
+		return fmt.Errorf("jsrt: 安装 Node 内置模块失败: %w", err)
+	}
+	r.mu.Lock()
+	r.nodeAPI = api
 	r.mu.Unlock()
 	return nil
 }
@@ -499,6 +709,59 @@ func (r *Runtime) nativeShell(raw *moejs.Runtime) moejs.NativeFunc {
 		}
 		// 用当前 worker 任务的 ctx:工具调用链路的取消、超时与 workspace 绑定都随它传播。
 		out, err := r.opts.Host.Shell(r.currentContext(), program, argv, dir)
+		if err != nil {
+			return engine.Undefined(), err
+		}
+		return raw.FromGo(out)
+	}
+}
+
+// nativeShellExec 实现 __adaHost.shellExec(program, args, dir, options)。
+//
+// 它只做参数解码与转发;结构化结果由宿主构造,避免 jsrt 依赖 seam/shell 类型。
+func (r *Runtime) nativeShellExec(raw *moejs.Runtime) moejs.NativeFunc {
+	return func(_ *engine.Realm, _ engine.Value, args []engine.Value) (engine.Value, error) {
+		if r.opts.Host.ShellExec == nil {
+			return engine.Undefined(), fmt.Errorf("shell.exec 未启用")
+		}
+		if len(args) < 1 {
+			return engine.Undefined(), fmt.Errorf("shell.exec(program, args, dir, options) 至少需要 program")
+		}
+		program, err := toString(raw, args[0])
+		if err != nil || program == "" {
+			return engine.Undefined(), fmt.Errorf("shell.exec program 必须是非空字符串")
+		}
+		var argv []string
+		if len(args) > 1 {
+			v, convErr := raw.ToGo(args[1])
+			if convErr != nil {
+				return engine.Undefined(), fmt.Errorf("shell.exec args 无法转换: %w", convErr)
+			}
+			list, ok := v.([]any)
+			if !ok {
+				return engine.Undefined(), fmt.Errorf("shell.exec args 必须是数组")
+			}
+			for _, item := range list {
+				s, ok := item.(string)
+				if !ok {
+					return engine.Undefined(), fmt.Errorf("shell.exec args 只能包含字符串")
+				}
+				argv = append(argv, s)
+			}
+		}
+		dir := "/workspace"
+		if len(args) > 2 {
+			if s, convErr := toString(raw, args[2]); convErr == nil && s != "" {
+				dir = s
+			}
+		}
+		options := "{}"
+		if len(args) > 3 {
+			if s, convErr := toString(raw, args[3]); convErr == nil && s != "" {
+				options = s
+			}
+		}
+		out, err := r.opts.Host.ShellExec(r.currentContext(), program, argv, dir, options)
 		if err != nil {
 			return engine.Undefined(), err
 		}
@@ -706,13 +969,19 @@ func (r *Runtime) nativeTool(raw *moejs.Runtime) moejs.NativeFunc {
 		if name == "" {
 			return engine.Undefined(), fmt.Errorf("ctx.tool 需要非空 name")
 		}
+		var timeout time.Duration
+		if v, ok := obj["timeoutMs"]; ok {
+			if n, ok := toInt64(v); ok && n > 0 {
+				timeout = time.Duration(n) * time.Millisecond
+			}
+		}
 		r.nextID++
 		id := r.nextID
 		r.handlers[id] = handlerEntry{fn: args[1], this: engine.Undefined()}
 		invoke := func(ctx context.Context, a any) (any, error) {
 			return r.invokeHandler(ctx, id, a)
 		}
-		if err := r.opts.Host.Tool(name, summary, input, readOnly, invoke); err != nil {
+		if err := r.opts.Host.Tool(name, summary, input, readOnly, timeout, invoke); err != nil {
 			delete(r.handlers, id)
 			return engine.Undefined(), err
 		}
@@ -1310,8 +1579,14 @@ func (r *Runtime) Close(ctx context.Context) error {
 		return nil
 	}
 	r.closed = true
+	api := r.nodeAPI
+	r.nodeAPI = nil
 	r.mu.Unlock()
 
+	r.closeConns()
+	if api != nil {
+		_ = api.Close()
+	}
 	r.interrupt(ErrClosed)
 	r.stop()
 	select {
@@ -1326,7 +1601,13 @@ func (r *Runtime) Close(ctx context.Context) error {
 func (r *Runtime) shutdown() {
 	r.mu.Lock()
 	r.closed = true
+	api := r.nodeAPI
+	r.nodeAPI = nil
 	r.mu.Unlock()
+	r.closeConns()
+	if api != nil {
+		_ = api.Close()
+	}
 	r.stop()
 	<-r.stopped
 }

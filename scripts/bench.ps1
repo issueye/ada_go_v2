@@ -1,4 +1,4 @@
-# 基准预算门禁(AGENTS.md §6.3)。
+﻿# 基准预算门禁(AGENTS.md §6.3)。
 #
 # 用法:
 #   pwsh scripts/bench.ps1                          # 只校验绝对预算(CI 用,跨机器稳定)
