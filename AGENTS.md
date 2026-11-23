@@ -78,6 +78,7 @@
 | [seam-approval.md](docs/seam-approval.md) | M5 安全第四刀:seam/approval、approval-deny 与 fs 升级审批 |
 | [caps.md](docs/caps.md) | M5 能力授权:caps 语法、信任等级与 Broker |
 | [install.md](docs/install.md) | M5 安装与签名:清单/摘要/Ed25519/原子安装 |
+| [packaging.md](docs/packaging.md) | 编译与发布打包:builtins 自动导出清单、发布 preset 与包内自检 |
 
 ---
 
