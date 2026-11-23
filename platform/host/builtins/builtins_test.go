@@ -15,7 +15,7 @@ func TestBuiltinGoPlugins(t *testing.T) {
 		"seam-rpc", "rpc-json", "rpc-net", "rpc-pipe",
 		"seam-secrets", "secrets-env", "secrets-guard",
 		"rpc-tls", "rpc-guard", "rpc-observe",
-		"seam-workspace", "workspace-local", "workspace-guard", "workspace-helper"} {
+		"seam-workspace", "workspace-local", "workspace-guard", "workspace-helper", "tool-helper"} {
 		if _, ok := got[id]; !ok {
 			t.Fatalf("内置注册表缺少 %q", id)
 		}

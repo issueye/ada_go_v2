@@ -147,7 +147,7 @@ try {
     $agentBase = @(
         "agent-loop", "compaction-basic", "fs-local", "llm-replay",
         "seam-fs", "seam-llm", "seam-prompts", "seam-session", "seam-tools",
-        "session-memory", "session-stats", "system-prompt", "text-helper", "memory-helper"
+        "session-memory", "session-stats", "system-prompt", "text-helper", "memory-helper", "tool-helper"
     )
     # shell 栈只在 agent preset 里打开;workspace preset 保持无命令执行。
     $shellAllow = @(
@@ -204,7 +204,7 @@ try {
         # 记忆工具默认随包启用;模型需要知道什么时候写入/检索/忘记。
         "memory-helper" = @{ autoRecall = $true }
         "system-prompt" = @{
-            tools = "长期记忆:`n- 用户要求记住事实/偏好时调用 memory_write;`n- 回答涉及既往信息时先 memory_search 再引用;`n- 用户要求忘记时调用 memory_forget。"
+            tools = "长期记忆:`n- 用户要求记住事实/偏好时调用 memory_write;`n- 回答涉及既往信息时先 memory_search 再引用;`n- 用户要求忘记时调用 memory_forget。`n工具发现:`n- 工具较多或不确定用哪个时,先 tool_find 查询;`n- 已知工具名时用 tool_exec 按名字调用,参数放在 args 对象里。"
         }
     }
     foreach ($k in $shellPatch.Keys) { $agentPatch[$k] = $shellPatch[$k] }
@@ -227,7 +227,7 @@ try {
             "fs-local" = @{ workspace = ""; tmp = "workspace/.ada-tmp" }
             "memory-helper" = @{ autoRecall = $true }
             "system-prompt" = @{
-                tools = "长期记忆:`n- 用户要求记住事实/偏好时调用 memory_write;`n- 回答涉及既往信息时先 memory_search 再引用;`n- 用户要求忘记时调用 memory_forget。"
+                tools = "长期记忆:`n- 用户要求记住事实/偏好时调用 memory_write;`n- 回答涉及既往信息时先 memory_search 再引用;`n- 用户要求忘记时调用 memory_forget。`n工具发现:`n- 工具较多或不确定用哪个时,先 tool_find 查询;`n- 已知工具名时用 tool_exec 按名字调用,参数放在 args 对象里。"
             }
             "workspace-local" = [ordered]@{
                 active = "repo"

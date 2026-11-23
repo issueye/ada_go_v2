@@ -942,3 +942,51 @@ func TestAgentMemoryScriptPlugin(t *testing.T) {
 		t.Fatalf("记忆文件不正确: %v %s", err, data)
 	}
 }
+
+// 39. tool-helper:Go 插件装配 + tool_find/tool_exec 端到端。
+func TestUpToolHelper(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir("../../.."); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	code, out, errOut := run("up", "--preset", "examples/tool-helper/toolhelper.preset.json")
+	if code != 0 || !strings.Contains(out, "tool-helper") {
+		t.Fatalf("tool-helper 装配失败: code=%d err=%s out=%s", code, errOut, out)
+	}
+}
+
+// 40. tool-helper:tool_exec 通过 tools 注册表调用另一个插件(TS)的工具。
+func TestAgentToolHelper(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir("../../.."); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	workspace := t.TempDir()
+	f, err := os.CreateTemp("examples/tool-helper", "test-*.preset.json")
+	if err != nil {
+		t.Fatalf("创建临时 preset 失败: %v", err)
+	}
+	preset := f.Name()
+	_ = f.Close()
+	t.Cleanup(func() { _ = os.Remove(preset) })
+	body := `{"name":"tool-helper-test","plugins":["../agent/plugins","../../plugins/tool/text-helper"],"disable":["llm-openai","session-jsonl"],"patch":{"agent-loop":{"model":"replay"},"llm-replay":{"path":"examples/tool-helper/replay.jsonl"},"fs-local":{"workspace":"` + strings.ReplaceAll(workspace, `\`, `\\`) + `"}}}`
+	if err := os.WriteFile(preset, []byte(body), 0o644); err != nil {
+		t.Fatalf("写临时 preset 失败: %v", err)
+	}
+	code, out, errOut := run("agent", "--preset", preset, "-message", "找到写文件的工具并调用")
+	if code != 0 || !strings.Contains(out, "已找到工具并通过 tool_exec 写入 out.txt") {
+		t.Fatalf("tool-helper 运行失败: code=%d err=%s out=%s", code, errOut, out)
+	}
+	data, err := os.ReadFile(workspace + "/out.txt")
+	if err != nil || string(data) != "via tool_exec" {
+		t.Fatalf("tool_exec 未写入目标文件: %v %q", err, data)
+	}
+}
