@@ -1237,7 +1237,9 @@ Reload(fiber)：
 | `node:fs` / `node:fs/promises` | **仅当授权**，走 `os.Root` 沙箱 | `fs.*` |
 | `node:child_process` | **仅当授权**，无 shell | `exec` |
 
-全局：`console`（走内核日志，带插件命名空间）、`setTimeout/setInterval`（eventloop）、`fetch`（webapi）、`structuredClone`（引擎自带）。
+全局:`setTimeout`/`setInterval`/`setImmediate`(事件循环,**调用边界内**生效,见
+[event-loop.md](event-loop.md) 与 ADR 0014)、`structuredClone`(引擎自带);
+`console`、`fetch`(webapi)仍是未实现项——裸 Runtime 没有它们,宿主也尚未安装。
 
 **数据面规则**（继承 v1 的核心经验）：大对象不过边界。图片/音频/大文件由 Go 侧持有，JS 只拿 URL 或一次性小句柄；模型流式增量以 `emit` 回调推送（每帧小 JSON），不累积成大数组跨边界。
 

@@ -72,6 +72,7 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 | [seam-api-security.md](docs/seam-api-security.md) | **安全 seam 契约**：sandbox / fs / shell 的三道闸、虚拟路径、装饰器强制链、拒绝矩阵 |
 | [kernel-api.md](docs/kernel-api.md) | M1 冻结的内核 API 与实现边界 |
 | [m2-execution.md](docs/m2-execution.md) | M2 执行层第一刀:compile / jsrt / bridge 的契约、测试矩阵与已知边界 |
+| [event-loop.md](docs/event-loop.md) | **执行层事件循环**:调用边界驱动、可 await 的东西、定时器作用域与已知边界 |
 | [m3-assembly.md](docs/m3-assembly.md) | M3 装配层:清单、依赖图、preset、事务化装配与 `ada plan`/`up` |
 | [m4-orchestration.md](docs/m4-orchestration.md) | M4 编排:sched 与 quota |
 | [m4-flow.md](docs/m4-flow.md) | M4 流水线:声明式 flow、受限表达式、checkpoint/resume |
@@ -104,6 +105,9 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 | [adr/0008](docs/adr/0008-desktop-webview-shell.md) | ADR(提案):桌面只做 WebView 壳(mygo WebView2/Electron)，不做 native UI |
 | [adr/0009](docs/adr/0009-rpc-json-budget.md) | ADR:rpc-json 单插件预算例外(已接受) |
 | [adr/0010](docs/adr/0010-session-jsonl-budget.md) | ADR:session-jsonl 单插件预算例外(已接受) |
+| [adr/0013](docs/adr/0013-tool-plugin-budget-exception.md) | ADR:memory-helper / http-helper 预算例外(复议 2027-06-30) |
+| [adr/0014](docs/adr/0014-call-scoped-event-loop.md) | ADR:执行层事件循环按调用边界驱动(已接受,复议 2027-03-31) |
+| [adr/0015](docs/adr/0015-refused-node-modules.md) | ADR:不实现 worker_threads / inspector / async_hooks / trace_events(复议 2027-06-30) |
 | [seam-rpc.md](docs/seam-rpc.md) | RPC 通讯:P0–P4(TLS) 已实现(tcp/unix/pipe、帧/握手/取消、rpc-guard/observe、tls://) |
 | [node-compat.md](docs/node-compat.md) | Node 内置模块兼容层:node:fs/path/os/events/util 等 |
 | [seam-secrets.md](docs/seam-secrets.md) | M5 secret 能力:seam/secrets 与 provider/secrets-env |
@@ -128,12 +132,13 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 | + esbuild | 11.65 MB | 8.33 MB |
 | 两者同进程 | ≈ 22 MB | ≈ 16 MB |
 
-`Transform` 单文件 0.77–0.88 ms；moejs 新建 Runtime 1.39 µs、加载插件 71 µs、单次调用 6.86 µs、每 Runtime 常驻 80.5 KiB。
+`Transform` 单文件 0.77–0.88 ms；moejs 新建 Runtime 1.39 µs、加载插件 71 µs、单次调用 6.86 µs、每 Runtime 常驻 80.5 KiB。接入事件循环后 `BenchmarkCallSync` 实测约 4.5 µs/次(同步入口,**含**循环 enter/exit 与引导模块回调),仍满足 ≤20 µs 的调用预算。
 
 ## 当前状态:M1 内核 + M2 执行层 + M3 装配 + M4 编排 + M4.5 Agent Core 第一刀 + M5 安全与宿主
 
 ```powershell
-go test -race -count=1 -timeout 300s ./...   # 532 个 Test + 4 个 Benchmark
+go test -race -count=1 -timeout 300s ./...   # 572 个 Test + 5 个 Benchmark
+go test ./platform/jsrt -run 'Await|Timer|Loop'  # 事件循环:await / fs.promises / 定时器作用域
 go run ./cmd/ada-demo                        # 依赖门控 + 级联重载演示
 pwsh scripts/guard.ps1                       # 门禁:词汇/依赖/gofmt/build/vet/staticcheck/race/交叉编译/预算
 pwsh scripts/build.ps1                       # 编译入口到 bin/(-GOOS/-GOARCH 可交叉编译)
@@ -170,7 +175,11 @@ go run ./cmd/ada check examples/text-ts/plugins      # M5:清单/计划/platform
 pwsh scripts/bench.ps1                       # 性能预算:≤20 μs/次、50 插件冷启动 ≤150 ms
 ```
 
-Node 内置模块:`node:fs`/`node:fs/promises`/`node:buffer`(moejs `node` 包)与 `node:path`/`node:os`/`node:events`/`node:util`/`node:assert`/`node:url`/`node:querystring`/`node:string_decoder`/`node:process`/`node:child_process`/`node:http`/`node:https`/`node:dns`/`node:dns/promises`/`node:net`/`node:crypto`/`node:zlib`(宿主 embed);`node:fs` 在 fs/workspace 有策略装饰器时不可用,避免绕过安全链;网络模块直连标准库,`seam/net` 与 `net-guard` 已移除(见 [ADR 0011](docs/adr/0011-node-network-direct.md)、[ADR 0012](docs/adr/0012-remove-seam-net.md))。见 [node-compat.md](docs/node-compat.md)。
+Node 内置模块:`node:fs`/`node:fs/promises`/`node:buffer`(moejs `node` 包,`node:fs` 另由宿主补齐 `mkdtemp`/`symlink`/`link`/`chmod`/`chown`/`truncate`/`utimes`)与 `node:path`/`node:os`/`node:events`/`node:util`/`node:assert`/`node:url`/`node:querystring`/`node:string_decoder`/`node:process`/`node:child_process`/`node:http`/`node:https`/`node:dns`/`node:dns/promises`/`node:net`/`node:crypto`/`node:zlib`/`node:timers`/`node:timers/promises`/`node:stream`/`node:stream/promises`/`node:readline`/`node:readline/promises`/`node:tty`/`node:perf_hooks`(宿主 embed);`node:fs` 在 fs/workspace 有策略装饰器时不可用,避免绕过安全链;网络模块直连标准库,`seam/net` 与 `net-guard` 已移除(见 [ADR 0011](docs/adr/0011-node-network-direct.md)、[ADR 0012](docs/adr/0012-remove-seam-net.md));`worker_threads`/`inspector`/`async_hooks`/`trace_events` 不实现(见 [ADR 0015](docs/adr/0015-refused-node-modules.md))。见 [node-compat.md](docs/node-compat.md)。
+
+执行层有事件循环([event-loop.md](docs/event-loop.md)):插件可以 `await fs.promises.*`、`await new Promise(r => setTimeout(r, n))`,`async apply` 与 async 工具处理器都会在调用返回前结算;跨调用的后台定时器不支持(**调用边界驱动**,见 [ADR 0014](docs/adr/0014-call-scoped-event-loop.md))。
+
+`node:fs` 另由宿主补齐了 `mkdtemp`/`symlink`/`link`/`chmod`/`chown`/`truncate`/`utimes` 的 sync / callback / promise 三形态(路径夹在 `/workspace`、写权限沿用 `Write` 开关,见 [node-compat.md](docs/node-compat.md) §3.1)。
 
 已完成:`platform/kernel/`、`platform/kernel/schema`、`cmd/ada`、`cmd/ada-demo`、`cmd/ada-ts-demo`、`platform/compile/`、`platform/jsrt/`、`platform/bridge/`、`platform/plugin/`、`platform/preset/`、`platform/assemble/`(含延迟激活)、`platform/loader/`、`platform/sched/`、`platform/quota/`、`platform/flow/`、`platform/bundle/`、`platform/expr/`、`plugins/seam/session` + `provider/session-memory`、`plugins/seam/prompts` + `core/system-prompt`、`plugins/seam/llm` + `provider/llm-replay`/`provider/llm-openai`、`plugins/seam/tools` + `tool/text-helper`/`tool/shell-helper`/`tool/memory-helper`/`tool/http-helper`(TS) + `tool/tool-helper`(Go)、`policy/approval-gate`/`policy/llm-retry`/`policy/tool-timeout`、`core/agent-loop`、`examples/agent`(最小 preset + 回放脚本)、`plugins/seam/fs` + `provider/fs-local` + `policy/fs-sandbox`、`plugins/seam/shell` + `provider/shell-local` + `policy/shell-guard`、`plugins/policy/fs-redact`/`fs-observe`/`shell-observe`/`shell-redact`、`plugins/seam/sandbox` + `provider/sandbox-none`、`plugins/seam/approval` + `provider/approval-deny`/`approval-cli`、`plugins/seam/workspace` + `provider/workspace-local` + `policy/workspace-guard` + `workspace-helper`、`examples/workspace`、`platform/caps/`、`platform/install/`、`platform/host/cli`、`platform/host/server`、`platform/host/builtins`、`platform/host/desktop`(视图映射骨架)、`platform/host/registry`、`scripts/build.ps1`、`scripts/package.ps1`、`scripts/tools/builtins-dump`、`scripts/guard.ps1`、`scripts/bench.ps1`、`docs/m4.5-agent-core.md`、`docs/kernel-api.md`、`docs/m2-execution.md`、`docs/m3-assembly.md`、`docs/m4-orchestration.md`、`docs/m4-flow.md`、`docs/seam-session.md`、`docs/seam-fs.md`、`docs/workspace-plugin.md`、`docs/packaging.md`、`docs/seam-shell.md`、`docs/seam-sandbox.md`、`docs/seam-approval.md`、`docs/adr/0001-deferred-m5-scope.md`、`docs/adr/0002-host-budget-exception.md`。
 

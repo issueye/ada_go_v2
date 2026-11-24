@@ -2,7 +2,10 @@
 
 > 本文件把里程碑验收项映射到**实现位置、证据命令与已知边界**。口径来源:
 > [plugin-kernel-design.md](plugin-kernel-design.md) §17、AGENTS §10。
-> 最近更新:2026-11-23(532 个 Test + 4 个 Benchmark;不做 v1 插件迁移)。
+> 最近更新:2026-11-24(572 个 Test + 5 个 Benchmark;不做 v1 插件迁移)。
+>
+> 执行层在 2026-11-24 接入**调用边界驱动的事件循环**(`await`/`fs.promises`/`setTimeout 调用内生效),
+> 见 [event-loop.md](event-loop.md) 与 [ADR 0014](adr/0014-call-scoped-event-loop.md);后台常驻定时器仍不支持。
 
 ## 0. 结论速览
 
@@ -57,7 +60,7 @@
 | 审批实现 | `approval-deny`,`approval-cli` | `approval-cli`(5) | CLI y/yes 交互 |
 | 静态能力授权 | `plugins/provider/caps-static`,`platform/caps/` | `caps`(7)、`caps-static`(1) | 安装根按 index trust 回填;普通磁盘目录 third-party |
 | 调用点强制 | `policy/caps-gate` | `caps-gate`(4) | fs/shell 调用点 |
-| C13 拒绝矩阵 | `plugins/policy/securitymatrix` | `TestFSMatrix`、`TestFSNoCapDenied`、`TestShellMatrix` | 覆盖 fs/shell;caps 拒绝已入审计;通用 payload 脱敏待补 |
+| C13 拒绝矩阵 | `platform/securitytest` | `TestFSMatrix`、`TestFSNoCapDenied`、`TestShellMatrix` | 覆盖 fs/shell;caps 拒绝已入审计;通用 payload 脱敏待补 |
 | ~~网络升级审批~~ | ~~`policy/net-guard`~~ | 已移除 | ADR 0012:网络不再有受控 seam |
 
 ### 2.3 网络与 secret

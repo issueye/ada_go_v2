@@ -78,6 +78,7 @@
 | [kernel-api.md](docs/kernel-api.md) | M1 冻结的内核 API 与已知边界 |
 | [spikes.md](docs/spikes.md) | M0 验证报告（5 个已通过，7 个待做） |
 | [m2-execution.md](docs/m2-execution.md) | M2 执行层第一刀:compile / jsrt / bridge 的契约、测试矩阵与已知边界 |
+| [event-loop.md](docs/event-loop.md) | 执行层事件循环:调用边界驱动、可 await 的东西、定时器作用域与已知边界 |
 | [m3-assembly.md](docs/m3-assembly.md) | M3 装配层:清单、依赖图、preset、事务化装配与 `ada plan`/`up`/`inspect` |
 | [seam-session.md](docs/seam-session.md) | seam/session、session-memory/jsonl、session-stats 与 compaction:契约、并发语义、契约测试与已知边界 |
 | [m4-orchestration.md](docs/m4-orchestration.md) | M4 编排:sched(时钟/cron/周期与定时任务)与 quota(配额与回压) |
@@ -113,6 +114,9 @@
 | [adr/0010](docs/adr/0010-session-jsonl-budget.md) | ADR:session-jsonl 单插件预算例外 |
 | [adr/0011](docs/adr/0011-node-network-direct.md) | ADR:Node 网络模块直连,不接入 net-guard |
 | [adr/0012](docs/adr/0012-remove-seam-net.md) | ADR:移除 seam/net、net-http、net-guard、net-observe |
+| [adr/0013](docs/adr/0013-tool-plugin-budget-exception.md) | ADR:memory-helper / http-helper 代码预算例外(复议 2027-06-30) |
+| [adr/0014](docs/adr/0014-call-scoped-event-loop.md) | ADR:执行层事件循环按调用边界驱动(已接受,复议 2027-03-31) |
+| [adr/0015](docs/adr/0015-refused-node-modules.md) | ADR:不实现 worker_threads / inspector / async_hooks / trace_events(复议 2027-06-30) |
 | [seam-secrets.md](docs/seam-secrets.md) | M5 secret 能力:seam/secrets 与 provider/secrets-env |
 | [seam-fs.md](docs/seam-fs.md) | M5 安全第一刀:seam/fs、fs-local 实现与 fs-sandbox 策略 |
 | [workspace-plugin.md](docs/workspace-plugin.md) | 工作区:seam/workspace、workspace-local、workspace-guard、workspace-helper 与会话绑定 |
@@ -149,7 +153,7 @@
 | 类别 | 内容 | 判据 |
 |---|---|---|
 | **内核** | Context / Fiber / Service / Effect / Event / Config / Registry / Provider 接口 | 只懂「作用域、服务、副作用、事件、配置」，不懂业务 |
-| **基础设施** | assemble / compile(esbuild) / jsrt(moejs) / plugin(清单/安装/签名) / caps(授权) / observe | 是「装载与执行机制」，没有领域语义 |
+| **基础设施** | assemble / compile(esbuild) / jsrt(moejs) / plugin(清单/安装/签名) / caps(授权) / observe / redact(脱敏正则) | 是「装载与执行机制」，没有领域语义 |
 | **组合数据** | preset / bundle / patch | 是数据不是代码 |
 | **宿主适配器** | `platform/host/desktop`（mygo）、`platform/host/cli`、`platform/host/server` | 只做平台映射（窗口、协议、主线程、进程入口），不做业务 |
 
@@ -255,12 +259,13 @@ platform/host/*   ✓→ 全部
 |---|---|---|
 | `platform/kernel/` | ≤ 3000 行 | 内核越厚，插件越难替换 |
 | `platform/host/*` | ≤ 2500 行（每个适配器 ≤ 800；`platform/host/cli` ≤ 1500，ADR 0002 临时例外） | 宿主只做映射；CLI 的参数解析/输出计入预算，拆分包后回滚例外 |
-| 单个插件 | ≤ 800 行，单一职责（例外:`rpc-json` ≤ 1200，ADR 0009;`session-jsonl` ≤ 1000，ADR 0010） | 混装说明该拆;例外有复议日期 |
+| 单个插件 | ≤ 800 行，单一职责（例外:`rpc-json` ≤ 1200，ADR 0009;`session-jsonl` ≤ 1000，ADR 0010;`memory-helper` ≤ 1100、`http-helper` ≤ 900，ADR 0013） | 混装说明该拆;例外有复议日期 |
 | 单个 seam 包 | ≤ 400 行（只有类型/错误/事件名） | 出现实现即违规 |
 
 ### 5.4 命名与结构约定
 
 - 目录：`plugins/seam/<name>`、`plugins/provider/<name>`、`plugins/policy/<name>`、`plugins/core/<name>`、`plugins/tool/<xx>-helper`。
+- **`plugins/seam/` 下不全是插件**：`seamerr` 是各 seam 共用的错误码词汇（只有类型与构造函数，没有 `Plugin()`），按 §5.1「seam 只放类型/错误/事件名」留在该目录；新增同名结构的共享包同理，不要为它补清单。
 - **内置工具插件一律用 `<xx>-helper` 命名**：目录 `plugins/tool/<xx>-helper`，id 与目录同名，如 `text-helper`、`shell-helper`、`git-helper`。`<xx>` 是工具面向的领域（`text`/`shell`/`git`/`task`/`command`/`workspace`），不是实现方式。
   - 为什么：`helper` 直接表明「这是一组给模型用的工具」，与 seam（契约）、provider（实现）、policy（门禁）的命名区分开；`tool-fs` 这类前缀与目录 `plugins/tool/` 重复，`fs`/`shell` 裸名又会和 `fs-local`/`shell-local` 这类 provider 撞语义。
   - 适用范围：仅 `plugins/tool/*`。seam/provider/policy/core 继续用原来的 `seam-`/`provider-`/`policy-`/`core-` 及实现名（`fs-local`、`shell-guard`），不套用本规则。
@@ -303,6 +308,7 @@ platform/host/*   ✓→ 全部
 ### 6.2 TypeScript 插件
 
 - ESM only；`apply(ctx, config)` 必须可重入、无模块级状态；状态进 `ctx.store`。
+- **允许 async**：`apply`、工具处理器、事件监听器都可以 `await`(由执行层事件循环驱动,见 [event-loop.md](docs/event-loop.md))。但**不许靠「留下定时器」做后台工作**——未 await 的定时器会在调用结束时被清掉;周期性工作用 `sched` 的调度能力。
 - 允许 `node:*`(宿主安装的 Node 兼容模块)、`ada:*` 或 Artifact 内联模块;禁止 npm 包、磁盘模块或 `.node`。
 - 不在高频回调里做重活（`llm.stream` 的 onDelta 应只做转发/累加小量）。
 - 类型来自 `@ada/sdk`，不手写重复声明。

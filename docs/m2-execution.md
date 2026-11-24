@@ -51,9 +51,22 @@ TS 源文件 ──compile.Build──▶ Artifact(每个文件的 JS,纯数据)
 | `Close(ctx)` | 停止 worker;可重复调用 |
 | `ErrClosed` / `ErrBroken` / `ErrReentrant` | 关闭后调用 / 中断后无法收尾 / 同运行时嵌套调用 |
 
-并发模型:Runtime 只在 worker goroutine 上使用,只有 `Interrupt`/`ClearInterrupt` 跨协程——这是 moejs 的硬约束(C1),包内用 `mu` 保护 `raw` 指针。`ctx.on`、`ctx.effect`、`ctx.waterfall` 注册的函数与 JS 服务方法共用 worker 独占的 `handlers` 表(函数 + `this`),调用一律经 `CallFunction` 在 worker 上执行。
+并发模型:Runtime 只在 worker goroutine 上使用,只有 `Interrupt`/`ClearInterrupt` 跨协程——这是 moejs 的硬约束(C1),包内用 `mu` 保护 `raw` 指针。`ctx.on`、`ctx.effect`、`ctx.waterfall` 注册的函数与 JS 服务方法共用 worker 独占的 `handlers` 表(函数 + `this`),调用一律经引导模块在 worker 上执行。
 
 **调用 ctx 传播**:`enqueue` 在 worker 执行每个任务前把任务 ctx 存入 `callCtx`,结束后清空;`__adaHost.shell` 与 `__adaHost.fs.*` 使用 `currentContext()`,因此 JS 工具的原生 fs/shell 调用会继承调用级 `workspace.Binding`、取消与超时,而不是退回 `context.Background()`。事件/waterfall 回调用事件自己的 ctx。
+
+### 2.2.1 事件循环
+
+每次进入 JS(`Load`、`Call`、回调、服务方法)都在 `eventloop.Loop.Run` 里执行,循环排空到
+「没有东西再让它活着」为止;入口的 Promise 由引导模块 `boot.js` await 后交回宿主。
+循环由**调用边界驱动**,不后台常驻——理由与替代方案见
+[event-loop.md](event-loop.md) 与 [ADR 0014](adr/0014-call-scoped-event-loop.md)。
+
+- 可用:`await`、`fs.promises`、`setTimeout`/`setInterval`/`setImmediate`(调用内到期);
+- 不可用:跨调用的后台定时器、顶层 `await`、`waterfall` 中间件里 await(`next` 是同步的);
+- 未 await 且入口结算时仍未到期的定时器会被清掉,不会活到下一次调用;
+- 取消走 `Loop.Interrupt`,与 `Interrupt`/`ClearInterrupt` 的既有语义一致。
+
 
 ### 2.2.1 Node 内置模块
 
@@ -66,8 +79,15 @@ TS 源文件 ──compile.Build──▶ Artifact(每个文件的 JS,纯数据)
 - `node:child_process` / `node:http` / `node:https` / `node:dns` /
   `node:dns/promises` / `node:net` 也是宿主源码,经 `__adaHost` 调用宿主能力;
   网络模块直连标准库,仓库已无 `seam/net` 与 `net-guard`(ADR 0011/0012);
+- `node:timers` / `timers/promises` / `stream` / `stream/promises` / `readline` /
+  `readline/promises` / `tty` / `perf_hooks` 是宿主源码(纯 JS,建立在事件循环上的
+  模块化形态);`tty` 只回答「不是终端」,`worker_threads`/`inspector`/`async_hooks`/
+  `trace_events` 不实现(ADR 0015);
 - `node:fs` 只在 fs/workspace 链上没有策略装饰器时安装,避免绕过
   fs-sandbox/caps/workspace-guard;
+- `node:fs` 与 `node:fs/promises` 由宿主包一层:**补齐** `mkdtemp`/`symlink`/`link`/
+  `chmod`/`chown`/`truncate`/`utimes` 的 sync / callback / promise 三形态
+  (`platform/jsrt/nodefsx.go` + `fsx.js`),路径与写权限沿用 node:fs 的根与开关;
 - 旧的 `ada:fs` / `ada:shell` 仍保留,见 [node-compat.md](node-compat.md)。
 
 ### 2.3 `bridge`

@@ -23,8 +23,8 @@ const p = path.join("/workspace", "out.txt")
 
 | 模块 | 来源 | 说明 |
 |---|---|---|
-| `node:fs` | moejs `node` 包 | 根固定为 `/workspace`;同步形状可用,回调/promise 形状已导出 |
-| `node:fs/promises` | moejs `node` 包 | 同上;当前插件生命周期是同步的,promise 完成不保证早于 `apply` 返回 |
+| `node:fs` | moejs `node` 包 + 宿主补齐层 | 根固定为 `/workspace`;同步与回调形状可用;`mkdtemp`/`symlink`/`link`/`chmod`/`chown`/`truncate`/`utimes` 由宿主补齐(§3.1,三形态) |
+| `node:fs/promises` | moejs `node` 包 | 同上;真异步:promise 由事件循环驱动,`await` 之后文件已落盘 |
 | `node:buffer` | moejs `node` 包 | 同时安装全局 `Buffer` |
 | `node:path` | `platform/jsrt/nodemods` | posix 算法;裸名 `path` 同实例 |
 | `node:os` | `platform/jsrt/nodemods` | 来自 `__adaOSInfo`;`hostname()`/`homedir()` 为空 |
@@ -41,6 +41,13 @@ const p = path.join("/workspace", "out.txt")
 | `node:http` / `node:https` | `platform/jsrt/nodemods` | 同步客户端:`request`/`get`/`ClientRequest`/`IncomingMessage`;无 `createServer` |
 | `node:dns` / `node:dns/promises` | `platform/jsrt/nodemods` | 同步解析:`lookup`/`lookupSync`/`resolve*`/`reverse`;`setServers` 不支持 |
 | `node:net` | `platform/jsrt/nodemods` | `isIP` 系列、`SocketAddress`、同步 TCP `Socket`(含 `read(n)` 扩展);无 `createServer` |
+| `node:timers` | `platform/jsrt/nodemods` | 全局定时器的同一组函数(`timers.setTimeout === setTimeout`),调用内生效 |
+| `node:timers/promises` | `platform/jsrt/nodemods` | `setTimeout`/`setImmediate`/`scheduler.wait`;`setInterval` 是异步可迭代对象 |
+| `node:stream` | `platform/jsrt/nodemods` | `Readable`/`Writable`/`Duplex`/`Transform`/`PassThrough`、`pipe`、`pipeline`、`finished`、`Readable.from`、`for await` |
+| `node:stream/promises` | `platform/jsrt/nodemods` | `pipeline`/`finished` 的 Promise 形态 |
+| `node:readline` / `readline/promises` | `platform/jsrt/nodemods` | 非 terminal 模式:按行切分 + `line`/`close` 事件 + 异步迭代 + `question`;不渲染 prompt |
+| `node:tty` | `platform/jsrt/nodemods` | `isatty()` 恒 false;`ReadStream`/`WriteStream` 构造即抛 `ERR_NOT_SUPPORTED`(没有可包的 fd) |
+| `node:perf_hooks` | `platform/jsrt/nodemods` | `performance.now`(宿主单调时钟)/`timeOrigin`/`mark`/`measure`/`getEntries*`/`clear*` + `PerformanceObserver`(微任务投递) |
 | `ada:fs` / `ada:shell` | `platform/bridge` | **旧接口,保留兼容**;不经过 Node 运行时 |
 | `ada:secrets` | `platform/bridge` | `get(name)` 按名读 secret、`has(name)` 只回答能否读到;走 `seam/secrets` 链(provider + policy),key 不进配置/日志 |
 
@@ -72,12 +79,36 @@ policy-aware 的 Node fs 适配。
 - `node:fs` 只挂 `/workspace`;`os.tmpdir()` 返回 `/workspace/.ada-tmp`,
   安装时会创建该目录;
 - `node:fs` 的 `writeFile` 等成员没有 `fs-redact`/`fs-observe` 事件;
-- 当前 `jsrt` 的插件入口是同步调用:异步 fs 的 promise 形存在,但不要在
-  `apply` 里依赖它在返回前完成;需要异步文件 IO 的脚本应使用工具/事件回调,
-  或等事件循环切片。
+- `node:fs` 的异步形状由事件循环驱动([event-loop.md](event-loop.md)):`await` 之后
+  操作已经完成;但**调用结束后**仍在飞的 promise 不会被等到——要么 await,要么用工具/事件回调。
+
+### 3.1 `node:fs` 的补齐 API
+
+moejs 的 `node` 包只实现了一部分 `node:fs`;常用但缺失的元数据类操作由宿主补齐
+(`platform/jsrt/nodefsx.go` 做操作,`platform/jsrt/fsx.js` 做形态):
+
+| API | 形态 | 说明 |
+|---|---|---|
+| `mkdtemp` | `mkdtempSync` / `mkdtemp(prefix, cb)` / `promises.mkdtemp` | 在 `/workspace` 下建随机后缀目录,返回虚拟路径;连续 10 次撞名才报 `EEXIST` |
+| `symlink` | 同上三形态 | 目标**必须是相对路径**(`os.Root` 不允许绝对目标,越界目标直接 `EPERM`) |
+| `link` | 同上三形态 | 硬链接 |
+| `chmod` | 同上三形态 | 权限位;Windows 上受限(与 Node 一致) |
+| `chown` | 同上三形态 | Windows 上返回 `ENOTSUP`(平台没有 POSIX 属主) |
+| `truncate` | 同上三形态 | 经由 `OpenFile(O_WRONLY)` + `Truncate`,`len < 0` 报 `EINVAL` |
+| `utimes` | 同上三形态 | 接受秒数或 `Date`,`atime`/`mtime` |
+
+边界:
+
+- 路径同样先夹在 `/workspace` 里:`/etc/x`、`/workspace/../x` 一律 `EPERM`;
+- 写权限沿用 `node:fs` 的 `Write` 开关:只读工作区返回 `EROFS`;
+- 错误是 Node 形状:带 `code`(`ENOENT`/`EEXIST`/`EACCES`/`EINVAL`/`EROFS`/`EPERM`/`ENOTSUP`/`EIO`)
+  与 `syscall` 字段,而不是一句字符串;
+- 与 moejs 的实现一样,**这些写入不经过 `fs-local` 的原子写/版本守卫,也不产生
+  `fs-redact`/`fs-observe` 事件**;要策略保护请用 `ada:fs`(走 fs Chain);
+- 补齐只覆盖「一次操作」,不做文件描述符(`open`/`read`/`write`/`close`)与流
+  (`createReadStream`/`createWriteStream`)——那两者需要跨调用的句柄状态,属于后续。
 
 ## 4. 宿主信息
-
 `node:os` 读取 `globalThis.__adaOSInfo`:
 
 | 字段 | 来源 |
@@ -101,7 +132,8 @@ policy-aware 的 Node fs 适配。
 
 - 只支持 `http`/`https`;其他协议在宿主侧拒绝;
 - 请求体与响应体上限 4 MiB(`maxNodeHTTPBody`),超出时 `res.truncated === true`;
-- 请求在 `req.end()`(或 `http.get()`)时**立即完成**:没有事件循环,
+- 请求在 `req.end()`(或 `http.get()`)时**立即完成**:这个模块本身是同步实现
+  (运行时已有事件循环,但 http 的状态机不挂在它上面),
   `response`/`data`/`end` 回调按注册顺序同步触发;
 - `http` 不跟随重定向,3xx 原样返回(与 Node 一致);
 - `node:net` 的 `connect()` 同步建连,读数据用扩展方法 `socket.read(n)`;
@@ -125,16 +157,38 @@ http.get("https://example.com/api", (res) => {
 
 ## 5.1 未实现的模块
 
-以下模块暂不安装,按 Node 的方式在链接期失败,而不是返回近似值:
+以下模块不安装,按 Node 的方式在链接期失败(`No such built-in module: ...`),
+而不是返回近似值。分三类:
 
-- `node:stream/web`/`node:timers`;
-- `node:module`/`node:worker_threads`/`node:vm`;
-- `node:tls`(TLS 只在 `node:https` 内部使用,不暴露原始握手)。
+**引擎没有对应机制(已写 ADR,见 [ADR 0015](adr/0015-refused-node-modules.md))**
+
+- `node:worker_threads`:没有第二个 isolate,假 Worker 会在同一个堆上跑;
+- `node:inspector`:moejs 不暴露 V8 Inspector 会话;
+- `node:async_hooks`:引擎没有 async hook 钩子,`AsyncLocalStorage` 会静默丢上下文;
+- `node:trace_events`:没有 V8 trace buffer。
+
+替代路径:并行工作用 `platform/sched` 与 Go 插件;调试用 `ctx.log` + `ada inspect`;
+请求上下文隔离用调用点 ctx;追踪用 `policy/audit-log` + `node:perf_hooks`。
+
+**需要宿主能力,尚未做**
+
+- `node:tls`(TLS 只在 `node:https` 内部使用,不暴露原始握手);
+- `node:dgram`(UDP)、`node:http2`、`node:cluster`;
+- `node:module`、`node:vm`(`vm` 需要引擎支持隔离执行);
+- `node:wasi`、`node:v8`。
+
+**已废弃或没有意义**
+
+- `node:domain`、`node:punycode`、`node:constants`、`node:console`
+  (日志走 `ctx.log`;裸 Runtime 没有 console,见 C4)。
 
 `node:zlib` 只做同步的一次性压缩与解压:`createGzip`/`createDeflate` 这类流式接口、
 brotli 与 zip 归档都不实现。解压输出上限 8 MiB(`maxZlibOutBytes`),压缩比可以做到
 上万倍,不设上限等于把 zip bomb 交给插件;输入上限同为 8 MiB。非法容器(gzip 头不对、
 zlib 校验失败)一律抛错,不返回近似结果。
+
+`node:stream/web`(`ReadableStream`/`WritableStream`)也不安装:它属于 WHATWG 流,
+与 `node:stream` 是两套 API;需要时用 `node:stream`。
 
 ## 5.2 `node:child_process` 的边界
 
@@ -150,6 +204,9 @@ zlib 校验失败)一律抛错,不返回近似结果。
 ```powershell
 go test ./platform/bridge -run 'NodeBuiltins|NodeHTTP|NodeZlib|NodeChild|JSShell|JSTool'
 go test ./platform/jsrt
+go test ./platform/jsrt -run 'Await|Timer|Loop'   # 事件循环(见 event-loop.md)
+go test ./platform/jsrt -run 'NodeFSExt'          # node:fs 补齐 API 的三形态与错误码
+go test ./platform/jsrt -run 'TestNodeTimers|TestNodeStream|TestNodeReadline|TestNodePerfHooks|TestNodeTty'
 ```
 
 `TestNodeBuiltins` 覆盖:
