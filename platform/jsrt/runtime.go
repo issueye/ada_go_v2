@@ -21,6 +21,7 @@ import (
 
 	"github.com/MoeForge/moejs"
 	"github.com/MoeForge/moejs/engine"
+	"github.com/MoeForge/moejs/eventloop"
 	mojsnode "github.com/MoeForge/moejs/node"
 
 	"github.com/issueye/ada_go_v2/platform/compile"
@@ -190,8 +191,20 @@ type Runtime struct {
 	nodeAPI *mojsnode.API
 	hooks   map[string]moejs.Hook
 	host    moejs.Value // 传给 apply 的 ctx 对象;只在 worker goroutine 上使用
-	broken  bool
-	closed  bool
+	// loop 是这个运行时的事件循环(见 loop.go)。它在 worker goroutine 上以
+	// 「一次调用一次 Run」的方式驱动,不后台常驻(ADR 0014)。
+	loop   *eventloop.Loop
+	broken bool
+	closed bool
+
+	// nodeRoot 是 node:fs 的工作区根(补齐层也用它);nodeMount/nodeWrite 是根对应的
+	// 虚拟挂载点与写权限。三者只在 node:fs 安装成功时非零(见 nodefsx.go)。
+	nodeRoot  *os.Root
+	nodeMount string
+	nodeWrite bool
+
+	// clockStart 是运行时启动时刻,给 __adaHost.monoMs(单调时钟)做基准。
+	clockStart time.Time
 
 	// handlers 是 ctx.on 与 JS 服务方法共用的函数表。只在 worker goroutine 上读写:
 	// 注册与调用都发生在 worker 上。
@@ -245,13 +258,14 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		return nil, err
 	}
 	r := &Runtime{
-		art:      opts.Artifact,
-		opts:     opts,
-		jobs:     make(chan func()),
-		quit:     make(chan struct{}),
-		stopped:  make(chan struct{}),
-		handlers: make(map[uint64]handlerEntry),
-		netConns: make(map[uint64]NetConn),
+		art:        opts.Artifact,
+		opts:       opts,
+		jobs:       make(chan func()),
+		quit:       make(chan struct{}),
+		stopped:    make(chan struct{}),
+		handlers:   make(map[uint64]handlerEntry),
+		netConns:   make(map[uint64]NetConn),
+		clockStart: time.Now(),
 	}
 	go r.worker()
 
@@ -328,7 +342,15 @@ func (r *Runtime) load() error {
 	r.mu.Lock()
 	r.raw = raw
 	r.mu.Unlock()
-	if err := r.installNode(raw); err != nil {
+	// 事件循环必须先于 node 安装:异步 fs 的 Hold/Post 都挂在它上面。
+	loop, err := r.newLoop(raw)
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
+	r.loop = loop
+	r.mu.Unlock()
+	if err := r.installNode(raw, loop); err != nil {
 		return err
 	}
 	// 宿主能力必须在 Load 之前注入:模块顶层就可能调用它们。
@@ -460,10 +482,28 @@ func (r *Runtime) load() error {
 	if err := hostObj.SetProp(realm, realm.KeyFromGoString("zlib"), raw.Function("zlib", 2, r.nativeZlib(raw))); err != nil {
 		return fmt.Errorf("jsrt: 注入 __adaHost.zlib 失败: %w", err)
 	}
+	// 单调时钟:node:perf_hooks 的 now() 用它,而不是会跳变的 Date.now()。
+	if err := hostObj.SetProp(realm, realm.KeyFromGoString("monoMs"), raw.Function("monoMs", 0, r.nativeMonoMs(raw))); err != nil {
+		return fmt.Errorf("jsrt: 注入 __adaHost.monoMs 失败: %w", err)
+	}
 	// secrets 只按名读取;来源、白名单与授权都在 seam/secrets 的 provider 与 policy。
 	if r.opts.Host.Secrets != nil {
 		if err := hostObj.SetProp(realm, realm.KeyFromGoString("secretsGet"), raw.Function("secretsGet", 1, r.nativeSecretsGet(raw))); err != nil {
 			return fmt.Errorf("jsrt: 注入 __adaHost.secretsGet 失败: %w", err)
+		}
+	}
+	// node:fs 的补齐层(mkdtemp/symlink/link/chmod/chown/truncate/utimes):
+	// 只有装了 node:fs(有工作区根)时才注入,否则这几个名字在 JS 侧也不会被求值。
+	if r.nodeRootOf() != nil {
+		fsxObj := realm.NewObject()
+		if err := fsxObj.SetProp(realm, realm.KeyFromGoString("call"), raw.Function("call", 2, r.nativeFSXCall(raw))); err != nil {
+			return fmt.Errorf("jsrt: 注入 __adaHost.fsx.call 失败: %w", err)
+		}
+		if err := fsxObj.SetProp(realm, realm.KeyFromGoString("callAsync"), raw.Function("callAsync", 2, r.nativeFSXCallAsync(raw))); err != nil {
+			return fmt.Errorf("jsrt: 注入 __adaHost.fsx.callAsync 失败: %w", err)
+		}
+		if err := hostObj.SetProp(realm, realm.KeyFromGoString("fsx"), engine.ObjectValue(fsxObj)); err != nil {
+			return fmt.Errorf("jsrt: 注入 __adaHost.fsx 失败: %w", err)
 		}
 	}
 	if err := realm.Global.SetProp(realm, realm.KeyFromGoString("__adaHost"), engine.ObjectValue(hostObj)); err != nil {
@@ -490,7 +530,32 @@ func (r *Runtime) load() error {
 	if !ok {
 		return fmt.Errorf("jsrt: 入口 %q 不存在", r.art.Entry)
 	}
-	linked, err := moejs.Link(entry, func(ref moejs.Referrer, spec string) (*moejs.Module, error) {
+	// 引导模块提供两个能力:await 入口的返回值、结算时清掉遗留定时器。
+	// 它成为 Link 的根,入口模块经 ada:entry 被它引用(见 docs/event-loop.md §4)。
+	boot, bootTimers, fsxMod, nodeFSMod, nodeFSAsyncMod, err := compileBoot()
+	if err != nil {
+		return err
+	}
+	linked, err := moejs.Link(boot, func(ref moejs.Referrer, spec string) (*moejs.Module, error) {
+		// 虚拟说明符只在这里解析:它们不进 Artifact,也不占用插件的导入空间。
+		switch spec {
+		case entrySpecifier:
+			return entry, nil
+		case timersSpecifier:
+			return bootTimers, nil
+		case fsxSpecifier:
+			return fsxMod, nil
+		// node:fs 走我们的包装:在 moejs 的实现之上补齐缺失的元数据类 API
+		// (见 nodefsx.go)。包装模块内部用下面两个别名取回上游能力。
+		case "node:fs", "fs":
+			return nodeFSMod, nil
+		case "node:fs/promises", "fs/promises":
+			return nodeFSAsyncMod, nil
+		case baseFSSpecifier:
+			return mojsnode.Resolver(nil)(ref, "node:fs")
+		case basePromisesSpecifier:
+			return mojsnode.Resolver(nil)(ref, "node:fs/promises")
+		}
 		if m, ok := r.opts.Modules[spec]; ok {
 			return m, nil
 		}
@@ -515,7 +580,12 @@ func (r *Runtime) load() error {
 	if err != nil {
 		return fmt.Errorf("jsrt: 链接失败: %w", err)
 	}
-	if err := raw.Load(linked); err != nil {
+	// 加载在循环里跑:模块顶层若调用 setTimeout(以及在支持的形态下 await),
+	// 必须在有循环的前提下求值,否则会出现「模块看到的是半装好的运行时」。
+	if err := loop.Run(func(rt *moejs.Runtime) error { return rt.Load(linked) }); err != nil {
+		if errors.Is(err, moejs.ErrModulePending) {
+			return fmt.Errorf("jsrt: 插件模块不能用顶层 await:请把异步放到 apply 里(%w)", err)
+		}
 		return fmt.Errorf("jsrt: 加载失败: %w", err)
 	}
 
@@ -557,41 +627,14 @@ func isNodeAlias(spec string) bool {
 	return false
 }
 
-// nodeLoop 把 jsrt 的 worker 队列适配成 moejs node 包需要的 Loop。
-//
-// node 包的 promise 文件操作在 worker 池完成,然后 Post 回 runtime 协程结算;
-// jsrt 的 worker 一直运行到 Close,所以 Hold 是空操作,Post 走 enqueue。
-type nodeLoop struct{ r *Runtime }
-
-func (l nodeLoop) Runtime() *moejs.Runtime {
-	l.r.mu.Lock()
-	defer l.r.mu.Unlock()
-	return l.r.raw
-}
-
-func (l nodeLoop) Post(task func(*moejs.Runtime) error) bool {
-	r := l.r
-	raw := l.Runtime()
-	if raw == nil {
-		return false
-	}
-	err := r.enqueue(context.Background(), func() {
-		if err := task(raw); err != nil {
-			r.mu.Lock()
-			r.broken = true
-			r.mu.Unlock()
-		}
-	})
-	return err == nil
-}
-
-func (l nodeLoop) Hold() func() { return func() {} }
-
 // installNode 安装 Node 内置模块。
 //
 // node:path / node:os / node:buffer 始终可用;node:fs 只有给出 FS 根时才会安装。
 // 写权限由调用方(桥接层)按策略决定,jsrt 不自行放宽。
-func (r *Runtime) installNode(raw *moejs.Runtime) error {
+//
+// 用 InstallLoop 而不是 Install:node:fs 的 promise/回调形状需要一个真实的循环
+// 来做 Hold/Post,否则「异步」只是形状,结算时间无法保证(见 ADR 0014)。
+func (r *Runtime) installNode(raw *moejs.Runtime, loop *eventloop.Loop) error {
 	info := map[string]any{
 		"platform": runtime.GOOS,
 		"arch":     runtime.GOARCH,
@@ -630,14 +673,27 @@ func (r *Runtime) installNode(raw *moejs.Runtime) error {
 			_ = os.MkdirAll(filepath.Join(n.FS.Root, ".ada-tmp"), 0o755)
 		}
 	}
-	api, err := mojsnode.Install(nodeLoop{r: r}, opts)
+	api, err := mojsnode.InstallLoop(loop, opts)
 	if err != nil {
 		return fmt.Errorf("jsrt: 安装 Node 内置模块失败: %w", err)
 	}
 	r.mu.Lock()
 	r.nodeAPI = api
 	r.mu.Unlock()
-	return nil
+	// 补齐层(node:fs 的 mkdtemp/symlink/chmod/...)需要一个根句柄;
+	// 没有工作区根时也不会有 node:fs,所以这里返回 nil 即可。
+	return r.openNodeRoot()
+}
+
+// nativeMonoMs 实现 __adaHost.monoMs():相对运行时启动的单调毫秒数。
+//
+// 用单调时钟而不是墙钟:性能统计不能被系统时间调整打断;精度到微秒,
+// 对插件里的耗时测量足够,也不暴露宿主的绝对时间。
+func (r *Runtime) nativeMonoMs(raw *moejs.Runtime) moejs.NativeFunc {
+	return func(_ *engine.Realm, _ engine.Value, _ []engine.Value) (engine.Value, error) {
+		ms := float64(time.Since(r.clockStart).Microseconds()) / 1000
+		return raw.FromGo(ms)
+	}
 }
 
 // nativeLog 把 JS 的 ctx.log(...args) 转成宿主日志。
@@ -1129,28 +1185,32 @@ func (r *Runtime) callOnWorker(export string, payload [][]byte, withHost bool) c
 	case raw == nil:
 		return callResult{err: ErrClosed}
 	}
-	h, ok := hooks[export]
-	if !ok {
+	// 导出名只用来校验存在性:实际调用经 boot 的 __adaInvoke,才能 await 返回值。
+	if _, ok := hooks[export]; !ok {
 		return callResult{err: fmt.Errorf("jsrt: 模块未导出 %q", export)}
 	}
-	vals := make([]moejs.Value, 0, len(payload)+1)
+	invoke, ok := hooks[invokeExport]
+	if !ok {
+		return callResult{err: fmt.Errorf("jsrt: 运行时引导模块缺少 %s", invokeExport)}
+	}
+	nameVal, err := raw.FromGo(export)
+	if err != nil {
+		return callResult{err: fmt.Errorf("jsrt: 导出名无法转换: %w", err)}
+	}
+	argsVal, err := raw.FromGo(joinPayload(payload))
+	if err != nil {
+		return callResult{err: fmt.Errorf("jsrt: 参数无法转换: %w", err)}
+	}
+	host := engine.Undefined()
 	if withHost {
-		vals = append(vals, r.host)
+		host = r.host
 	}
-	for i, b := range payload {
-		v, err := raw.ParseJSON(b)
-		if err != nil {
-			return callResult{err: fmt.Errorf("jsrt: 参数 %d 不是合法 JSON: %w", i, err)}
-		}
-		vals = append(vals, v)
-	}
-	out, err := raw.Call(h, vals...)
+	v, err := r.runCall(func(rt *moejs.Runtime, ok, fail moejs.Value) error {
+		_, callErr := rt.Call(invoke, nameVal, host, argsVal, ok, fail)
+		return callErr
+	})
 	if err != nil {
-		return callResult{err: r.wrap(raw, err)}
-	}
-	v, err := raw.ToGo(out)
-	if err != nil {
-		return callResult{err: fmt.Errorf("jsrt: 返回值无法转成 Go 值: %w", err)}
+		return callResult{err: err}
 	}
 	return callResult{value: v}
 }
@@ -1170,8 +1230,14 @@ func (r *Runtime) wrap(raw *moejs.Runtime, err error) error {
 
 func (r *Runtime) interrupt(reason error) {
 	r.mu.Lock()
-	raw := r.raw
+	loop, raw := r.loop, r.raw
 	r.mu.Unlock()
+	// 有循环时用 Loop.Interrupt:只有它能唤醒正在睡眠等定时器/任务的循环,
+	// 否则一次「取消」要等到下一个 timer 到期才生效。
+	if loop != nil {
+		loop.Interrupt(reason)
+		return
+	}
 	if raw != nil {
 		raw.Interrupt(reason)
 	}
@@ -1295,7 +1361,7 @@ func (r *Runtime) invokeCallback(ctx context.Context, id uint64, payload [][]byt
 
 func (r *Runtime) invokeOnWorker(id uint64, payload [][]byte) callResult {
 	r.mu.Lock()
-	raw, broken := r.raw, r.broken
+	raw, hooks, broken := r.raw, r.hooks, r.broken
 	r.mu.Unlock()
 	switch {
 	case broken:
@@ -1307,22 +1373,25 @@ func (r *Runtime) invokeOnWorker(id uint64, payload [][]byte) callResult {
 	if !ok {
 		return callResult{err: fmt.Errorf("jsrt: 回调 %d 不存在", id)}
 	}
-	vals := make([]moejs.Value, len(payload))
-	for i, b := range payload {
-		v, err := raw.ParseJSON(b)
-		if err != nil {
-			return callResult{err: fmt.Errorf("jsrt: 回调参数 %d 不是合法 JSON: %w", i, err)}
-		}
-		vals[i] = v
+	invokeFn, ok := hooks[invokeFnExport]
+	if !ok {
+		return callResult{err: fmt.Errorf("jsrt: 运行时引导模块缺少 %s", invokeFnExport)}
 	}
-	out, err := raw.CallFunction(entry.fn, entry.this, vals...)
+	argsVal, err := raw.FromGo(joinPayload(payload))
 	if err != nil {
-		return callResult{err: r.wrap(raw, err)}
+		return callResult{err: fmt.Errorf("jsrt: 回调参数无法转换: %w", err)}
 	}
-	// 回调的返回值对内核没有意义(emit / 清理语义),转换失败不应让调用失败。
-	v, convErr := raw.ToGo(out)
-	if convErr != nil {
-		return callResult{value: nil}
+	v, err := r.runCall(func(rt *moejs.Runtime, ok, fail moejs.Value) error {
+		_, callErr := rt.Call(invokeFn, entry.fn, engine.Undefined(), argsVal, ok, fail)
+		return callErr
+	})
+	if err != nil {
+		// 回调的返回值对内核没有意义(emit / 清理语义),转换失败不应让调用失败。
+		var conv *returnConvError
+		if errors.As(err, &conv) {
+			return callResult{value: nil}
+		}
+		return callResult{err: err}
 	}
 	return callResult{value: v}
 }
@@ -1401,7 +1470,7 @@ func (r *Runtime) invokeMethod(ctx context.Context, id uint64, payload [][]byte)
 
 func (r *Runtime) invokeMethodOnWorker(id uint64, payload [][]byte) callResult {
 	r.mu.Lock()
-	raw, broken := r.raw, r.broken
+	raw, hooks, broken := r.raw, r.hooks, r.broken
 	r.mu.Unlock()
 	switch {
 	case broken:
@@ -1413,21 +1482,21 @@ func (r *Runtime) invokeMethodOnWorker(id uint64, payload [][]byte) callResult {
 	if !ok {
 		return callResult{err: fmt.Errorf("jsrt: 服务方法 %d 不存在", id)}
 	}
-	vals := make([]moejs.Value, len(payload))
-	for i, b := range payload {
-		v, err := raw.ParseJSON(b)
-		if err != nil {
-			return callResult{err: fmt.Errorf("jsrt: 方法参数 %d 不是合法 JSON: %w", i, err)}
-		}
-		vals[i] = v
+	invokeFn, ok := hooks[invokeFnExport]
+	if !ok {
+		return callResult{err: fmt.Errorf("jsrt: 运行时引导模块缺少 %s", invokeFnExport)}
 	}
-	out, err := raw.CallFunction(entry.fn, entry.this, vals...)
+	argsVal, err := raw.FromGo(joinPayload(payload))
 	if err != nil {
-		return callResult{err: r.wrap(raw, err)}
+		return callResult{err: fmt.Errorf("jsrt: 方法参数无法转换: %w", err)}
 	}
-	v, err := raw.ToGo(out)
+	// this 绑定到服务对象本身:方法里的 this.x 才能读到兄弟成员。
+	v, err := r.runCall(func(rt *moejs.Runtime, ok, fail moejs.Value) error {
+		_, callErr := rt.Call(invokeFn, entry.fn, entry.this, argsVal, ok, fail)
+		return callErr
+	})
 	if err != nil {
-		return callResult{err: fmt.Errorf("jsrt: 方法返回值无法转换: %w", err)}
+		return callResult{err: err}
 	}
 	return callResult{value: v}
 }
@@ -1576,9 +1645,18 @@ func (r *Runtime) invokeWaterfallOnWorker(id uint64, payload []byte, nextReq, ne
 		}
 		return out, nil
 	})
-	out, err := raw.CallFunction(entry.fn, entry.this, input, nextFn)
-	if err != nil {
-		return callResult{err: r.wrap(raw, err)}
+	// waterfall 中间件必须是同步的:它要在返回前给出值,next 链才能续下去。
+	// 因此这里只把调用放进循环(让定时器与微任务可用),不 await 返回值。
+	var out moejs.Value
+	var callErr error
+	if err := r.runOnLoop(func(rt *moejs.Runtime) error {
+		out, callErr = rt.CallFunction(entry.fn, entry.this, input, nextFn)
+		return nil
+	}); err != nil {
+		return callResult{err: err}
+	}
+	if callErr != nil {
+		return callResult{err: r.wrap(raw, callErr)}
 	}
 	v, convErr := raw.ToGo(out)
 	if convErr != nil {
@@ -1593,6 +1671,10 @@ func (r *Runtime) Exports() []string {
 	defer r.mu.Unlock()
 	out := make([]string, 0, len(r.hooks))
 	for name := range r.hooks {
+		// 引导模块自己的两个入口(await/回调)不是插件的表面,诊断里不该出现。
+		if strings.HasPrefix(name, internalPrefix) {
+			continue
+		}
 		out = append(out, name)
 	}
 	sort.Strings(out)
@@ -1615,6 +1697,10 @@ func (r *Runtime) Close(ctx context.Context) error {
 	if api != nil {
 		_ = api.Close()
 	}
+	r.closeNodeRoot()
+	// 先收事件循环:它的 Terminate 会中断正在跑的 JS、丢弃未到期的定时器与
+	// 未结算的 promise,并等循环收尾。之后再停 worker。
+	r.terminateLoop()
 	r.interrupt(ErrClosed)
 	r.stop()
 	select {
@@ -1636,6 +1722,8 @@ func (r *Runtime) shutdown() {
 	if api != nil {
 		_ = api.Close()
 	}
+	r.closeNodeRoot()
+	r.terminateLoop()
 	r.stop()
 	<-r.stopped
 }
