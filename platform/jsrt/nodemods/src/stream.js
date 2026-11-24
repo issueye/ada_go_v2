@@ -25,6 +25,11 @@ function st(stream) {
       highWaterMark: 16384,
       writableEnded: false,
       writableFinished: false,
+      busy: false,
+      pending: [],
+      bufferedBytes: 0,
+      needDrain: false,
+      endCb: null,
     };
   }
   return stream[STATE];
@@ -229,6 +234,62 @@ export class Readable extends EventEmitter {
 
 // —— Writable ——
 
+// chunkSize 是背压的计量单位:字符串按字符长度(近似字节),二进制按 byteLength。
+function chunkSize(chunk) {
+  if (typeof chunk === "string") return chunk.length;
+  if (chunk !== null && chunk !== undefined && typeof chunk.byteLength === "number") return chunk.byteLength;
+  return 0;
+}
+
+// runWrite 执行一次真实写入;完成后再取队首,队列空且曾越过高水位才发 drain。
+//
+// 为什么要有队列:上一次 _write 还没回调时又来的写必须排在后面,否则
+// (1) 写入顺序无法保证;(2) write() 的返回值永远骗人——它永远说「没积压」。
+function runWrite(stream, entry) {
+  const s = st(stream);
+  s.busy = true;
+  let called = false;
+  const done = function (err) {
+    if (called) return;
+    called = true;
+    s.busy = false;
+    if (err) {
+      s.pending.length = 0;
+      s.bufferedBytes = 0;
+      if (typeof entry.cb === "function") entry.cb(err);
+      stream.emit("error", err);
+      return;
+    }
+    if (typeof entry.cb === "function") entry.cb();
+    if (s.pending.length > 0) {
+      const next = s.pending.shift();
+      s.bufferedBytes -= next.size;
+      runWrite(stream, next);
+      return;
+    }
+    if (s.needDrain) {
+      s.needDrain = false;
+      stream.emit("drain");
+    }
+    finishIfDrained(stream);
+  };
+  if (typeof stream._write === "function") stream._write(entry.chunk, entry.enc, done);
+  else done();
+}
+
+// finishIfDrained 在「已 end 且队列排空」时发 finish。
+function finishIfDrained(stream) {
+  const s = st(stream);
+  if (!s.writableEnded || s.writableFinished) return;
+  if (s.busy || s.pending.length > 0) return;
+  s.writableFinished = true;
+  stream.writable = false;
+  const cb = s.endCb;
+  s.endCb = null;
+  if (typeof cb === "function") cb();
+  stream.emit("finish");
+}
+
 function writeImpl(stream, chunk, enc, cb) {
   if (typeof enc === "function") {
     cb = enc;
@@ -241,22 +302,20 @@ function writeImpl(stream, chunk, enc, cb) {
     stream.emit("error", err);
     return false;
   }
-  let called = false;
-  const done = function (err) {
-    if (called) return;
-    called = true;
-    if (err) {
-      stream.emit("error", err);
-      if (typeof cb === "function") cb(err);
-      return;
-    }
-    if (typeof cb === "function") cb();
-    // 同步实现:一次写入完成后立即给出 drain(没有跨调用的排队)。
-    stream.emit("drain");
+  const entry = {
+    chunk: chunk,
+    enc: enc === undefined ? "utf8" : enc,
+    cb: typeof cb === "function" ? cb : null,
+    size: chunkSize(chunk),
   };
-  if (typeof stream._write === "function") stream._write(chunk, enc === undefined ? "utf8" : enc, done);
-  else done();
-  return true;
+  if (s.busy || s.pending.length > 0) {
+    s.pending.push(entry);
+    s.bufferedBytes += entry.size;
+  } else {
+    runWrite(stream, entry);
+  }
+  if (s.bufferedBytes >= s.highWaterMark) s.needDrain = true;
+  return s.bufferedBytes < s.highWaterMark;
 }
 
 function endImpl(stream, chunk, enc, cb) {
@@ -270,15 +329,13 @@ function endImpl(stream, chunk, enc, cb) {
   }
   const s = st(stream);
   if (chunk !== undefined && chunk !== null) writeImpl(stream, chunk, enc);
-  if (s.writableFinished) {
+  if (s.writableEnded) {
     if (typeof cb === "function") cb();
     return stream;
   }
   s.writableEnded = true;
-  s.writableFinished = true;
-  stream.writable = false;
-  if (typeof cb === "function") cb();
-  stream.emit("finish");
+  s.endCb = typeof cb === "function" ? cb : null;
+  finishIfDrained(stream);
   return stream;
 }
 
@@ -336,6 +393,9 @@ export class Duplex extends Readable {
 export class Transform extends Duplex {
   constructor(options) {
     super(options);
+    // 写完就结束可读侧:产物已在 _write 里 push 出去了,不补 push(null)
+    // 的话下游永远等不到 'end'(Node 由 _flush 负责这件事)。
+    this.on("finish", () => this.push(null));
   }
 
   // 默认与 PassThrough 一致:原样输出。子类覆盖 _transform。
@@ -343,46 +403,17 @@ export class Transform extends Duplex {
     cb(null, chunk);
   }
 
-  // 写入路径与 Writable 不同:chunk 先过 _transform,产物再 push 到可读侧。
-  write(chunk, enc, cb) {
-    if (typeof enc === "function") {
-      cb = enc;
-      enc = undefined;
-    }
+  // 写入走父类的排队路径,只是把 chunk 先交给 _transform,再把产物 push 到可读侧。
+  _write(chunk, enc, cb) {
     const self = this;
-    const s = st(this);
-    if (s.writableEnded) {
-      const err = streamError("ERR_STREAM_WRITE_AFTER_END", "write after end");
-      if (typeof cb === "function") cb(err);
-      this.emit("error", err);
-      return false;
-    }
-    this._transform(chunk, enc === undefined ? "utf8" : enc, function (err, out) {
+    this._transform(chunk, enc, function (err, out) {
       if (err) {
-        if (typeof cb === "function") cb(err);
-        self.emit("error", err);
+        cb(err);
         return;
       }
       if (out !== undefined && out !== null) self.push(out);
-      if (typeof cb === "function") cb();
+      cb();
     });
-    return true;
-  }
-  // 结束写入侧的同时结束可读侧:Transform 的产物已经全部 push 出去了,
-  // 不补 push(null) 的话下游永远等不到 'end'(Node 的实现由 _flush 负责这件事)。
-  end(chunk, enc, cb) {
-    if (typeof chunk === "function") {
-      cb = chunk;
-      chunk = undefined;
-    }
-    if (typeof enc === "function") {
-      cb = enc;
-      enc = undefined;
-    }
-    if (chunk !== undefined && chunk !== null) this.write(chunk);
-    endImpl(this, undefined, undefined, cb);
-    this.push(null);
-    return this;
   }
 }
 

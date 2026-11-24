@@ -122,6 +122,79 @@ export async function iterated(): Promise<string> {
 	}
 }
 
+// 3b. node:stream 的背压:异步 _write 让后续写入排队,write() 会说真话,drain 在排空后发。
+func TestNodeStreamBackpressure(t *testing.T) {
+	rt := newRuntime(t, map[string]string{
+		"plugin.ts": `
+import { Transform, Writable } from "node:stream"
+
+export async function writable(): Promise<any> {
+  const seen: string[] = []
+  const w: any = new Writable({ highWaterMark: 4 })
+  w._write = function (chunk: any, enc: any, cb: any) {
+    seen.push(String(chunk))
+    setTimeout(cb, 1)
+  }
+  const accepted: boolean[] = []
+  accepted.push(w.write("aaaa"))
+  accepted.push(w.write("bbbb"))
+  accepted.push(w.write("cccc"))
+  let drained = false
+  w.on("drain", () => {
+    drained = true
+  })
+  await new Promise<void>((resolve) => { w.end(() => resolve()) })
+  return { accepted: accepted.join(","), drained, order: seen.join("") }
+}
+
+export async function transform(): Promise<any> {
+  const seen: string[] = []
+  const t: any = new Transform({ highWaterMark: 1 })
+  t._transform = function (chunk: any, enc: any, cb: any) {
+    seen.push(String(chunk))
+    setTimeout(() => cb(null, "[" + String(chunk) + "]"), 1)
+  }
+  const out: string[] = []
+  t.on("data", (chunk: any) => out.push(String(chunk)))
+  const accepted: boolean[] = []
+  accepted.push(t.write("x"))
+  accepted.push(t.write("y"))
+  await new Promise<void>((resolve) => { t.end(() => resolve()) })
+  return { accepted: accepted.join(","), order: seen.join(""), out: out.join("") }
+}`,
+	}, jsrt.Options{})
+
+	got, err := rt.Call(context.Background(), "writable")
+	if err != nil {
+		t.Fatalf("writable 调用失败: %v", err)
+	}
+	obj, _ := got.(map[string]any)
+	if s, _ := obj["accepted"].(string); s != "true,false,false" {
+		t.Fatalf("背压下的 write() 返回值不对: %q", s)
+	}
+	if b, _ := obj["drained"].(bool); !b {
+		t.Fatalf("排空后应发 drain")
+	}
+	if s, _ := obj["order"].(string); s != "aaaabbbbcccc" {
+		t.Fatalf("写入顺序被破坏: %q", s)
+	}
+
+	got, err = rt.Call(context.Background(), "transform")
+	if err != nil {
+		t.Fatalf("transform 调用失败: %v", err)
+	}
+	obj, _ = got.(map[string]any)
+	if s, _ := obj["accepted"].(string); s != "true,false" {
+		t.Fatalf("Transform 的 write() 返回值不对: %q", s)
+	}
+	if s, _ := obj["order"].(string); s != "xy" {
+		t.Fatalf("Transform 的输入顺序不对: %q", s)
+	}
+	if s, _ := obj["out"].(string); s != "[x][y]" {
+		t.Fatalf("Transform 的输出不对: %q", s)
+	}
+}
+
 // 4. node:readline(+ promises):从可读流按行切分,question 返回下一行。
 func TestNodeReadline(t *testing.T) {
 	rt := newRuntime(t, map[string]string{

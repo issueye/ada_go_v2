@@ -43,7 +43,7 @@ const p = path.join("/workspace", "out.txt")
 | `node:net` | `platform/jsrt/nodemods` | `isIP` 系列、`SocketAddress`、同步 TCP `Socket`(含 `read(n)` 扩展);无 `createServer` |
 | `node:timers` | `platform/jsrt/nodemods` | 全局定时器的同一组函数(`timers.setTimeout === setTimeout`),调用内生效 |
 | `node:timers/promises` | `platform/jsrt/nodemods` | `setTimeout`/`setImmediate`/`scheduler.wait`;`setInterval` 是异步可迭代对象 |
-| `node:stream` | `platform/jsrt/nodemods` | `Readable`/`Writable`/`Duplex`/`Transform`/`PassThrough`、`pipe`、`pipeline`、`finished`、`Readable.from`、`for await` |
+| `node:stream` | `platform/jsrt/nodemods` | `Readable`/`Writable`/`Duplex`/`Transform`/`PassThrough`、`pipe`、`pipeline`、`finished`、`Readable.from`、`for await`;**写队列与背压**:前一次 `_write` 未回调时后续写入排队,越过 `highWaterMark` 时 `write()` 返回 `false`、排空后发 `drain` |
 | `node:stream/promises` | `platform/jsrt/nodemods` | `pipeline`/`finished` 的 Promise 形态 |
 | `node:readline` / `readline/promises` | `platform/jsrt/nodemods` | 非 terminal 模式:按行切分 + `line`/`close` 事件 + 异步迭代 + `question`;不渲染 prompt |
 | `node:tty` | `platform/jsrt/nodemods` | `isatty()` 恒 false;`ReadStream`/`WriteStream` 构造即抛 `ERR_NOT_SUPPORTED`(没有可包的 fd) |
