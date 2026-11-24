@@ -227,7 +227,7 @@ func (r *Runtime) fsxRun(op, argsJSON string) (any, error) {
 	// 会改文件系统状态的操作:只读工作区一律 EROFS。
 	// open 不在这里判断——它是否允许写取决于 flags(见 fsxOpen)。
 	switch op {
-	case "mkdtemp", "symlink", "link", "chmod", "chown", "truncate", "utimes", "write", "ftruncate":
+	case "mkdtemp", "symlink", "link", "chmod", "chown", "truncate", "utimes", "write", "ftruncate", "fchmod", "fchown", "futimes":
 		if !r.nodeWritable() {
 			return nil, fsxErrf("EROFS", "", "工作区是只读的")
 		}
@@ -262,6 +262,12 @@ func (r *Runtime) fsxRun(op, argsJSON string) (any, error) {
 		return r.fsxFtruncate(args)
 	case "fstat":
 		return r.fsxFstat(args)
+	case "fchmod":
+		return r.fsxFchmod(args)
+	case "fchown":
+		return r.fsxFchown(args)
+	case "futimes":
+		return r.fsxFutimes(root, args)
 	// 目录句柄(见 nodefsfd.go):opendir 返回 fd,readdir 按批读。
 	case "opendir":
 		return r.fsxOpenDir(root, args)

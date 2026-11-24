@@ -210,7 +210,7 @@ type Runtime struct {
 	// 因为异步读写在 goroutine 里执行。
 	fdMu  sync.Mutex
 	fdSeq uint64
-	fds   map[uint64]*os.File
+	fds   map[uint64]*fdEntry
 
 	// handlers 是 ctx.on 与 JS 服务方法共用的函数表。只在 worker goroutine 上读写:
 	// 注册与调用都发生在 worker 上。
@@ -271,7 +271,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		stopped:    make(chan struct{}),
 		handlers:   make(map[uint64]handlerEntry),
 		netConns:   make(map[uint64]NetConn),
-		fds:        make(map[uint64]*os.File),
+		fds:        make(map[uint64]*fdEntry),
 		clockStart: time.Now(),
 	}
 	go r.worker()

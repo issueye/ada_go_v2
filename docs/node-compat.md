@@ -120,6 +120,8 @@ moejs 的 `node` 包只实现了一部分 `node:fs`;常用但缺失的元数据�
 | `read(fd, buffer, offset, length, position)` | 三形态 | 同 Node:`Buffer` 原地填充,返回 `bytesRead`;`position < 0` 表示从当前偏移继续 |
 | `write(fd, data, ...)` | 三形态 | 支持 Node 的两种重载(缓冲区 / 字符串);返回 `bytesWritten` |
 | `close` / `fsync` / `ftruncate` / `fstat` | 三形态(`fstat` 另有 `fstatSync`) | `fstat` 只给最小字段集:`size`/`mode`/`mtimeMs`/`isFile` |
+| `fchmod` / `fchown` / `futimes` | 三形态 | 句柄级元数据;`futimes` 按句柄登记的相对路径交给 `os.Root.Chtimes`(Unix 上仍有 `os.Root` 文档里写明的竞态窗口) |
+| `readv` / `writev` | 三形态 | 向量读写:`readv` 依次填满每个缓冲区、读不满就停;`writev` 合并后一次写;返回字节数 |
 | `createReadStream(path, {start,end,highWaterMark})` | — | 建立在 fd 之上:按块 `await` 读,结束/出错/`return()` 时关句柄 |
 | `createWriteStream(path, {flags,highWaterMark})` | — | 按块 `await` 写,`finish` 时关句柄 |
 
@@ -133,11 +135,18 @@ moejs 的 `node` 包只实现了一部分 `node:fs`;常用但缺失的元数据�
 
 ### 3.3 FileHandle、目录与 watch
 
-**`FileHandle`**(`fs.promises.open` 返回):`read`/`readFile`/`write`/`writeFile`/`appendFile`/
-`stat`/`sync`/`truncate`/`close`、`fd` 属性、`createReadStream`/`createWriteStream`
-(句柄版的流**不会**自动关句柄,与 Node 一致)。关闭后再操作报 `EBADF`。
-没有实现 `readLines`/`readv`/`writev`/`readableWebStream`,也没有句柄级的
-`chmod`/`chown`/`utimes`(需要 `fchmod`/`fchown`/`futimes`,宿主尚未提供)。
+**`FileHandle`**(`fs.promises.open` 返回):`read`/`readFile`/`readv`、`write`/`writeFile`/
+`writev`/`appendFile`、`stat`/`sync`/`truncate`/`close`、`chmod`/`chown`/`utimes`(走
+`fchmod`/`fchown`/`futimes`,不经路径解析)、`fd` 属性、`createReadStream`/`createWriteStream`
+(句柄版的流**不会**自动关句柄,与 Node 一致)、`readLines(options)`、`readableWebStream(options)`。
+关闭后再操作报 `EBADF`。
+
+`readLines` 是**分块读**的异步可迭代对象(不会把整文件读进内存),按 `\r?\n` 切行、
+末尾没有换行的最后一段也会产出。
+
+`readableWebStream` 只提供**最小 WHATWG 形状**:`getReader()` 的 `read()`/`cancel()`、
+`[Symbol.asyncIterator]`;`pipeTo`/`tee` 明确抛"未实现"。原因是运行时没有全局
+`ReadableStream`(moejs 的 `webapi` 未安装),这里不冒充完整 Streams 标准。
 
 **`opendir` / `Dir`**:`opendirSync`+`readSync`+`closeSync`(同步)、
 `opendir`+`Dir.read(cb)`/`close(cb)`(回调)、`fs.promises.opendir`(返回的 `Dir` 支持

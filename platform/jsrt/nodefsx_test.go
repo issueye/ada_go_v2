@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -346,7 +347,132 @@ export async function run(): Promise<any> {
 	}
 }
 
-// 9. watch 的拒绝形状:明确 ERR_NOT_SUPPORTED,而不是静默无效的 watcher。
+// 10. 句柄级元数据(chmod/chown/utimes)与向量 I/O(readv/writev)。
+func TestNodeFSFDMetadataAndVectors(t *testing.T) {
+	rt, _ := newFSExtRuntime(t, map[string]string{
+		"plugin.ts": `
+import fs from "node:fs"
+import { open } from "node:fs/promises"
+
+export async function run(): Promise<any> {
+  const fh = await open("/workspace/fd2.txt", "w+")
+  await fh.writeFile("hello-vectors")
+  await fh.chmod(384)
+
+  let chown = "ok"
+  try {
+    await fh.chown(1, 1)
+  } catch (e: any) {
+    chown = e.code
+  }
+
+  const when = new Date(1700000000000)
+  await fh.utimes(when, when)
+  const st = await fh.stat()
+
+  const b1 = Buffer.alloc(4)
+  const b2 = Buffer.alloc(4)
+  const rv = await fh.readv([b1, b2], 0)
+  const wv = await fh.writev([Buffer.from("AB"), Buffer.from("CD")], 0)
+  const after = await fh.readFile("utf8")
+  await fh.close()
+  return {
+    chown,
+    mtime: st.mtimeMs,
+    readv: rv.bytesRead,
+    part1: b1.toString("utf8"),
+    part2: b2.toString("utf8"),
+    writev: wv.bytesWritten,
+    after,
+  }
+}`,
+	}, false)
+
+	got, err := rt.Call(context.Background(), "run")
+	if err != nil {
+		t.Fatalf("调用失败: %v", err)
+	}
+	obj, _ := got.(map[string]any)
+	if n := asInt(t, obj["mtime"]); n != 1700000000000 {
+		t.Fatalf("futimes 没有生效: mtimeMs=%v", n)
+	}
+	if n := asInt(t, obj["readv"]); n != 8 {
+		t.Fatalf("readv 应读 8 字节,实际 %v", n)
+	}
+	if s, _ := obj["part1"].(string); s != "hell" {
+		t.Fatalf("readv 第一个缓冲不对: %q", s)
+	}
+	if s, _ := obj["part2"].(string); s != "o-ve" {
+		t.Fatalf("readv 第二个缓冲不对: %q", s)
+	}
+	if n := asInt(t, obj["writev"]); n != 4 {
+		t.Fatalf("writev 应写 4 字节,实际 %v", n)
+	}
+	if s, _ := obj["after"].(string); s != "ABCDo-vectors" {
+		t.Fatalf("writev 后内容不对: %q", s)
+	}
+	// fchown 在 Windows 上应当是 ENOTSUP,其他平台允许成功或 EPERM(权限受限)。
+	chown, _ := obj["chown"].(string)
+	if runtime.GOOS == "windows" {
+		if chown != "ENOTSUP" {
+			t.Fatalf("Windows 上 fchown 应是 ENOTSUP,实际 %q", chown)
+		}
+	} else if chown != "ok" && chown != "EPERM" && chown != "EACCES" {
+		t.Fatalf("fchown 结果异常: %q", chown)
+	}
+}
+
+// 11. FileHandle.readLines 与 readableWebStream(最小 WHATWG 形状)。
+func TestNodeFSReadLinesAndWebStream(t *testing.T) {
+	rt, _ := newFSExtRuntime(t, map[string]string{
+		"plugin.ts": `
+import { open } from "node:fs/promises"
+
+export async function run(): Promise<any> {
+  const fh = await open("/workspace/lines.txt", "w+")
+  await fh.writeFile("a\nb\r\nc\n")
+
+  const lines: string[] = []
+  for await (const line of fh.readLines()) lines.push(String(line))
+
+  const stream = fh.readableWebStream({ autoAllocateChunkSize: 3 })
+  const reader = stream.getReader()
+  const parts: string[] = []
+  for (;;) {
+    const res = await reader.read()
+    if (res.done) break
+    parts.push(Buffer.from(res.value).toString("utf8"))
+  }
+
+  let pipeTo = "no-error"
+  try {
+    stream.pipeTo({})
+  } catch (e: any) {
+    pipeTo = e.message.indexOf("未实现") >= 0 ? "unsupported" : "other"
+  }
+
+  await fh.close()
+  return { lines: lines.join("|"), chunks: parts.join(""), pipeTo }
+}`,
+	}, false)
+
+	got, err := rt.Call(context.Background(), "run")
+	if err != nil {
+		t.Fatalf("调用失败: %v", err)
+	}
+	obj, _ := got.(map[string]any)
+	if s, _ := obj["lines"].(string); s != "a|b|c" {
+		t.Fatalf("readLines 结果不对: %q", s)
+	}
+	if s, _ := obj["chunks"].(string); s != "a\nb\r\nc\n" {
+		t.Fatalf("readableWebStream 分块拼接不对: %q", s)
+	}
+	if s, _ := obj["pipeTo"].(string); s != "unsupported" {
+		t.Fatalf("pipeTo 应明确报未实现,实际 %q", s)
+	}
+}
+
+// 12. watch 的拒绝形状:明确 ERR_NOT_SUPPORTED,而不是静默无效的 watcher。
 func TestNodeFSWatchUnsupported(t *testing.T) {
 	rt, _ := newFSExtRuntime(t, map[string]string{
 		"plugin.ts": `

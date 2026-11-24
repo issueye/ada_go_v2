@@ -18,6 +18,8 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"runtime"
+	"time"
 )
 
 const (
@@ -46,8 +48,17 @@ func fdOpenFlags(flags string) (int, bool, error) {
 	return 0, false, fsxErrf("EINVAL", "", "不支持的 flags: %q(只支持 r/r+/w/w+/a/a+)", flags)
 }
 
+// fdEntry 是一个打开的句柄:文件对象 + 它在工作区里的相对路径。
+//
+// 为什么要记相对路径:futimes 只能按路径改时间(os.File 没有 Chtimes),而路径必须是
+// 工作区内的相对路径,才能继续交给 os.Root 做越界与符号链接判定。
+type fdEntry struct {
+	f   *os.File
+	rel string
+}
+
 // fdPut 登记一个句柄,返回给 JS 的数字。
-func (r *Runtime) fdPut(f *os.File) (int64, error) {
+func (r *Runtime) fdPut(f *os.File, rel string) (int64, error) {
 	r.fdMu.Lock()
 	defer r.fdMu.Unlock()
 	if len(r.fds) >= maxOpenFDs {
@@ -56,31 +67,42 @@ func (r *Runtime) fdPut(f *os.File) (int64, error) {
 	}
 	r.fdSeq++
 	id := r.fdSeq
-	r.fds[id] = f
+	r.fds[id] = &fdEntry{f: f, rel: rel}
 	return int64(id), nil
+}
+
+// fdRel 取句柄在工作区里的相对路径(给按路径操作的 fd 级 API 用)。
+func (r *Runtime) fdRel(id int64) (string, error) {
+	r.fdMu.Lock()
+	defer r.fdMu.Unlock()
+	entry, ok := r.fds[uint64(id)]
+	if !ok {
+		return "", fsxErrf("EBADF", "", "无效的文件描述符: %d", id)
+	}
+	return entry.rel, nil
 }
 
 // fdGet 取句柄;不存在返回 EBADF。
 func (r *Runtime) fdGet(id int64) (*os.File, error) {
 	r.fdMu.Lock()
 	defer r.fdMu.Unlock()
-	f, ok := r.fds[uint64(id)]
+	entry, ok := r.fds[uint64(id)]
 	if !ok {
 		return nil, fsxErrf("EBADF", "", "无效的文件描述符: %d", id)
 	}
-	return f, nil
+	return entry.f, nil
 }
 
 // fdDrop 删除并关闭句柄。
 func (r *Runtime) fdDrop(id int64) error {
 	r.fdMu.Lock()
-	f, ok := r.fds[uint64(id)]
+	entry, ok := r.fds[uint64(id)]
 	delete(r.fds, uint64(id))
 	r.fdMu.Unlock()
 	if !ok {
 		return fsxErrf("EBADF", "", "无效的文件描述符: %d", id)
 	}
-	if err := f.Close(); err != nil {
+	if err := entry.f.Close(); err != nil {
 		return fsxNodeError(err, "")
 	}
 	return nil
@@ -90,10 +112,10 @@ func (r *Runtime) fdDrop(id int64) error {
 func (r *Runtime) closeAllFDs() {
 	r.fdMu.Lock()
 	files := r.fds
-	r.fds = make(map[uint64]*os.File)
+	r.fds = make(map[uint64]*fdEntry)
 	r.fdMu.Unlock()
-	for _, f := range files {
-		_ = f.Close()
+	for _, entry := range files {
+		_ = entry.f.Close()
 	}
 }
 
@@ -130,7 +152,7 @@ func (r *Runtime) fsxOpen(root *os.Root, args []any) (any, error) {
 	if oErr != nil {
 		return nil, fsxNodeError(oErr, p)
 	}
-	return r.fdPut(f)
+	return r.fdPut(f, rel)
 }
 
 // fsxClose 实现 close(fd)。
@@ -293,7 +315,7 @@ func (r *Runtime) fsxOpenDir(root *os.Root, args []any) (any, error) {
 		_ = f.Close()
 		return nil, fsxErrf("ENOTDIR", p, "不是目录: %s", p)
 	}
-	return r.fdPut(f)
+	return r.fdPut(f, rel)
 }
 
 // fsxReaddir 实现 readdir(fd, count):读一批目录项,返回 {entries, eof}。
@@ -361,4 +383,82 @@ func (r *Runtime) fsxFstat(args []any) (any, error) {
 		"mtimeMs": float64(st.ModTime().UnixMilli()),
 		"isFile":  st.Mode().IsRegular(),
 	}, nil
+}
+
+// fsxFchmod 实现 fchmod(fd, mode):按句柄改权限,不经过路径解析(没有 TOCTOU)。
+func (r *Runtime) fsxFchmod(args []any) (any, error) {
+	id, err := fsxIntArg(args, 0, "fd")
+	if err != nil {
+		return nil, err
+	}
+	mode, err := fsxIntArg(args, 1, "mode")
+	if err != nil {
+		return nil, err
+	}
+	f, err := r.fdGet(id)
+	if err != nil {
+		return nil, err
+	}
+	if cErr := f.Chmod(os.FileMode(uint32(mode))); cErr != nil {
+		return nil, fsxNodeError(cErr, "")
+	}
+	return nil, nil
+}
+
+// fsxFchown 实现 fchown(fd, uid, gid);Windows 没有 POSIX 属主,返回 ENOTSUP。
+func (r *Runtime) fsxFchown(args []any) (any, error) {
+	id, err := fsxIntArg(args, 0, "fd")
+	if err != nil {
+		return nil, err
+	}
+	uid, err := fsxIntArg(args, 1, "uid")
+	if err != nil {
+		return nil, err
+	}
+	gid, err := fsxIntArg(args, 2, "gid")
+	if err != nil {
+		return nil, err
+	}
+	if runtime.GOOS == "windows" {
+		return nil, fsxErrf("ENOTSUP", "", "当前平台不支持 fchown")
+	}
+	f, err := r.fdGet(id)
+	if err != nil {
+		return nil, err
+	}
+	if cErr := f.Chown(int(uid), int(gid)); cErr != nil {
+		return nil, fsxNodeError(cErr, "")
+	}
+	return nil, nil
+}
+
+// fsxFutimes 实现 futimes(fd, atime, mtime)。
+//
+// os.File 没有 Chtimes,只能按路径改时间;路径取句柄登记时的相对路径,
+// 再交给 os.Root,越界与符号链接判定与其余 fs 操作一致(Unix 上仍有与 Root.Chtimes
+// 相同的竞态窗口,见 os.Root 文档)。
+func (r *Runtime) fsxFutimes(root *os.Root, args []any) (any, error) {
+	id, err := fsxIntArg(args, 0, "fd")
+	if err != nil {
+		return nil, err
+	}
+	atime, err := fsxFloatArg(args, 1, "atime")
+	if err != nil {
+		return nil, err
+	}
+	mtime, err := fsxFloatArg(args, 2, "mtime")
+	if err != nil {
+		return nil, err
+	}
+	rel, err := r.fdRel(id)
+	if err != nil {
+		return nil, err
+	}
+	toTime := func(sec float64) time.Time {
+		return time.Unix(0, int64(sec*float64(time.Second)))
+	}
+	if tErr := root.Chtimes(rel, toTime(atime), toTime(mtime)); tErr != nil {
+		return nil, fsxNodeError(tErr, "")
+	}
+	return nil, nil
 }

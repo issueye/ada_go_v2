@@ -337,6 +337,139 @@ export function fstat(fd, cb) {
   callback("fstat", [fdOf(fd)], cb);
 }
 
+// —— fd 级元数据与向量 I/O ——
+
+export function fchmodSync(fd, mode) {
+  return sync("fchmod", [fdOf(fd), modeOf(mode)]);
+}
+
+export function fchmod(fd, mode, cb) {
+  callback("fchmod", [fdOf(fd), modeOf(mode)], cb);
+}
+
+export function fchownSync(fd, uid, gid) {
+  return sync("fchown", [fdOf(fd), intOf(uid, "uid"), intOf(gid, "gid")]);
+}
+
+export function fchown(fd, uid, gid, cb) {
+  callback("fchown", [fdOf(fd), intOf(uid, "uid"), intOf(gid, "gid")], cb);
+}
+
+export function futimesSync(fd, atime, mtime) {
+  return sync("futimes", [fdOf(fd), secondsOf(atime, "atime"), secondsOf(mtime, "mtime")]);
+}
+
+export function futimes(fd, atime, mtime, cb) {
+  callback("futimes", [fdOf(fd), secondsOf(atime, "atime"), secondsOf(mtime, "mtime")], cb);
+}
+
+// buffersOf 只校验、不拷贝:readv 必须把数据写进调用方**原来**的 Buffer,
+// 复制一份再填会让调用方永远看到零字节。
+function buffersOf(list) {
+  if (!Array.isArray(list)) throw new TypeError("buffers 必须是数组");
+  return list.map(function (item) {
+    if (item instanceof Uint8Array) return item;
+    throw new TypeError("buffers[i] 必须是 Buffer / Uint8Array");
+  });
+}
+
+function concatBuffers(bufs) {
+  return Buffer.concat(bufs.map(function (buf) {
+    return Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
+  }));
+}
+
+// readvAsync 依次把数据读进每个 buffer,读不满就停(与 Node 的 readv 相同)。
+function readvAsync(id, bufs, startPos) {
+  return new Promise(function (resolve, reject) {
+    let total = 0;
+    let pos = startPos;
+    const step = function (index) {
+      if (index >= bufs.length) {
+        resolve(total);
+        return;
+      }
+      const buf = bufs[index];
+      if (buf.length === 0) {
+        step(index + 1);
+        return;
+      }
+      asyncOp("read", [id, buf.length, pos]).then(function (res) {
+        buf.set(Buffer.from(res.data, "base64"), 0);
+        total += res.bytesRead;
+        if (pos >= 0) pos += res.bytesRead;
+        if (res.bytesRead < buf.length) {
+          resolve(total);
+          return;
+        }
+        step(index + 1);
+      }, reject);
+    };
+    step(0);
+  });
+}
+
+export function readvSync(fd, buffers, position) {
+  const bufs = buffersOf(buffers);
+  const id = fdOf(fd);
+  let total = 0;
+  let pos = posOf(position);
+  for (const buf of bufs) {
+    if (buf.length === 0) continue;
+    const res = sync("read", [id, buf.length, pos]);
+    buf.set(Buffer.from(res.data, "base64"), 0);
+    total += res.bytesRead;
+    if (pos >= 0) pos += res.bytesRead;
+    if (res.bytesRead < buf.length) break;
+  }
+  return total;
+}
+
+export function readv(fd, buffers, position, cb) {
+  if (typeof position === "function") {
+    cb = position;
+    position = -1;
+  }
+  if (typeof cb !== "function") throw new TypeError("readv 需要一个回调");
+  const bufs = buffersOf(buffers);
+  readvAsync(fdOf(fd), bufs, posOf(position)).then(
+    function (n) {
+      cb(null, n, buffers);
+    },
+    function (err) {
+      cb(err, 0, buffers);
+    },
+  );
+}
+
+export function writevSync(fd, buffers, position) {
+  const all = concatBuffers(buffersOf(buffers));
+  return sync("write", [fdOf(fd), all.toString("base64"), posOf(position)]);
+}
+
+export function writev(fd, buffers, position, cb) {
+  if (typeof position === "function") {
+    cb = position;
+    position = -1;
+  }
+  if (typeof cb !== "function") throw new TypeError("writev 需要一个回调");
+  let all;
+  try {
+    all = Buffer.concat(buffersOf(buffers));
+  } catch (err) {
+    cb(err, 0, buffers);
+    return;
+  }
+  asyncOp("write", [fdOf(fd), all.toString("base64"), posOf(position)]).then(
+    function (n) {
+      cb(null, n, buffers);
+    },
+    function (err) {
+      cb(err, 0, buffers);
+    },
+  );
+}
+
 // —— 文件流 ——
 //
 // 两个流都建立在 fd 族之上:读按块 await,写按块 await,结束时关句柄。
@@ -542,6 +675,33 @@ export const promises = {
   },
   fstat: function fstat(fd) {
     return asyncOp("fstat", [fdOf(fd)]);
+  },
+  fchmod: function fchmod(fd, mode) {
+    return asyncOp("fchmod", [fdOf(fd), modeOf(mode)]).then(function () {
+      return undefined;
+    });
+  },
+  fchown: function fchown(fd, uid, gid) {
+    return asyncOp("fchown", [fdOf(fd), intOf(uid, "uid"), intOf(gid, "gid")]).then(function () {
+      return undefined;
+    });
+  },
+  futimes: function futimes(fd, atime, mtime) {
+    return asyncOp("futimes", [fdOf(fd), secondsOf(atime, "atime"), secondsOf(mtime, "mtime")]).then(function () {
+      return undefined;
+    });
+  },
+  readv: function readv(fd, buffers, position) {
+    const bufs = buffersOf(buffers);
+    return readvAsync(fdOf(fd), bufs, posOf(position)).then(function (n) {
+      return { bytesRead: n, buffers: buffers };
+    });
+  },
+  writev: function writev(fd, buffers, position) {
+    const all = concatBuffers(buffersOf(buffers));
+    return asyncOp("write", [fdOf(fd), all.toString("base64"), posOf(position)]).then(function (n) {
+      return { bytesWritten: n, buffers: buffers };
+    });
   },
 };
 // —— 目录 ——
@@ -799,6 +959,44 @@ export class FileHandle {
     await promises.ftruncate(this.fd, len === undefined ? 0 : Number(len));
   }
 
+  // 句柄级 chmod/chown/utimes:走 fchmod/fchown/futimes,不经路径解析(没有 TOCTOU)。
+  async chmod(mode) {
+    this._ensure();
+    await promises.fchmod(this.fd, mode);
+  }
+
+  async chown(uid, gid) {
+    this._ensure();
+    await promises.fchown(this.fd, uid, gid);
+  }
+
+  async utimes(atime, mtime) {
+    this._ensure();
+    await promises.futimes(this.fd, atime, mtime);
+  }
+
+  async readv(buffers, position) {
+    this._ensure();
+    return await promises.readv(this.fd, buffers, position);
+  }
+
+  async writev(buffers, position) {
+    this._ensure();
+    return await promises.writev(this.fd, buffers, position);
+  }
+
+  // readLines:按行读的异步可迭代对象(Node 18.4+ 的形状),不加载整文件。
+  readLines(options) {
+    this._ensure();
+    return makeLinesIterator(this, options);
+  }
+
+  // readableWebStream:最小 WHATWG ReadableStream 形状(见下面的边界说明)。
+  readableWebStream(options) {
+    this._ensure();
+    return makeWebReadableStream(this, options);
+  }
+
   async close() {
     if (this._closed) return;
     this._closed = true;
@@ -822,6 +1020,133 @@ export class FileHandle {
   }
 }
 
+// makeLinesIterator 按行读句柄:块读 + 余量拼接,不会把整文件读进内存。
+function makeLinesIterator(fh, options) {
+  const encoding = (options && options.encoding) || "utf8";
+  const chunkSize = 64 * 1024;
+  let leftover = "";
+  let pos = 0;
+  let finished = false;
+
+  const readChunk = function () {
+    return new Promise(function (resolve, reject) {
+      const buf = Buffer.alloc(chunkSize);
+      promises.read(fh.fd, buf, 0, chunkSize, pos).then(function (res) {
+        if (!res.bytesRead) {
+          resolve(null);
+          return;
+        }
+        pos += res.bytesRead;
+        resolve(buf.toString(encoding, 0, res.bytesRead));
+      }, reject);
+    });
+  };
+
+  const iterator = {
+    next: function () {
+      if (finished) return Promise.resolve({ value: undefined, done: true });
+      const loop = function () {
+        const idx = leftover.indexOf("\n");
+        if (idx >= 0) {
+          let line = leftover.slice(0, idx);
+          leftover = leftover.slice(idx + 1);
+          if (line.endsWith("\r")) line = line.slice(0, -1);
+          return Promise.resolve({ value: line, done: false });
+        }
+        return readChunk().then(function (text) {
+          if (text === null) {
+            finished = true;
+            if (leftover.length > 0) {
+              const last = leftover;
+              leftover = "";
+              return { value: last, done: false };
+            }
+            return { value: undefined, done: true };
+          }
+          leftover += text;
+          return loop();
+        });
+      };
+      return loop();
+    },
+    return: function () {
+      finished = true;
+      return Promise.resolve({ value: undefined, done: true });
+    },
+  };
+  iterator[Symbol.asyncIterator] = function () {
+    return iterator;
+  };
+  return iterator;
+}
+
+// makeWebReadableStream 是一个最小 WHATWG ReadableStream 形状:
+// getReader().read()/cancel()、[Symbol.asyncIterator];pipeTo/tee 不支持。
+//
+// 为什么是子集:运行时没有全局 ReadableStream(webapi 未安装),这里只提供
+// 「惰性分块读文件」这一件事,不冒充完整的 Streams 标准。
+function makeWebReadableStream(fh, options) {
+  const chunkSize = (options && options.autoAllocateChunkSize) || 64 * 1024;
+  let pos = 0;
+  let done = false;
+
+  const readOnce = function () {
+    if (done) return Promise.resolve({ value: undefined, done: true });
+    return new Promise(function (resolve, reject) {
+      const buf = Buffer.alloc(chunkSize);
+      promises.read(fh.fd, buf, 0, chunkSize, pos).then(function (res) {
+        if (!res.bytesRead) {
+          done = true;
+          resolve({ value: undefined, done: true });
+          return;
+        }
+        pos += res.bytesRead;
+        resolve({ value: new Uint8Array(buf.subarray(0, res.bytesRead)), done: false });
+      }, reject);
+    });
+  };
+
+  const reader = {
+    read: readOnce,
+    cancel: function () {
+      done = true;
+      return Promise.resolve();
+    },
+    releaseLock: function () {},
+    get closed() {
+      return Promise.resolve();
+    },
+  };
+
+  const stream = {
+    getReader: function () {
+      return reader;
+    },
+    cancel: function () {
+      return reader.cancel();
+    },
+    pipeTo: function () {
+      throw new Error("readableWebStream().pipeTo 未实现:运行时没有 WHATWG Streams");
+    },
+    tee: function () {
+      throw new Error("readableWebStream().tee 未实现:运行时没有 WHATWG Streams");
+    },
+  };
+  stream[Symbol.asyncIterator] = function () {
+    const it = {
+      next: readOnce,
+      return: function () {
+        done = true;
+        return Promise.resolve({ value: undefined, done: true });
+      },
+    };
+    it[Symbol.asyncIterator] = function () {
+      return it;
+    };
+    return it;
+  };
+  return stream;
+}
 // promises.open 返回 FileHandle(Node 的形状);fs.open 的回调形态仍返回数字 fd。
 promises.open = function open(path, flags, mode) {
   const p = pathOf(path, "path");
