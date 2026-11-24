@@ -2,14 +2,17 @@
 //
 // 它只观察/改写读结果,不做门禁(门禁在 caps-gate/sandbox)。放在 priority=150:
 // 在 sandbox(100)之外、caps-gate(200)之内。
+//
+// 模式表与编译逻辑在 platform/redact:同一个语义也被 shell-redact 使用,
+// 两边各存一份会让新增密钥模式变成两处改动。
 package fsredact
 
 import (
 	"context"
 	"fmt"
-	"regexp"
 
 	"github.com/issueye/ada_go_v2/platform/kernel"
+	"github.com/issueye/ada_go_v2/platform/redact"
 	seamfs "github.com/issueye/ada_go_v2/plugins/seam/fs"
 )
 
@@ -19,55 +22,21 @@ const PolicyName = "fs-redact"
 // Priority 是装饰器优先级。
 const Priority = 150
 
-// DefaultReplacement 是默认替换文本。
-const DefaultReplacement = "[redacted]"
-
-// defaultPatterns 是默认的常见密钥模式。
-var defaultPatterns = []string{
-	`gh[pousr]_[A-Za-z0-9]{20,}`, // GitHub token
-	`AKIA[0-9A-Z]{16}`,           // AWS access key
-	`sk-[A-Za-z0-9]{20,}`,        // OpenAI key
-}
+// DefaultReplacement 是默认替换文本(与 platform/redact 同源)。
+const DefaultReplacement = redact.DefaultReplacement
 
 // New 构造脱敏装饰器;patterns 为空时用默认模式。
 func New(inner seamfs.FS, patterns []string, replacement string) (seamfs.FS, error) {
-	compiled, err := compilePatterns(patterns)
+	rd, err := redact.New(patterns, replacement)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("fs-redact: %w", err)
 	}
-	if replacement == "" {
-		replacement = DefaultReplacement
-	}
-	return &redactor{inner: inner, patterns: compiled, replacement: replacement}, nil
-}
-
-func compilePatterns(patterns []string) ([]*regexp.Regexp, error) {
-	list := patterns
-	if len(list) == 0 {
-		list = defaultPatterns
-	}
-	compiled := make([]*regexp.Regexp, 0, len(list))
-	for _, p := range list {
-		re, err := regexp.Compile(p)
-		if err != nil {
-			return nil, fmt.Errorf("fs-redact: 非法正则 %q: %w", p, err)
-		}
-		compiled = append(compiled, re)
-	}
-	return compiled, nil
+	return &redactor{inner: inner, rd: rd}, nil
 }
 
 type redactor struct {
-	inner       seamfs.FS
-	patterns    []*regexp.Regexp
-	replacement string
-}
-
-func (r *redactor) redact(s string) string {
-	for _, re := range r.patterns {
-		s = re.ReplaceAllString(s, r.replacement)
-	}
-	return s
+	inner seamfs.FS
+	rd    *redact.Redactor
 }
 
 func (r *redactor) Read(ctx context.Context, req seamfs.ReadRequest) (seamfs.ReadResult, error) {
@@ -75,7 +44,7 @@ func (r *redactor) Read(ctx context.Context, req seamfs.ReadRequest) (seamfs.Rea
 	if err != nil {
 		return res, err
 	}
-	res.Content = r.redact(res.Content)
+	res.Content = r.rd.Apply(res.Content)
 	return res, nil
 }
 
@@ -112,16 +81,12 @@ func Plugin() kernel.Plugin {
 			return nil, kernel.Fail(kernel.CodeInvalid, "fs-redact: 解析配置失败: %v", err)
 		}
 		// 配置期先编译,避免把错误藏到第一次读。
-		compiled, err := compilePatterns(conf.Patterns)
+		rd, err := redact.New(conf.Patterns, conf.Replacement)
 		if err != nil {
 			return nil, kernel.Fail(kernel.CodeInvalid, "fs-redact: %v", err)
 		}
-		replacement := conf.Replacement
-		if replacement == "" {
-			replacement = DefaultReplacement
-		}
 		return chain.Decorate(func(inner seamfs.FS) seamfs.FS {
-			return &redactor{inner: inner, patterns: compiled, replacement: replacement}
+			return &redactor{inner: inner, rd: rd}
 		}, Priority)
 	}).WithInject("fs")
 }

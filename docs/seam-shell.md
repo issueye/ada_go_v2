@@ -59,7 +59,7 @@ plugins/policy/shell-guard/     策略:只读白名单、shell 模式默认拒�
 
 ### 4.1 脱敏限制
 
-`shell-redact` 按**块**脱敏:若密钥被拆到两个流式块里仍可能漏;完整结果(stdout/stderr)在结束时统一脱敏。
+`shell-redact`(模式表来自 `platform/redact`,与 `fs-redact` 共用)按**块**脱敏:若密钥被拆到两个流式块里仍可能漏;完整结果(stdout/stderr)在结束时统一脱敏。
 
 ### 4.2 `shell/observe` 事件
 

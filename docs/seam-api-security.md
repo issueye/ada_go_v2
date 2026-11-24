@@ -429,6 +429,6 @@ type Chunk struct {
 | C12 | 三平台后端（bwrap/landlock、seatbelt、Windows ACL） | C8–C11 | 5–8 d（可分批） |
 | C13 | 拒绝矩阵 + 审计 + `ada inspect --chain` | C8–C12 | 2 d |
 
-C13 已落地:`plugins/policy/securitymatrix`(fs/shell 矩阵)与 `ada inspect --chain`(fs/shell/workspace 装饰器优先级快照);caps 拒绝审计仍待补;net 矩阵随 ADR 0012 移除。
+C13 已落地:`platform/securitytest`(fs/shell 矩阵,跨插件一致性测试)与 `ada inspect --chain`(fs/shell/workspace 装饰器优先级快照);caps 拒绝审计仍待补;net 矩阵随 ADR 0012 移除。
 
 合计 **17–23 人日**；C8 必须先做（判定矩阵是所有后端的共同契约），C12 可以按平台并行。

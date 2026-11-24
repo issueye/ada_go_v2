@@ -1,15 +1,16 @@
 // Package shellredact 是 shell 的脱敏策略:执行结果与流式块按正则替换敏感信息。
 //
 // priority=150:在 shell-observe(250)之内、sandbox(100)之外。
+// 模式表与编译逻辑在 platform/redact(与 fs-redact 共用),避免两份模式漂移。
 // 注意:流式输出按块脱敏,若密钥被拆到两个块里仍可能漏(见 docs/seam-shell.md)。
 package shellredact
 
 import (
 	"context"
 	"fmt"
-	"regexp"
 
 	"github.com/issueye/ada_go_v2/platform/kernel"
+	"github.com/issueye/ada_go_v2/platform/redact"
 	seamshell "github.com/issueye/ada_go_v2/plugins/seam/shell"
 )
 
@@ -19,60 +20,26 @@ const PolicyName = "shell-redact"
 // Priority 是装饰器优先级。
 const Priority = 150
 
-// DefaultReplacement 是默认替换文本。
-const DefaultReplacement = "[redacted]"
-
-// defaultPatterns 与 fs-redact 有意保持同一组常见密钥模式(两包不互相 import)。
-var defaultPatterns = []string{
-	`gh[pousr]_[A-Za-z0-9]{20,}`,
-	`AKIA[0-9A-Z]{16}`,
-	`sk-[A-Za-z0-9]{20,}`,
-}
+// DefaultReplacement 是默认替换文本(与 platform/redact 同源)。
+const DefaultReplacement = redact.DefaultReplacement
 
 // New 构造脱敏装饰器;patterns 为空时用默认模式。
 func New(inner seamshell.Shell, patterns []string, replacement string) (seamshell.Shell, error) {
-	compiled, err := compilePatterns(patterns)
+	rd, err := redact.New(patterns, replacement)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("shell-redact: %w", err)
 	}
-	if replacement == "" {
-		replacement = DefaultReplacement
-	}
-	return &redactor{inner: inner, patterns: compiled, replacement: replacement}, nil
-}
-
-func compilePatterns(patterns []string) ([]*regexp.Regexp, error) {
-	list := patterns
-	if len(list) == 0 {
-		list = defaultPatterns
-	}
-	compiled := make([]*regexp.Regexp, 0, len(list))
-	for _, p := range list {
-		re, err := regexp.Compile(p)
-		if err != nil {
-			return nil, fmt.Errorf("shell-redact: 非法正则 %q: %w", p, err)
-		}
-		compiled = append(compiled, re)
-	}
-	return compiled, nil
+	return &redactor{inner: inner, rd: rd}, nil
 }
 
 type redactor struct {
-	inner       seamshell.Shell
-	patterns    []*regexp.Regexp
-	replacement string
-}
-
-func (r *redactor) redact(s string) string {
-	for _, re := range r.patterns {
-		s = re.ReplaceAllString(s, r.replacement)
-	}
-	return s
+	inner seamshell.Shell
+	rd    *redact.Redactor
 }
 
 func (r *redactor) redactResult(res seamshell.Result) seamshell.Result {
-	res.Stdout = []byte(r.redact(string(res.Stdout)))
-	res.Stderr = []byte(r.redact(string(res.Stderr)))
+	res.Stdout = r.rd.ApplyBytes(res.Stdout)
+	res.Stderr = r.rd.ApplyBytes(res.Stderr)
 	return res
 }
 
@@ -83,7 +50,7 @@ func (r *redactor) Run(ctx context.Context, cmd seamshell.Command) (seamshell.Re
 
 func (r *redactor) Stream(ctx context.Context, cmd seamshell.Command, onChunk func(seamshell.Chunk) error) (seamshell.Result, error) {
 	wrapped := func(chunk seamshell.Chunk) error {
-		chunk.Text = r.redact(chunk.Text)
+		chunk.Text = r.rd.Apply(chunk.Text)
 		return onChunk(chunk)
 	}
 	res, err := r.inner.Stream(ctx, cmd, wrapped)
@@ -108,16 +75,12 @@ func Plugin() kernel.Plugin {
 		if err := cfg.Decode(&conf); err != nil {
 			return nil, kernel.Fail(kernel.CodeInvalid, "shell-redact: 解析配置失败: %v", err)
 		}
-		compiled, err := compilePatterns(conf.Patterns)
+		rd, err := redact.New(conf.Patterns, conf.Replacement)
 		if err != nil {
 			return nil, kernel.Fail(kernel.CodeInvalid, "shell-redact: %v", err)
 		}
-		replacement := conf.Replacement
-		if replacement == "" {
-			replacement = DefaultReplacement
-		}
 		return chain.Decorate(func(inner seamshell.Shell) seamshell.Shell {
-			return &redactor{inner: inner, patterns: compiled, replacement: replacement}
+			return &redactor{inner: inner, rd: rd}
 		}, Priority)
 	}).WithInject("shell")
 }

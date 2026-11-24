@@ -86,7 +86,7 @@ policy/fs-sandbox ──inject "fs"──▶ Chain.Decorate(沙箱包装,priorit
 
 1. `sandbox` seam 与 `fs-sandbox` 真正联动(模式来自 session 事件)。
 2. `fs-observation`:读后写表 + 写前校验,把版本守卫提升为「观测到才允许写」。
-3. `fs-redact`:读结果脱敏(secret/token 正则)。
+3. `fs-redact`:读结果脱敏(secret/token 正则);模式表与编译在 `platform/redact`,与 `shell-redact` 共用同一份。
 4. 平台专用打开标志修复 TOCTOU;Windows 路径特性补齐。
 5. `seam/shell`:命令白名单、超时/进程树、输出预算;复用同一装饰器链思路。
 

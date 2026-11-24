@@ -1,8 +1,8 @@
-// Package securitymatrix_test 是 M5 C13 的拒绝矩阵:
+// package securitytest 是 M5 C13 的拒绝矩阵:
 // 能力 × 目标 × 沙箱模式,并验证拒绝来源(caps / sandbox / principal)。
 //
 // net 矩阵随 ADR 0012 移除:网络不再有受控 seam,Node 模块直连标准库。
-package securitymatrix_test
+package securitytest
 
 import (
 	"context"
