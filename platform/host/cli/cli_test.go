@@ -1031,3 +1031,22 @@ func TestPlanPluginHelperExample(t *testing.T) {
 		t.Fatalf("plugin-helper preset 输出不正确:\n%s", out)
 	}
 }
+
+func TestPlanSkillHelperExample(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir("../../.."); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	code, out, errOut := run("plan", "--preset", "examples/skill/skill.preset.json")
+	if code != 0 {
+		t.Fatalf("skill preset 应可装配,code=%d err=%s", code, errOut)
+	}
+	if !strings.Contains(out, "skill-helper") || !strings.Contains(out, "结果: 可装配") {
+		t.Fatalf("skill preset 输出不正确:\n%s", out)
+	}
+}

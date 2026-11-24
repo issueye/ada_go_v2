@@ -89,6 +89,7 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 | [tool-shell-helper.md](docs/tool-shell-helper.md) | TS 工具插件:shell-helper + ada:shell.exec(含 moejs/bridge 扩展) |
 | [tool-http-helper.md](docs/tool-http-helper.md) | TS 工具插件:http-helper(http_request + http_search)+ node:http/node:zlib/ada:secrets |
 | [tool-plugin-helper.md](docs/tool-plugin-helper.md) | TS 工具插件:plugin-helper(清单体检 / 生成 TS 插件骨架 / 改 preset) |
+| [tool-skill-helper.md](docs/tool-skill-helper.md) | TS 工具插件:skill-helper(技能清单 / 读取 SKILL.md / 生成技能目录) |
 | [tool-memory-helper.md](docs/tool-memory-helper.md) | TS 长期记忆:memory-helper + ada:fs/node:crypto/Intl.Segmenter |
 | [tool-tool-helper.md](docs/tool-tool-helper.md) | Go 工具插件:tool-helper 的 tool_find / tool_exec |
 | [node-compat.md](docs/node-compat.md) | Node 内置模块兼容层:node:fs/path/os/events/util/.../crypto |
@@ -152,6 +153,7 @@ go run ./cmd/ada agent --preset examples/command-ts/command.preset.json -message
 go run ./cmd/ada agent --preset examples/shell-helper-ts/shell.preset.json -message "执行命令" # TS 工具插件 + ada:shell.exec
 go run ./cmd/ada up --preset examples/http/http.preset.json # TS 工具插件 + node:http/node:zlib(仅装配示例)
 go run ./cmd/ada up --preset examples/plugin-helper/plugin.preset.json # TS 插件开发工具(生成/体检/改 preset)
+go run ./cmd/ada up --preset examples/skill/skill.preset.json # 技能工具(SKILL.md 清单/读取/生成)
 go run ./cmd/ada agent --preset examples/text-ts/text.preset.json -message "写文件、替换并搜索" # 脚本插件 + 文本工具
 go run ./cmd/ada agent --preset examples/workspace/workspace.preset.json --workspace docs -message "查询工作区并读取 a.txt" # 工作区绑定 + 只读 docs
 go run ./cmd/ada agent --preset examples/workspace/real.preset.json --workspace docs -message "查询工作区并读取 a.txt" # 工作区真实端点(需 ADA_LLM_API_KEY)

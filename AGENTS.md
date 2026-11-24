@@ -96,6 +96,7 @@
 | [tool-shell-helper.md](docs/tool-shell-helper.md) | TS 工具插件:shell-helper + ada:shell.exec(含 moejs/bridge 扩展) |
 | [tool-http-helper.md](docs/tool-http-helper.md) | TS 工具插件:http-helper(http_request + http_search)+ node:http/node:zlib/ada:secrets |
 | [tool-plugin-helper.md](docs/tool-plugin-helper.md) | TS 工具插件:plugin-helper(清单体检 / 生成 TS 插件骨架 / 改 preset) |
+| [tool-skill-helper.md](docs/tool-skill-helper.md) | TS 工具插件:skill-helper(技能清单 / 读取 SKILL.md / 生成技能目录) |
 | [tool-memory-helper.md](docs/tool-memory-helper.md) | TS 长期记忆:memory-helper + ada:fs/node:crypto/Intl.Segmenter |
 | [tool-tool-helper.md](docs/tool-tool-helper.md) | Go 工具插件:tool-helper 的 tool_find / tool_exec |
 | [node-compat.md](docs/node-compat.md) | Node 内置模块兼容层:node:fs/path/os/events/util 等 |

@@ -105,11 +105,12 @@ try {
         "text-helper"   = (Join-Path $root "plugins/tool/text-helper")
         "shell-helper"  = (Join-Path $root "plugins/tool/shell-helper")
         "memory-helper" = (Join-Path $root "plugins/tool/memory-helper")
-        # http-helper 随包发布但不启用:启用它等于允许模型对外发请求,
-        # 属于 preset 的策略选择(见 docs/tool-http-helper.md)。
+        # http-helper 是联网工具:默认随 agent-release 启用;不想给模型网络能力时
+        # 在 preset 的 disable 里加回它(见 docs/tool-http-helper.md)。
         "http-helper"   = (Join-Path $root "plugins/tool/http-helper")
-        # plugin-helper 是插件开发工具(生成/体检/改 preset),同样默认不启用。
+        # plugin-helper / skill-helper 是开发工具(插件生成、技能读写),随发布 preset 默认启用。
         "plugin-helper" = (Join-Path $root "plugins/tool/plugin-helper")
+        "skill-helper"  = (Join-Path $root "plugins/tool/skill-helper")
     }
     $examplesRoot = Join-Path $root "examples"
     foreach ($mf in @(Get-ChildItem $examplesRoot -Recurse -Filter "plugin.json" -File)) {
@@ -160,7 +161,7 @@ try {
     )
         # 插件开发工具随默认 agent preset 启用:生成/体检只动工作区文件,写入仍受 fs 策略约束;
     # Go 插件不在生成范围内(见 docs/tool-plugin-helper.md)。
-    $agentAllow = $agentBase + $shellAllow + @("plugin-helper", "http-helper")
+    $agentAllow = $agentBase + $shellAllow + @("plugin-helper", "skill-helper", "http-helper", "seam-secrets", "secrets-env")
     $workspaceAllow = $agentBase + @(
         "seam-workspace", "workspace-helper", "workspace-guard", "workspace-local"
     )
@@ -213,7 +214,7 @@ try {
         # 记忆工具默认随包启用;模型需要知道什么时候写入/检索/忘记。
         "memory-helper" = @{ autoRecall = $true }
         "system-prompt" = @{
-            tools = "长期记忆:`n- 用户要求记住事实/偏好时调用 memory_write;`n- 回答涉及既往信息时先 memory_search 再引用;`n- 用户要求忘记时调用 memory_forget。`n工具发现:`n- 工具较多或不确定用哪个时,先 tool_find 查询;`n- 已知工具名时用 tool_exec 按名字调用,参数放在 args 对象里。`n插件开发:`n- 用户要新建插件时用 plugin_scaffold(只生成 TS,生成即可被 preset 装配);`n- 查看/体检已有插件用 plugin_list / plugin_show;`n- 把插件接入 preset 用 plugin_preset。`n联网:`n- 抓取网页用 http_request(默认把 HTML 清洗成正文,需要原文时传 clean:false);`n- 搜索网页用 http_search(DeepSeek 需 key,无 key 自动用 DuckDuckGo)。"
+            tools = "长期记忆:`n- 用户要求记住事实/偏好时调用 memory_write;`n- 回答涉及既往信息时先 memory_search 再引用;`n- 用户要求忘记时调用 memory_forget。`n工具发现:`n- 工具较多或不确定用哪个时,先 tool_find 查询;`n- 已知工具名时用 tool_exec 按名字调用,参数放在 args 对象里。`n插件开发:`n- 用户要新建插件时用 plugin_scaffold(只生成 TS,生成即可被 preset 装配);`n- 查看/体检已有插件用 plugin_list / plugin_show;`n- 把插件接入 preset 用 plugin_preset。`n联网:`n- 抓取网页用 http_request(默认把 HTML 清洗成正文,需要原文时传 clean:false);`n- 搜索网页用 http_search(DeepSeek 需 key,无 key 自动用 DuckDuckGo)。`n技能:`n- 先 skill_list 查可用技能;`n- 需要步骤细节时 skill_show 读 SKILL.md(可带 file 读附带文件);`n- 新建技能用 skill_scaffold。"
         }
     }
     foreach ($k in $shellPatch.Keys) { $agentPatch[$k] = $shellPatch[$k] }
