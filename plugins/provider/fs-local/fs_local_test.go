@@ -163,6 +163,30 @@ func TestList(t *testing.T) {
 	}
 }
 
+// 4.1 列子目录时条目路径必须是完整虚拟路径。
+// 回归:早先 rel 是相对「被列的目录」算的,列 /workspace/sub 会给出 /workspace/b.txt。
+func TestListSubdirectoryPaths(t *testing.T) {
+	f, _ := newFS(t)
+	ctx := context.Background()
+	for _, p := range []string{"/sub/b.txt", "/sub/deep/c.txt"} {
+		if _, err := f.Write(ctx, seamfs.WriteRequest{Path: ws(p), Content: []byte("x"), CreateDirs: true}); err != nil {
+			t.Fatalf("写 %s 失败: %v", p, err)
+		}
+	}
+	entries, err := f.List(ctx, seamfs.ListRequest{Path: ws("/sub"), Recursive: true})
+	if err != nil {
+		t.Fatalf("列子目录失败: %v", err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("应返回 3 条(deep、b.txt、c.txt),实际 %d: %+v", len(entries), entries)
+	}
+	for _, e := range entries {
+		if !strings.HasPrefix(string(e.Path), "/workspace/sub/") {
+			t.Fatalf("条目路径丢了子目录前缀: %q", e.Path)
+		}
+	}
+}
+
 // 5. 符号链接指向根外:拒绝(平台不支持创建链接时跳过)。
 func TestSymlinkEscape(t *testing.T) {
 	dir := t.TempDir()

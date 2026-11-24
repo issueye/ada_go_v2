@@ -520,7 +520,7 @@ func (f *FS) List(ctx context.Context, req seamfs.ListRequest) ([]seamfs.DirEntr
 		if ierr != nil {
 			return ierr
 		}
-		vp := seamfs.Path(virtualRoot + "/" + filepath.ToSlash(rel))
+		vp := seamfs.Path(virtualRoot + "/" + filepath.ToSlash(mustRel(root, p)))
 		kind := seamfs.KindOther
 		if d.IsDir() {
 			kind = seamfs.KindDir
