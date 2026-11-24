@@ -990,3 +990,44 @@ func TestAgentToolHelper(t *testing.T) {
 		t.Fatalf("tool_exec 未写入目标文件: %v %q", err, data)
 	}
 }
+
+// http-helper 示例:复用 agent 示例的 Go 清单 + TS 插件,必须可装配。
+// 这里只验证装配,不发真实请求(测试不允许依赖外部网络)。
+func TestPlanHTTPHelperExample(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir("../../.."); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	code, out, errOut := run("plan", "--preset", "examples/http/http.preset.json")
+	if code != 0 {
+		t.Fatalf("http preset 应可装配,code=%d err=%s", code, errOut)
+	}
+	if !strings.Contains(out, "http-helper") || !strings.Contains(out, "结果: 可装配") {
+		t.Fatalf("http preset 输出不正确:\n%s", out)
+	}
+}
+
+// plugin-helper 示例:插件开发工具(生成/体检/改 preset),同样只验证装配。
+func TestPlanPluginHelperExample(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir("../../.."); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	code, out, errOut := run("plan", "--preset", "examples/plugin-helper/plugin.preset.json")
+	if code != 0 {
+		t.Fatalf("plugin-helper preset 应可装配,code=%d err=%s", code, errOut)
+	}
+	if !strings.Contains(out, "plugin-helper") || !strings.Contains(out, "结果: 可装配") {
+		t.Fatalf("plugin-helper preset 输出不正确:\n%s", out)
+	}
+}
