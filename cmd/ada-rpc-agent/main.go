@@ -21,6 +21,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/issueye/ada_go_v2/platform/assemble"
+	"github.com/issueye/ada_go_v2/platform/denv"
 	"github.com/issueye/ada_go_v2/platform/host/builtins"
 	"github.com/issueye/ada_go_v2/platform/kernel"
 	"github.com/issueye/ada_go_v2/platform/loader"
@@ -62,10 +63,41 @@ const (
 )
 
 func main() {
+	if err := loadEnvFile(); err != nil {
+		slog.Error("ada-rpc-agent", "env", err)
+		os.Exit(2)
+	}
 	if err := run(); err != nil {
 		slog.Error("ada-rpc-agent", "error", err)
 		os.Exit(1)
 	}
+}
+
+// loadEnvFile 补进环境变量,再让 run() 按环境读取 runtime 参数。
+//
+// 只读**可执行文件旁**与**它的父目录**(发布包里是 bin/ 与包根)的 .env,
+// 不读 cwd:工作区是被 agent 读写的不可信输入,工作区里的 .env 若能改写模型端点
+// 或密钥,等于把信任边界交给仓库内容。
+// ADA_ENV_FILE 显式指定时只读它(测试/CI 用临时环境)。
+func loadEnvFile() error {
+	paths := make([]string, 0, 2)
+	if exe, err := os.Executable(); err == nil {
+		dir := filepath.Dir(exe)
+		paths = append(paths, filepath.Join(dir, ".env"))
+		// 发布包的布局是 <root>/bin/ada-rpc-agent.exe,把 .env 放在包根更自然。
+		paths = append(paths, filepath.Join(filepath.Dir(dir), ".env"))
+	}
+	if p := strings.TrimSpace(os.Getenv("ADA_ENV_FILE")); p != "" {
+		paths = []string{p}
+	}
+	n, err := denv.Apply(paths...)
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		slog.Info("ada-rpc-agent", "env", fmt.Sprintf("已从环境变量文件加载 %d 项", n))
+	}
+	return nil
 }
 
 func run() error {

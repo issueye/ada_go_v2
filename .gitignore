@@ -34,3 +34,6 @@ examples/*/workspace/.ada-tmp/
 
 # 发布打包产物
 /dist/
+
+# 本机环境变量(可能含 secret;示例见 .env.example)
+.env
