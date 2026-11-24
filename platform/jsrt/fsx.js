@@ -343,7 +343,9 @@ export function fstat(fd, cb) {
 // 注意:Readable.from 的回压只在缓冲层面(没有跨块暂停),大文件会被整段读进内存;
 // 需要分块消费时用 for await 逐块处理,而不是一次 .on("data") 全收。
 
-export function createReadStream(path, options) {
+// readStreamFrom 用「打开句柄」的闭包构造可读流:
+// path 版自己开/关;FileHandle 版复用已有 fd、结束时**不**关(与 Node 一致)。
+function readStreamFrom(openFd, options, ownsFD) {
   const opts = options || {};
   const chunkSize = opts.highWaterMark === undefined ? 64 * 1024 : Number(opts.highWaterMark);
   const start = opts.start === undefined ? 0 : Number(opts.start);
@@ -352,18 +354,18 @@ export function createReadStream(path, options) {
   let pos = start;
 
   const closeQuiet = function () {
-    if (fd >= 0) {
+    if (fd >= 0 && ownsFD) {
       try {
         closeSync(fd);
       } catch (_) {}
-      fd = -1;
     }
+    fd = -1;
   };
   const iterable = {
     next: function () {
       if (fd < 0) {
         try {
-          fd = openSync(path, "r");
+          fd = openFd();
         } catch (err) {
           return Promise.reject(err);
         }
@@ -410,22 +412,28 @@ export function createReadStream(path, options) {
   return stream;
 }
 
-export function createWriteStream(path, options) {
+export function createReadStream(path, options) {
+  return readStreamFrom(function () {
+    return openSync(path, "r");
+  }, options, true);
+}
+
+// writeStreamFrom 同理:path 版自己开关,FileHandle 版复用句柄。
+function writeStreamFrom(openFd, options, ownsFD) {
   const opts = options || {};
-  const flags = opts.flags === undefined ? "w" : String(opts.flags);
   let fd = -1;
   const closeQuiet = function () {
-    if (fd >= 0) {
+    if (fd >= 0 && ownsFD) {
       try {
         closeSync(fd);
       } catch (_) {}
-      fd = -1;
     }
+    fd = -1;
   };
   const stream = new Writable({ highWaterMark: opts.highWaterMark });
   stream._write = function (chunk, enc, cb) {
     try {
-      if (fd < 0) fd = openSync(path, flags);
+      if (fd < 0) fd = openFd();
     } catch (err) {
       cb(err);
       return;
@@ -449,6 +457,14 @@ export function createWriteStream(path, options) {
   stream.on("finish", closeQuiet);
   stream.on("error", closeQuiet);
   return stream;
+}
+
+export function createWriteStream(path, options) {
+  const opts = options || {};
+  const flags = opts.flags === undefined ? "w" : String(opts.flags);
+  return writeStreamFrom(function () {
+    return openSync(path, flags);
+  }, options, true);
 }
 
 // promises 是给 node:fs/promises 与 fs.promises 用的 Promise 形态。
@@ -528,3 +544,319 @@ export const promises = {
     return asyncOp("fstat", [fdOf(fd)]);
   },
 };
+// —— 目录 ——
+
+function dirError() {
+  const err = new Error("Dir 已关闭");
+  err.code = "EBADF";
+  return err;
+}
+
+class Dirent {
+  constructor(name, parent, kind) {
+    this.name = name;
+    this.parentPath = parent;
+    this.path = parent === "" ? name : parent + "/" + name;
+    this._kind = kind;
+  }
+  isFile() {
+    return this._kind === "file";
+  }
+  isDirectory() {
+    return this._kind === "dir";
+  }
+  isSymbolicLink() {
+    return this._kind === "symlink";
+  }
+  isBlockDevice() {
+    return false;
+  }
+  isCharacterDevice() {
+    return false;
+  }
+  isFIFO() {
+    return false;
+  }
+  isSocket() {
+    return false;
+  }
+}
+
+export class Dir {
+  constructor(fd, path) {
+    this._fd = fd;
+    this.path = path;
+    this._closed = false;
+    this._eof = false;
+    this._buf = [];
+  }
+
+  _ensure() {
+    if (this._closed) throw dirError();
+  }
+
+  // _fill 预取一批目录项;读完或已关闭时立即返回。
+  _fill() {
+    const self = this;
+    if (this._closed || this._eof || this._buf.length > 0) return Promise.resolve();
+    return asyncOp("readdir", [this._fd, 64]).then(function (res) {
+      for (const item of res.entries) self._buf.push(new Dirent(item.name, self.path, item.type));
+      if (res.eof) self._eof = true;
+    });
+  }
+
+  read(cb) {
+    const self = this;
+    const p = this._fill().then(function () {
+      self._ensure();
+      if (self._buf.length > 0) return self._buf.shift();
+      return null;
+    });
+    if (typeof cb === "function") {
+      p.then(
+        function (d) {
+          cb(null, d);
+        },
+        function (err) {
+          cb(err);
+        },
+      );
+      return undefined;
+    }
+    return p;
+  }
+
+  readSync() {
+    this._ensure();
+    if (this._buf.length === 0 && !this._eof) {
+      const res = sync("readdir", [this._fd, 64]);
+      for (const item of res.entries) this._buf.push(new Dirent(item.name, this.path, item.type));
+      if (res.eof) this._eof = true;
+    }
+    return this._buf.length > 0 ? this._buf.shift() : null;
+  }
+
+  close(cb) {
+    const self = this;
+    const p = Promise.resolve().then(function () {
+      if (self._closed) return;
+      self._closed = true;
+      return asyncOp("close", [self._fd]).then(function () {
+        return undefined;
+      });
+    });
+    if (typeof cb === "function") {
+      p.then(
+        function () {
+          cb(null);
+        },
+        function (err) {
+          cb(err);
+        },
+      );
+      return undefined;
+    }
+    return p;
+  }
+
+  closeSync() {
+    if (this._closed) return;
+    this._closed = true;
+    closeSync(this._fd);
+  }
+
+  [Symbol.asyncIterator]() {
+    const self = this;
+    const iterator = {
+      next: function () {
+        return self.read().then(function (dirent) {
+          if (dirent === null) return { value: undefined, done: true };
+          return { value: dirent, done: false };
+        });
+      },
+      return: function () {
+        return self.close().then(function () {
+          return { value: undefined, done: true };
+        });
+      },
+    };
+    iterator[Symbol.asyncIterator] = function () {
+      return iterator;
+    };
+    return iterator;
+  }
+}
+
+export function opendirSync(path, options) {
+  const p = pathOf(path, "path");
+  return new Dir(sync("opendir", [p]), p);
+}
+
+export function opendir(path, options, cb) {
+  if (typeof options === "function") {
+    cb = options;
+  }
+  const p = pathOf(path, "path");
+  const promise = asyncOp("opendir", [p]).then(function (fd) {
+    return new Dir(fd, p);
+  });
+  if (typeof cb === "function") {
+    promise.then(
+      function (dir) {
+        cb(null, dir);
+      },
+      function (err) {
+        cb(err);
+      },
+    );
+    return undefined;
+  }
+  return promise;
+}
+
+// —— FileHandle ——
+//
+// fsp.open 返回它(Node 的形状);方法名与 Node 对齐,但没有 FileHandle 专属的
+// chmod/chown/utimes(需要 fchmod/fchown/futimes,宿主未实现),也不提供 readLines/readv/writev。
+
+export class FileHandle {
+  constructor(fd, path) {
+    this.fd = fd;
+    this._path = path;
+    this._closed = false;
+  }
+
+  _ensure() {
+    if (this._closed) throw dirError();
+  }
+
+  async read(buffer, offset, length, position) {
+    this._ensure();
+    return await promises.read(this.fd, buffer, offset, length, position);
+  }
+
+  async readFile(options) {
+    this._ensure();
+    const st = await promises.fstat(this.fd);
+    const size = Number(st.size);
+    const buf = Buffer.alloc(size);
+    let off = 0;
+    while (off < size) {
+      const res = await promises.read(this.fd, buf, off, size - off, off);
+      if (!res.bytesRead) break;
+      off += res.bytesRead;
+    }
+    const enc = typeof options === "string" ? options : options && options.encoding;
+    return enc ? buf.toString(enc, 0, off) : buf.subarray(0, off);
+  }
+
+  async write(buffer, offset, length, position) {
+    this._ensure();
+    return await promises.write(this.fd, buffer, offset, length, position);
+  }
+
+  async writeFile(data, options) {
+    this._ensure();
+    const enc = options && options.encoding ? options.encoding : "utf8";
+    const buf = typeof data === "string" ? Buffer.from(data, enc) : Buffer.from(data);
+    await promises.ftruncate(this.fd, 0);
+    let off = 0;
+    while (off < buf.length) {
+      const res = await promises.write(this.fd, buf, off, buf.length - off, off);
+      if (!res.bytesWritten) break;
+      off += res.bytesWritten;
+    }
+    return undefined;
+  }
+
+  async appendFile(data, options) {
+    this._ensure();
+    const enc = options && options.encoding ? options.encoding : "utf8";
+    const buf = typeof data === "string" ? Buffer.from(data, enc) : Buffer.from(data);
+    const st = await promises.fstat(this.fd);
+    let off = Number(st.size);
+    let written = 0;
+    while (written < buf.length) {
+      const res = await promises.write(this.fd, buf, written, buf.length - written, off + written);
+      if (!res.bytesWritten) break;
+      written += res.bytesWritten;
+    }
+    return undefined;
+  }
+
+  async stat() {
+    this._ensure();
+    return await promises.fstat(this.fd);
+  }
+
+  async sync() {
+    this._ensure();
+    await promises.fsync(this.fd);
+  }
+
+  async truncate(len) {
+    this._ensure();
+    await promises.ftruncate(this.fd, len === undefined ? 0 : Number(len));
+  }
+
+  async close() {
+    if (this._closed) return;
+    this._closed = true;
+    await promises.close(this.fd);
+  }
+
+  createReadStream(options) {
+    this._ensure();
+    const fd = this.fd;
+    return readStreamFrom(function () {
+      return fd;
+    }, options, false);
+  }
+
+  createWriteStream(options) {
+    this._ensure();
+    const fd = this.fd;
+    return writeStreamFrom(function () {
+      return fd;
+    }, options, false);
+  }
+}
+
+// promises.open 返回 FileHandle(Node 的形状);fs.open 的回调形态仍返回数字 fd。
+promises.open = function open(path, flags, mode) {
+  const p = pathOf(path, "path");
+  return asyncOp("open", [p, flagsOf(flags), mode === undefined ? 438 : modeOf(mode)]).then(function (fd) {
+    return new FileHandle(fd, p);
+  });
+};
+
+promises.opendir = function opendir(path, options) {
+  const p = pathOf(path, "path");
+  return asyncOp("opendir", [p]).then(function (fd) {
+    return new Dir(fd, p);
+  });
+};
+
+// —— watch:如实拒绝 ——
+//
+// 文件变更通知需要「没有调用时也能把事件送进 JS」,这与 ADR 0014 的调用边界模型
+// 冲突;而且宿主没有跨平台通知后端(引入 fsnotify 需要新依赖 + ADR)。
+// 需要监视变更时:用 Go 插件 + 事件,或 platform/sched 的周期任务。
+
+function watchUnsupported(api) {
+  const err = new Error(api + " 不提供:文件变更通知需要后台事件循环与跨平台通知后端,见 ADR 0016");
+  err.code = "ERR_NOT_SUPPORTED";
+  return err;
+}
+
+export function watch() {
+  throw watchUnsupported("fs.watch");
+}
+
+export function watchFile() {
+  throw watchUnsupported("fs.watchFile");
+}
+
+export function unwatchFile() {
+  throw watchUnsupported("fs.unwatchFile");
+}

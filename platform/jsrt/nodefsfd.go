@@ -16,6 +16,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 )
 
@@ -264,6 +265,80 @@ func (r *Runtime) fsxFtruncate(args []any) (any, error) {
 		return nil, fsxNodeError(tErr, "")
 	}
 	return nil, nil
+}
+
+// fsxOpenDir 实现 opendir(path):只读打开一个目录,句柄进 fd 表。
+//
+// 用 root.Open 而不是 OpenFile:目录在 Windows 上不能按普通文件打开,
+// 而 os.Open 对目录是可行的;先 Stat 再判 IsDir,给出明确的 ENOTDIR。
+func (r *Runtime) fsxOpenDir(root *os.Root, args []any) (any, error) {
+	p, err := fsxStringArg(args, 0, "path")
+	if err != nil {
+		return nil, err
+	}
+	rel, err := r.nodeRel(p)
+	if err != nil {
+		return nil, err
+	}
+	f, oErr := root.Open(rel)
+	if oErr != nil {
+		return nil, fsxNodeError(oErr, p)
+	}
+	st, sErr := f.Stat()
+	if sErr != nil {
+		_ = f.Close()
+		return nil, fsxNodeError(sErr, p)
+	}
+	if !st.IsDir() {
+		_ = f.Close()
+		return nil, fsxErrf("ENOTDIR", p, "不是目录: %s", p)
+	}
+	return r.fdPut(f)
+}
+
+// fsxReaddir 实现 readdir(fd, count):读一批目录项,返回 {entries, eof}。
+//
+// eof 表示「已经读完」——JS 的 Dir.read() 据此返回 null,而不是靠空数组猜。
+func (r *Runtime) fsxReaddir(args []any) (any, error) {
+	id, err := fsxIntArg(args, 0, "fd")
+	if err != nil {
+		return nil, err
+	}
+	count := int64(1)
+	if len(args) > 1 {
+		if n, nErr := fsxIntArg(args, 1, "count"); nErr == nil {
+			count = n
+		}
+	}
+	if count < 1 {
+		count = 1
+	}
+	if count > 1024 {
+		count = 1024
+	}
+	f, err := r.fdGet(id)
+	if err != nil {
+		return nil, err
+	}
+	list, rErr := f.ReadDir(int(count))
+	eof := errors.Is(rErr, io.EOF)
+	if rErr != nil && !eof {
+		return nil, fsxNodeError(rErr, "")
+	}
+	entries := make([]map[string]any, 0, len(list))
+	for _, e := range list {
+		kind := "other"
+		switch {
+		case e.IsDir():
+			kind = "dir"
+		case e.Type()&fs.ModeSymlink != 0:
+			kind = "symlink"
+		case e.Type().IsRegular():
+			kind = "file"
+		}
+		entries = append(entries, map[string]any{"name": e.Name(), "type": kind})
+	}
+	return map[string]any{"entries": entries, "eof": eof}, nil
 }
 
 // fsxFstat 实现 fstat(fd) 的最小字段集(大小、模式、修改时间、是否普通文件)。

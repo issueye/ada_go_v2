@@ -229,33 +229,52 @@ export async function run(): Promise<any> {
 	}
 }
 
-// 7. fd 族的 Promise 形态(fs.promises),以及只读工作区的 EROFS。
+// 7. FileHandle 形态(fs.promises.open 返回句柄),以及只读工作区的 EROFS。
 func TestNodeFSPromiseFDAndReadOnly(t *testing.T) {
 	rt, _ := newFSExtRuntime(t, map[string]string{
 		"plugin.ts": `
-import { open, write, read, close, fstat } from "node:fs/promises"
+import { open } from "node:fs/promises"
 
 export async function run(): Promise<any> {
-  const fd = await open("/workspace/async.txt", "w+")
-  await write(fd, "async-fd")
-  const st = await fstat(fd)
-  const buf = Buffer.alloc(8)
-  const res = await read(fd, buf, 0, 8, 0)
-  await close(fd)
-  return { size: st.size, bytesRead: res.bytesRead, text: buf.toString("utf8", 0, res.bytesRead) }
+  const fh = await open("/workspace/async.txt", "w+")
+  await fh.writeFile("async-fd")
+  await fh.appendFile("-tail")
+  const st = await fh.stat()
+  const buf = Buffer.alloc(16)
+  const res = await fh.read(buf, 0, 16, 0)
+  const all = await fh.readFile("utf8")
+  await fh.truncate(4)
+  const afterTruncate = await fh.readFile("utf8")
+  await fh.close()
+  let closed = "no-error"
+  try {
+    await fh.readFile()
+  } catch (e: any) {
+    closed = e.code
+  }
+  return { size: st.size, bytesRead: res.bytesRead, text: buf.toString("utf8", 0, res.bytesRead), all, afterTruncate, closed }
 }`,
 	}, false)
 
 	got, err := rt.Call(context.Background(), "run")
 	if err != nil {
-		t.Fatalf("Promise 形态调用失败: %v", err)
+		t.Fatalf("FileHandle 调用失败: %v", err)
 	}
 	obj, _ := got.(map[string]any)
-	if n := asInt(t, obj["size"]); n != 8 {
-		t.Fatalf("fstat.size 应为 8,实际 %v", n)
+	if n := asInt(t, obj["size"]); n != 13 {
+		t.Fatalf("fstat.size 应为 13,实际 %v", n)
 	}
-	if s, _ := obj["text"].(string); s != "async-fd" {
-		t.Fatalf("Promise 读回内容不对: %q", s)
+	if s, _ := obj["text"].(string); s != "async-fd-tail" {
+		t.Fatalf("FileHandle.read 读回内容不对: %q", s)
+	}
+	if s, _ := obj["all"].(string); s != "async-fd-tail" {
+		t.Fatalf("FileHandle.readFile 内容不对: %q", s)
+	}
+	if s, _ := obj["afterTruncate"].(string); s != "asyn" {
+		t.Fatalf("FileHandle.truncate 后应为 asyn,实际 %q", s)
+	}
+	if s, _ := obj["closed"].(string); s != "EBADF" {
+		t.Fatalf("关闭后的句柄操作应是 EBADF,实际 %q", s)
 	}
 
 	rtRO, _ := newFSExtRuntime(t, map[string]string{
@@ -279,6 +298,78 @@ export function probe(): any {
 	}
 	if s, _ := obj["read"].(string); s != "ENOENT" {
 		t.Fatalf("只读工作区 open(r) 读不存在的文件应返回 ENOENT,实际 %q", s)
+	}
+}
+
+// 8. opendir/Dir:同步与异步两种读法、Dirent 判定、以及异步迭代。
+func TestNodeFSDir(t *testing.T) {
+	rt, dir := newFSExtRuntime(t, map[string]string{
+		"plugin.ts": `
+import fs from "node:fs"
+import { opendir as opendirAsync } from "node:fs/promises"
+
+export async function run(): Promise<any> {
+  const syncDir = fs.opendirSync("/workspace/sub")
+  const names: string[] = []
+  let entry = syncDir.readSync()
+  while (entry !== null) {
+    names.push(entry.name + ":" + (entry.isDirectory() ? "dir" : entry.isFile() ? "file" : "other"))
+    entry = syncDir.readSync()
+  }
+  syncDir.closeSync()
+
+  const iterNames: string[] = []
+  for await (const dirent of await opendirAsync("/workspace/sub")) {
+    iterNames.push(dirent.name)
+  }
+  return { names: names.sort().join(","), iterNames: iterNames.sort().join(",") }
+}`,
+	}, false)
+
+	if err := os.MkdirAll(filepath.Join(dir, "sub", "inner"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sub", "a.txt"), []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := rt.Call(context.Background(), "run")
+	if err != nil {
+		t.Fatalf("Dir 调用失败: %v", err)
+	}
+	obj, _ := got.(map[string]any)
+	if s, _ := obj["names"].(string); s != "a.txt:file,inner:dir" {
+		t.Fatalf("opendirSync 结果不对: %q", s)
+	}
+	if s, _ := obj["iterNames"].(string); s != "a.txt,inner" {
+		t.Fatalf("opendir 异步迭代结果不对: %q", s)
+	}
+}
+
+// 9. watch 的拒绝形状:明确 ERR_NOT_SUPPORTED,而不是静默无效的 watcher。
+func TestNodeFSWatchUnsupported(t *testing.T) {
+	rt, _ := newFSExtRuntime(t, map[string]string{
+		"plugin.ts": `
+import fs from "node:fs"
+
+export function probe(): any {
+  const out: any = {}
+  try { fs.watch("/workspace", () => {}) } catch (e: any) { out.watch = e.code }
+  try { fs.watchFile("/workspace", () => {}) } catch (e: any) { out.watchFile = e.code }
+  try { fs.unwatchFile("/workspace") } catch (e: any) { out.unwatchFile = e.code }
+  return out
+}`,
+	}, false)
+
+	got, err := rt.Call(context.Background(), "probe")
+	if err != nil {
+		t.Fatalf("调用失败: %v", err)
+	}
+	obj, _ := got.(map[string]any)
+	for _, key := range []string{"watch", "watchFile", "unwatchFile"} {
+		if s, _ := obj[key].(string); s != "ERR_NOT_SUPPORTED" {
+			t.Fatalf("%s 应是 ERR_NOT_SUPPORTED,实际 %q", key, s)
+		}
 	}
 }
 

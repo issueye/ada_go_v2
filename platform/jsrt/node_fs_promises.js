@@ -16,6 +16,7 @@ export const ftruncate = ext.promises.ftruncate;
 export const link = ext.promises.link;
 export const mkdtemp = ext.promises.mkdtemp;
 export const open = ext.promises.open;
+export const opendir = ext.promises.opendir;
 export const read = ext.promises.read;
 export const symlink = ext.promises.symlink;
 export const truncate = ext.promises.truncate;

@@ -23,7 +23,7 @@ const p = path.join("/workspace", "out.txt")
 
 | 模块 | 来源 | 说明 |
 |---|---|---|
-| `node:fs` | moejs `node` 包 + 宿主补齐层 | 根固定为 `/workspace`;同步与回调形状可用;`mkdtemp`/`symlink`/`link`/`chmod`/`chown`/`truncate`/`utimes` 由宿主补齐(§3.1,三形态);fd 族与文件流见 §3.2 |
+| `node:fs` | moejs `node` 包 + 宿主补齐层 | 根固定为 `/workspace`;同步与回调形状可用;`mkdtemp`/`symlink`/`link`/`chmod`/`chown`/`truncate`/`utimes` 由宿主补齐(§3.1,三形态);fd 族与文件流见 §3.2;`FileHandle`/`opendir` 见 §3.3,`watch` 不提供(ADR 0016) |
 | `node:fs/promises` | moejs `node` 包 | 同上;真异步:promise 由事件循环驱动,`await` 之后文件已落盘 |
 | `node:buffer` | moejs `node` 包 | 同时安装全局 `Buffer` |
 | `node:path` | `platform/jsrt/nodemods` | posix 算法;裸名 `path` 同实例 |
@@ -116,7 +116,7 @@ moejs 的 `node` 包只实现了一部分 `node:fs`;常用但缺失的元数据�
 
 | 能力 | 形态 | 说明 |
 |---|---|---|
-| `open(path, flags, mode)` | `openSync` / `open` / `promises.open` | flags 只收 Node 的字符串写法 `r`/`r+`/`w`/`w+`/`a`/`a+`(数字 flags 的平台差异太大,不冒充);返回**数字 fd**(不是 `FileHandle`) |
+| `open(path, flags, mode)` | `openSync` / `open` / `promises.open` | flags 只收 Node 的字符串写法 `r`/`r+`/`w`/`w+`/`a`/`a+`(数字 flags 的平台差异太大,不冒充);`fs.open` 返回**数字 fd**,`fs.promises.open` 返回 **FileHandle** |
 | `read(fd, buffer, offset, length, position)` | 三形态 | 同 Node:`Buffer` 原地填充,返回 `bytesRead`;`position < 0` 表示从当前偏移继续 |
 | `write(fd, data, ...)` | 三形态 | 支持 Node 的两种重载(缓冲区 / 字符串);返回 `bytesWritten` |
 | `close` / `fsync` / `ftruncate` / `fstat` | 三形态(`fstat` 另有 `fstatSync`) | `fstat` 只给最小字段集:`size`/`mode`/`mtimeMs`/`isFile` |
@@ -129,8 +129,27 @@ moejs 的 `node` 包只实现了一部分 `node:fs`;常用但缺失的元数据�
   超过报 `EMFILE`;单次读写上限 8 MiB;
 - 只用 `await` 串起来的读写是**有序**的;不 await 的并发操作不保证完成顺序(Node 也只保证入队);
 - `createReadStream` 的回压只在缓冲层(`Readable.from` 没有跨块暂停),大文件请用 `for await`
-  逐块处理,而不是 `.on("data")` 一次收完;
-- 没有 `FileHandle`(`fsp.open` 返回的是数字 fd):需要 `FileHandle` 形状的库要自己包一层。
+  逐块处理,而不是 `.on("data")` 一次收完。
+
+### 3.3 FileHandle、目录与 watch
+
+**`FileHandle`**(`fs.promises.open` 返回):`read`/`readFile`/`write`/`writeFile`/`appendFile`/
+`stat`/`sync`/`truncate`/`close`、`fd` 属性、`createReadStream`/`createWriteStream`
+(句柄版的流**不会**自动关句柄,与 Node 一致)。关闭后再操作报 `EBADF`。
+没有实现 `readLines`/`readv`/`writev`/`readableWebStream`,也没有句柄级的
+`chmod`/`chown`/`utimes`(需要 `fchmod`/`fchown`/`futimes`,宿主尚未提供)。
+
+**`opendir` / `Dir`**:`opendirSync`+`readSync`+`closeSync`(同步)、
+`opendir`+`Dir.read(cb)`/`close(cb)`(回调)、`fs.promises.opendir`(返回的 `Dir` 支持
+`await dir.read()` 与 `for await`)。`Dirent` 提供 `name`/`path`/`parentPath` 与
+`isFile()`/`isDirectory()`/`isSymbolicLink()`(其余 `is*` 恒 false:宿主只区分这三类)。
+目录本身也是一个 fd,同样受"运行时关闭时统一回收"的保护。
+
+**`watch` / `watchFile` / `unwatchFile`**:**不提供**,调用即抛 `ERR_NOT_SUPPORTED`。
+原因与替代路径见 [ADR 0016](adr/0016-no-fs-watch.md):文件变更通知需要
+「没有调用时也能把事件送进 JS」,与 ADR 0014 的调用边界模型冲突;宿主也没有跨平台
+通知后端(引入 `fsnotify` 需要新依赖 + ADR)。
+需要监视变更时:写 Go 插件 + `ctx.emit("fs/changed", ...)`,`platform/sched` 做周期检查。
 
 ## 4. 宿主信息
 `node:os` 读取 `globalThis.__adaOSInfo`:
@@ -258,6 +277,7 @@ go test ./platform/jsrt -run 'Await|Timer|Loop'   # 事件循环(见 event-loop.
 go test ./platform/jsrt -run 'NodeFSExt'          # node:fs 补齐 API 的三形态与错误码
 go test ./platform/jsrt -run 'TestNodeTimers|TestNodeStream|TestNodeReadline|TestNodePerfHooks|TestNodeTty'
 go test ./platform/jsrt -run 'TestNodeCrypto'     # 摘要/HMAC/PBKDF2 向量与随机、定长比较
+go test ./platform/jsrt -run 'TestNodeFS'        # fd 族 / 文件流 / FileHandle / Dir / watch 拒绝
 ```
 
 `TestNodeBuiltins` 覆盖:

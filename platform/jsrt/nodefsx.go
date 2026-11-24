@@ -262,6 +262,11 @@ func (r *Runtime) fsxRun(op, argsJSON string) (any, error) {
 		return r.fsxFtruncate(args)
 	case "fstat":
 		return r.fsxFstat(args)
+	// 目录句柄(见 nodefsfd.go):opendir 返回 fd,readdir 按批读。
+	case "opendir":
+		return r.fsxOpenDir(root, args)
+	case "readdir":
+		return r.fsxReaddir(args)
 	default:
 		return nil, fsxErrf("ENOTSUP", "", "未实现的操作: %s", op)
 	}
