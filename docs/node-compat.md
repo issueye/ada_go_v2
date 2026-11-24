@@ -23,7 +23,7 @@ const p = path.join("/workspace", "out.txt")
 
 | 模块 | 来源 | 说明 |
 |---|---|---|
-| `node:fs` | moejs `node` 包 + 宿主补齐层 | 根固定为 `/workspace`;同步与回调形状可用;`mkdtemp`/`symlink`/`link`/`chmod`/`chown`/`truncate`/`utimes` 由宿主补齐(§3.1,三形态) |
+| `node:fs` | moejs `node` 包 + 宿主补齐层 | 根固定为 `/workspace`;同步与回调形状可用;`mkdtemp`/`symlink`/`link`/`chmod`/`chown`/`truncate`/`utimes` 由宿主补齐(§3.1,三形态);fd 族与文件流见 §3.2 |
 | `node:fs/promises` | moejs `node` 包 | 同上;真异步:promise 由事件循环驱动,`await` 之后文件已落盘 |
 | `node:buffer` | moejs `node` 包 | 同时安装全局 `Buffer` |
 | `node:path` | `platform/jsrt/nodemods` | posix 算法;裸名 `path` 同实例 |
@@ -105,8 +105,32 @@ moejs 的 `node` 包只实现了一部分 `node:fs`;常用但缺失的元数据�
   与 `syscall` 字段,而不是一句字符串;
 - 与 moejs 的实现一样,**这些写入不经过 `fs-local` 的原子写/版本守卫,也不产生
   `fs-redact`/`fs-observe` 事件**;要策略保护请用 `ada:fs`(走 fs Chain);
-- 补齐只覆盖「一次操作」,不做文件描述符(`open`/`read`/`write`/`close`)与流
-  (`createReadStream`/`createWriteStream`)——那两者需要跨调用的句柄状态,属于后续。
+- 补齐覆盖**一次操作**(上面的元数据类)与**跨调用句柄**(下面的 fd 族);
+  仍缺的是目录句柄与事件:`opendir`/`Dir`、`watch`/`watchFile`、`statfs`、
+  `openAsBlob`、`readv`/`writev`。
+
+### 3.2 文件描述符族与文件流
+
+`open`/`read`/`write`/`close`/`fsync`/`ftruncate`/`fstat` 的 sync / callback / promise 三形态,
+以及建在它们之上的 `createReadStream`/`createWriteStream`:
+
+| 能力 | 形态 | 说明 |
+|---|---|---|
+| `open(path, flags, mode)` | `openSync` / `open` / `promises.open` | flags 只收 Node 的字符串写法 `r`/`r+`/`w`/`w+`/`a`/`a+`(数字 flags 的平台差异太大,不冒充);返回**数字 fd**(不是 `FileHandle`) |
+| `read(fd, buffer, offset, length, position)` | 三形态 | 同 Node:`Buffer` 原地填充,返回 `bytesRead`;`position < 0` 表示从当前偏移继续 |
+| `write(fd, data, ...)` | 三形态 | 支持 Node 的两种重载(缓冲区 / 字符串);返回 `bytesWritten` |
+| `close` / `fsync` / `ftruncate` / `fstat` | 三形态(`fstat` 另有 `fstatSync`) | `fstat` 只给最小字段集:`size`/`mode`/`mtimeMs`/`isFile` |
+| `createReadStream(path, {start,end,highWaterMark})` | — | 建立在 fd 之上:按块 `await` 读,结束/出错/`return()` 时关句柄 |
+| `createWriteStream(path, {flags,highWaterMark})` | — | 按块 `await` 写,`finish` 时关句柄 |
+
+边界:
+
+- 句柄只在本运行时内有效,**运行时关闭时统一关闭**(不会泄漏给宿主);同时打开的句柄上限 256,
+  超过报 `EMFILE`;单次读写上限 8 MiB;
+- 只用 `await` 串起来的读写是**有序**的;不 await 的并发操作不保证完成顺序(Node 也只保证入队);
+- `createReadStream` 的回压只在缓冲层(`Readable.from` 没有跨块暂停),大文件请用 `for await`
+  逐块处理,而不是 `.on("data")` 一次收完;
+- 没有 `FileHandle`(`fsp.open` 返回的是数字 fd):需要 `FileHandle` 形状的库要自己包一层。
 
 ## 4. 宿主信息
 `node:os` 读取 `globalThis.__adaOSInfo`:

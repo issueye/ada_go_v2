@@ -206,6 +206,12 @@ type Runtime struct {
 	// clockStart 是运行时启动时刻,给 __adaHost.monoMs(单调时钟)做基准。
 	clockStart time.Time
 
+	// fds 是 node:fs 的文件描述符表(见 nodefsfd.go);用 fdMu 保护,
+	// 因为异步读写在 goroutine 里执行。
+	fdMu  sync.Mutex
+	fdSeq uint64
+	fds   map[uint64]*os.File
+
 	// handlers 是 ctx.on 与 JS 服务方法共用的函数表。只在 worker goroutine 上读写:
 	// 注册与调用都发生在 worker 上。
 	handlers map[uint64]handlerEntry
@@ -265,6 +271,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		stopped:    make(chan struct{}),
 		handlers:   make(map[uint64]handlerEntry),
 		netConns:   make(map[uint64]NetConn),
+		fds:        make(map[uint64]*os.File),
 		clockStart: time.Now(),
 	}
 	go r.worker()
@@ -1712,6 +1719,7 @@ func (r *Runtime) Close(ctx context.Context) error {
 	if api != nil {
 		_ = api.Close()
 	}
+	r.closeAllFDs()
 	r.closeNodeRoot()
 	// 先收事件循环:它的 Terminate 会中断正在跑的 JS、丢弃未到期的定时器与
 	// 未结算的 promise,并等循环收尾。之后再停 worker。
@@ -1737,6 +1745,7 @@ func (r *Runtime) shutdown() {
 	if api != nil {
 		_ = api.Close()
 	}
+	r.closeAllFDs()
 	r.closeNodeRoot()
 	r.terminateLoop()
 	r.stop()

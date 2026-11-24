@@ -224,9 +224,13 @@ func (r *Runtime) fsxRun(op, argsJSON string) (any, error) {
 	if err != nil {
 		return nil, fsxErrf("EINVAL", "", "参数不是合法 JSON: %v", err)
 	}
-	// 这批操作都会改文件系统状态;只读工作区一律 EROFS。
-	if !r.nodeWritable() {
-		return nil, fsxErrf("EROFS", "", "工作区是只读的")
+	// 会改文件系统状态的操作:只读工作区一律 EROFS。
+	// open 不在这里判断——它是否允许写取决于 flags(见 fsxOpen)。
+	switch op {
+	case "mkdtemp", "symlink", "link", "chmod", "chown", "truncate", "utimes", "write", "ftruncate":
+		if !r.nodeWritable() {
+			return nil, fsxErrf("EROFS", "", "工作区是只读的")
+		}
 	}
 	switch op {
 	case "mkdtemp":
@@ -243,6 +247,21 @@ func (r *Runtime) fsxRun(op, argsJSON string) (any, error) {
 		return nil, r.fsxTruncate(root, args)
 	case "utimes":
 		return nil, r.fsxUtimes(root, args)
+	// 文件描述符族(见 nodefsfd.go):句柄跨调用存活,由 fd 表管理。
+	case "open":
+		return r.fsxOpen(root, args)
+	case "close":
+		return r.fsxClose(args)
+	case "read":
+		return r.fsxRead(args)
+	case "write":
+		return r.fsxWrite(args)
+	case "fsync":
+		return r.fsxFync(args)
+	case "ftruncate":
+		return r.fsxFtruncate(args)
+	case "fstat":
+		return r.fsxFstat(args)
 	default:
 		return nil, fsxErrf("ENOTSUP", "", "未实现的操作: %s", op)
 	}
