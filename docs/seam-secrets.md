@@ -13,6 +13,11 @@ plugins/policy/secrets-guard/ 策略:principal + secrets.<name> 授权
 
 授权由 `secrets-guard` 强制(`secrets.<name>`,可用 `secrets.*` 通配);审计尚未实现。
 
+消费方不止 Go 插件:桥接层给所有 TS 插件注入 `ada:secrets`(`get(name)` / `has(name)`),
+底层是 `jsrt` 的 `__adaHost.secretsGet(name)`,调用时透传工具调用的 ctx——所以
+`secrets-guard` 仍然按 principal 生效,key 不会出现在 config、日志或工具结果里。
+`has(name)` 只返回布尔,供脚本「有 key 就用、没有就换 provider」,不泄露值。
+
 ## 2. 契约要点
 
 | 类型/方法 | 语义 |
@@ -38,6 +43,8 @@ plugins/policy/secrets-guard/ 策略:principal + secrets.<name> 授权
 4. **明文在进程内存**:没有零化;环境变量本身可被子进程继承(与 shell 的受管环境需配合)。
 5. **不提供列举接口**:调用方必须知道名字;没有 `List`。
 6. **allow 名单是静态配置**:增删需要重启装配。
+7. **TS 侧可读**:`ada:secrets` 对所有 TS 插件可导入,白名单内 secret 对同进程的脚本插件都可读;
+   真正的边界是 `secrets-env` 的 allow 与 `secrets-guard` 的 principal,不是「脚本不知道模块」。
 
 ## 5. 测试矩阵
 
@@ -50,6 +57,7 @@ plugins/policy/secrets-guard/ 策略:principal + secrets.<name> 授权
 | 内核集成 | `secretsenv.TestKernelIntegration` |
 | guard:具体/通配授权、未授权/无身份 | `secretsguard.TestAllowed`、`TestDenied` |
 | guard 使用注入的 caps 服务 | `secretsguard.TestServiceBroker` |
+| TS 侧按名读取(`ada:secrets`) | `bridge.TestSearchDeepSeek`、`TestSearchAutoFallsBackToDuckDuckGo`、`TestSearchDeepSeekWithoutSecret` |
 
 ## 6. 下一步
 

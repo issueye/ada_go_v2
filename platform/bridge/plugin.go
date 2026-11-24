@@ -27,6 +27,7 @@ import (
 	"github.com/issueye/ada_go_v2/platform/kernel/schema"
 	seamfs "github.com/issueye/ada_go_v2/plugins/seam/fs"
 	"github.com/issueye/ada_go_v2/plugins/seam/llm"
+	seamsecrets "github.com/issueye/ada_go_v2/plugins/seam/secrets"
 	"github.com/issueye/ada_go_v2/plugins/seam/shell"
 	"github.com/issueye/ada_go_v2/plugins/seam/tools"
 	seamworkspace "github.com/issueye/ada_go_v2/plugins/seam/workspace"
@@ -276,6 +277,12 @@ func (p *Plugin) Apply(ctx *kernel.Context, cfg kernel.Config) (kernel.Dispose, 
 	if v, ok := ctx.TryService("fs"); ok {
 		fsChain, _ = v.(*seamfs.Chain)
 	}
+	// secrets 是可选能力:没有装 seam/secrets 时不提供,模块本身仍然可导入,
+	// 调用 get 会得到「宿主未安装 secrets」的明确错误(而不是链接期失败)。
+	var secretsChain *seamsecrets.Chain
+	if v, ok := ctx.TryService("secrets"); ok {
+		secretsChain, _ = v.(*seamsecrets.Chain)
+	}
 	modules := map[string]*moejs.Module{}
 	if shellChain != nil {
 		// run 保留旧契约(返回 stdout 字符串,非零退出抛错);exec 返回结构化结果,
@@ -299,6 +306,17 @@ export function platform() { return globalThis.__adaOS; }
 		}
 		modules["ada:fs"] = m
 	}
+	// ada:secrets 始终可导入:get(name) 走 seam/secrets 链(带调用级 ctx,
+	// secrets-guard 据此取 principal);has(name) 只回答「能不能读到」,不返回值。
+	// 这样脚本可以按「有没有配 key」切换 provider,而不必把 secret 暴露给模型。
+	sm, cerr := moejs.Compile("ada:secrets", `const host = globalThis.__adaHost;
+export function get(name) { return host.secretsGet(String(name)); }
+export function has(name) { try { get(name); return true } catch (_err) { return false } }
+`)
+	if cerr != nil {
+		return nil, kernel.Wrap(kernel.CodeInvalid, cerr, "JS 插件 %s 注入模块编译失败", p.opts.Name)
+	}
+	modules["ada:secrets"] = sm
 	rt, err := jsrt.New(actx, jsrt.Options{
 		Artifact: p.opts.Artifact,
 		Logf:     p.record,
@@ -317,6 +335,18 @@ export function platform() { return globalThis.__adaOS; }
 			HTTPDo:    nodeHTTPDo,
 			DNSLookup: nodeDNSLookup,
 			NetDial:   nodeDial,
+			// secret 按名读,走 seam/secrets 链:provider 决定来源,policy 决定授权,
+			// 桥接层不缓存、不写日志,避免 secret 出现在事件或审计里。
+			Secrets: func(sctx context.Context, name string) (string, error) {
+				if secretsChain == nil {
+					return "", fmt.Errorf("secrets 服务不可用:请挂载 seam-secrets 与 secrets-env")
+				}
+				getter, gerr := secretsChain.Get()
+				if gerr != nil {
+					return "", gerr
+				}
+				return getter.Get(sctx, name)
+			},
 			Shell: func(sctx context.Context, program string, args []string, dir string) (string, error) {
 				if shellChain == nil {
 					return "", fmt.Errorf("shell 服务不可用")

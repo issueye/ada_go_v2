@@ -36,11 +36,13 @@ const p = path.join("/workspace", "out.txt")
 | `node:string_decoder` | `platform/jsrt/nodemods` | 仅 UTF-8 |
 | `node:process` | `platform/jsrt/nodemods` | `cwd()` 固定 `/workspace`;`env` 为空;`exit` 抛错 |
 | `node:crypto` | `platform/jsrt/nodemods` | 仅 `createHash("sha256")`/`randomBytes`/`randomUUID`;`update` 只收字符串;随机源是宿主 `crypto/rand` |
+| `node:zlib` | `platform/jsrt/nodemods` | 同步 `gzipSync`/`gunzipSync`/`deflateSync`/`inflateSync`/`deflateRawSync`/`inflateRawSync`/`unzipSync`;无流式接口与 brotli |
 | `node:child_process` | `platform/jsrt/nodemods` | 只有 `execFile`/`execFileSync`;经 shell seam、无 shell;`cwd` 限 `/workspace` |
 | `node:http` / `node:https` | `platform/jsrt/nodemods` | 同步客户端:`request`/`get`/`ClientRequest`/`IncomingMessage`;无 `createServer` |
 | `node:dns` / `node:dns/promises` | `platform/jsrt/nodemods` | 同步解析:`lookup`/`lookupSync`/`resolve*`/`reverse`;`setServers` 不支持 |
 | `node:net` | `platform/jsrt/nodemods` | `isIP` 系列、`SocketAddress`、同步 TCP `Socket`(含 `read(n)` 扩展);无 `createServer` |
 | `ada:fs` / `ada:shell` | `platform/bridge` | **旧接口,保留兼容**;不经过 Node 运行时 |
+| `ada:secrets` | `platform/bridge` | `get(name)` 按名读 secret、`has(name)` 只回答能否读到;走 `seam/secrets` 链(provider + policy),key 不进配置/日志 |
 
 `node:*` 与裸名(`fs`、`path`、`os`、`events`、`buffer` ...)解析到同一份模块实例。
 
@@ -125,9 +127,14 @@ http.get("https://example.com/api", (res) => {
 
 以下模块暂不安装,按 Node 的方式在链接期失败,而不是返回近似值:
 
-- `node:zlib`/`node:stream/web`/`node:timers`;
+- `node:stream/web`/`node:timers`;
 - `node:module`/`node:worker_threads`/`node:vm`;
 - `node:tls`(TLS 只在 `node:https` 内部使用,不暴露原始握手)。
+
+`node:zlib` 只做同步的一次性压缩与解压:`createGzip`/`createDeflate` 这类流式接口、
+brotli 与 zip 归档都不实现。解压输出上限 8 MiB(`maxZlibOutBytes`),压缩比可以做到
+上万倍,不设上限等于把 zip bomb 交给插件;输入上限同为 8 MiB。非法容器(gzip 头不对、
+zlib 校验失败)一律抛错,不返回近似结果。
 
 ## 5.2 `node:child_process` 的边界
 
@@ -141,7 +148,7 @@ http.get("https://example.com/api", (res) => {
 ## 6. 测试
 
 ```powershell
-go test ./platform/bridge -run 'NodeBuiltins|NodeHTTP|NodeChild|JSShell|JSTool'
+go test ./platform/bridge -run 'NodeBuiltins|NodeHTTP|NodeZlib|NodeChild|JSShell|JSTool'
 go test ./platform/jsrt
 ```
 
@@ -158,6 +165,8 @@ go test ./platform/jsrt
 - `node:assert.strictEqual`;
 - `node:querystring.parse`、`node:string_decoder`、`node:url.fileURLToPath`;
 - `node:process.cwd()` 与 `node:process.platform`;
+- `TestNodeZlib`:`node:zlib` 的 gzip/deflate/raw 往返与 `unzipSync`,
+  且 JS 产出的 gzip 能被 Go 的 `compress/gzip` 解开;
 - `TestNodeChildProcess`:`execFileSync` 经 shell seam 执行,`spawn` 显式失败;
 - `TestNodeHTTPDNSNet`:本地 HTTP 服务上跑 `http.get`(含响应头/响应体)与
   `http.request`+`write`/`end`(含请求体);`dns.lookupSync`/`lookup` 解析 localhost;

@@ -33,6 +33,7 @@ var files = map[string]string{
 	"dns/promises":   "src/dns_promises.js",
 	"net":            "src/net.js",
 	"crypto":         "src/crypto.js",
+	"zlib":           "src/zlib.js",
 }
 
 // Modules 返回已实现的模块名(排序后)。

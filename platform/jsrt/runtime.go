@@ -128,6 +128,10 @@ type Host struct {
 	DNSLookup func(ctx context.Context, op, host, rrtype string) (string, error)
 	// NetDial 建立一条 TCP 连接;连接句柄由运行时登记,Close 时统一关闭。
 	NetDial func(ctx context.Context, network, address string, timeout time.Duration) (NetConn, error)
+	// Secrets 按名读取宿主的 secret。实现由桥接层接到 seam/secrets 链,
+	// 授权与审计由 policy 装饰器负责;没有 secrets 服务时返回错误而不是空串,
+	// 让调用方知道「不能读」与「读到了空值」是两件事。
+	Secrets func(ctx context.Context, name string) (string, error)
 }
 
 // ErrReentrant 表示同一运行时在自己的回调链里被再次调用。
@@ -450,6 +454,17 @@ func (r *Runtime) load() error {
 	}
 	if err := hostObj.SetProp(realm, realm.KeyFromGoString("randomHex"), raw.Function("randomHex", 1, r.nativeRandomHex(raw))); err != nil {
 		return fmt.Errorf("jsrt: 注入 __adaHost.randomHex 失败: %w", err)
+	}
+	// 压缩与解压同样与策略无关:它不碰文件、不发请求,只是把字节换一种表示。
+	// 解压的输出上限在 nativeZlib 里,避免 zip bomb 在 JS heap 里展开。
+	if err := hostObj.SetProp(realm, realm.KeyFromGoString("zlib"), raw.Function("zlib", 2, r.nativeZlib(raw))); err != nil {
+		return fmt.Errorf("jsrt: 注入 __adaHost.zlib 失败: %w", err)
+	}
+	// secrets 只按名读取;来源、白名单与授权都在 seam/secrets 的 provider 与 policy。
+	if r.opts.Host.Secrets != nil {
+		if err := hostObj.SetProp(realm, realm.KeyFromGoString("secretsGet"), raw.Function("secretsGet", 1, r.nativeSecretsGet(raw))); err != nil {
+			return fmt.Errorf("jsrt: 注入 __adaHost.secretsGet 失败: %w", err)
+		}
 	}
 	if err := realm.Global.SetProp(realm, realm.KeyFromGoString("__adaHost"), engine.ObjectValue(hostObj)); err != nil {
 		return fmt.Errorf("jsrt: 注入 __adaHost 失败: %w", err)
