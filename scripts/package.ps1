@@ -102,9 +102,14 @@ try {
     # 示例插件按清单自动发现,新增/改名示例时不需要改本脚本;它们默认不在 release
     # preset 的 allowlist 里,因此随包发布但不启用,启用方式与其他未启用插件一致。
     $tsPluginDirs = [ordered]@{
-        "text-helper" = (Join-Path $root "plugins/tool/text-helper")
-        "shell-helper" = (Join-Path $root "plugins/tool/shell-helper")
+        "text-helper"   = (Join-Path $root "plugins/tool/text-helper")
+        "shell-helper"  = (Join-Path $root "plugins/tool/shell-helper")
         "memory-helper" = (Join-Path $root "plugins/tool/memory-helper")
+        # http-helper 随包发布但不启用:启用它等于允许模型对外发请求,
+        # 属于 preset 的策略选择(见 docs/tool-http-helper.md)。
+        "http-helper"   = (Join-Path $root "plugins/tool/http-helper")
+        # plugin-helper 是插件开发工具(生成/体检/改 preset),同样默认不启用。
+        "plugin-helper" = (Join-Path $root "plugins/tool/plugin-helper")
     }
     $examplesRoot = Join-Path $root "examples"
     foreach ($mf in @(Get-ChildItem $examplesRoot -Recurse -Filter "plugin.json" -File)) {
@@ -153,7 +158,9 @@ try {
     $shellAllow = @(
         "seam-shell", "shell-local", "shell-guard", "seam-sandbox", "sandbox-none", "shell-helper"
     )
-    $agentAllow = $agentBase + $shellAllow
+        # 插件开发工具随默认 agent preset 启用:生成/体检只动工作区文件,写入仍受 fs 策略约束;
+    # Go 插件不在生成范围内(见 docs/tool-plugin-helper.md)。
+    $agentAllow = $agentBase + $shellAllow + @("plugin-helper", "http-helper")
     $workspaceAllow = $agentBase + @(
         "seam-workspace", "workspace-helper", "workspace-guard", "workspace-local"
     )
@@ -201,10 +208,12 @@ try {
             path = "data/agent-replay.jsonl"; models = $replayModels; defaultModel = "replay"
         }
         "fs-local" = @{ workspace = "workspace"; tmp = "workspace/.ada-tmp" }
+        # http_search 的 DeepSeek key 走 seam/secrets:allow 只放这一个名字,其它 secret 仍读不到。
+        "secrets-env" = @{ allow = @("DEEPSEEK_API_KEY") }
         # 记忆工具默认随包启用;模型需要知道什么时候写入/检索/忘记。
         "memory-helper" = @{ autoRecall = $true }
         "system-prompt" = @{
-            tools = "长期记忆:`n- 用户要求记住事实/偏好时调用 memory_write;`n- 回答涉及既往信息时先 memory_search 再引用;`n- 用户要求忘记时调用 memory_forget。`n工具发现:`n- 工具较多或不确定用哪个时,先 tool_find 查询;`n- 已知工具名时用 tool_exec 按名字调用,参数放在 args 对象里。"
+            tools = "长期记忆:`n- 用户要求记住事实/偏好时调用 memory_write;`n- 回答涉及既往信息时先 memory_search 再引用;`n- 用户要求忘记时调用 memory_forget。`n工具发现:`n- 工具较多或不确定用哪个时,先 tool_find 查询;`n- 已知工具名时用 tool_exec 按名字调用,参数放在 args 对象里。`n插件开发:`n- 用户要新建插件时用 plugin_scaffold(只生成 TS,生成即可被 preset 装配);`n- 查看/体检已有插件用 plugin_list / plugin_show;`n- 把插件接入 preset 用 plugin_preset。`n联网:`n- 抓取网页用 http_request(默认把 HTML 清洗成正文,需要原文时传 clean:false);`n- 搜索网页用 http_search(DeepSeek 需 key,无 key 自动用 DuckDuckGo)。"
         }
     }
     foreach ($k in $shellPatch.Keys) { $agentPatch[$k] = $shellPatch[$k] }
@@ -241,6 +250,16 @@ try {
     }
     [System.IO.File]::WriteAllText((Join-Path $presetsDir "agent-release.preset.json"),
         (($agentPreset | ConvertTo-Json -Depth 10) + "`n"), $utf8)
+    # http-release:与 agent-release 同构,只把 http-helper 从 disable 里去掉。
+    # 单独一份 preset 而不是改默认值:启用它等于允许模型对外发请求,是显式选择。
+    $httpPreset = [ordered]@{
+        name = "agent-release-http"
+        plugins = @("../plugins")
+        disable = @($disableAgent | Where-Object { $_ -ne "http-helper" })
+        patch = $agentPatch
+    }
+    [System.IO.File]::WriteAllText((Join-Path $presetsDir "agent-release-http.preset.json"),
+        (($httpPreset | ConvertTo-Json -Depth 10) + "`n"), $utf8)
     [System.IO.File]::WriteAllText((Join-Path $presetsDir "workspace-release.preset.json"),
         (($workspacePreset | ConvertTo-Json -Depth 10) + "`n"), $utf8)
 
@@ -276,8 +295,22 @@ plugins/ 的 Go 清单由编译进二进制的 builtins 自动导出,与源码�
 TS 插件(text-helper / shell-helper / 示例脚本插件)随包复制源码,启用时现场编译;
 presets/ 只引用 ../plugins、workspace/ 与 data/,不包含开发目录路径。
 真实端点可用 LLMEndpoint/LLMModel 参数生成 agent-real-release.preset.json。
+
+环境变量:把 .env.example 复制为 .env 填写(API key 等),启动时补进环境;
+真实环境变量优先,文件内容不写日志。ada 读当前目录的 .env,ada-rpc-agent 读它自己
+可执行文件旁的 .env(不读工作区)。写法见源码仓库 docs/env-file.md。
 "@
     [System.IO.File]::WriteAllText((Join-Path $pkg "README.txt"), ($readme.TrimEnd() + "`n"), $utf8)
+    $envExample = @"
+# 复制为 .env 后按需填写;真实环境变量优先于本文件。语法见源码仓库 docs/env-file.md。
+# ——— 模型(OpenAI 兼容端点)———
+# ADA_LLM_API_KEY=sk-...
+# ADA_LLM_ENDPOINT=https://api.deepseek.com
+# ADA_LLM_MODEL=deepseek-chat
+# ——— http_search 的 DeepSeek 网页搜索(需在 preset 里启用 seam-secrets + secrets-env)———
+# ADA_SECRET_DEEPSEEK_API_KEY=sk-...
+"@
+    [System.IO.File]::WriteAllText((Join-Path $pkg ".env.example"), ($envExample.TrimEnd() + "`n"), $utf8)
 
     $meta = [ordered]@{
         name = $pkgName; version = $ver; commit = $commit
@@ -292,7 +325,7 @@ presets/ 只引用 ../plugins、workspace/ 与 data/,不包含开发目录路径
         $ada = Join-Path $binDir ("ada" + $ext)
         Push-Location $pkg
         try {
-            foreach ($name in @("agent-release.preset.json", "workspace-release.preset.json")) {
+            foreach ($name in @("agent-release.preset.json", "agent-release-http.preset.json", "workspace-release.preset.json")) {
                 & $ada plan --preset (Join-Path "presets" $name) | Out-Null
                 if ($LASTEXITCODE -ne 0) {
                     throw "包内 plan 自检失败: $name"

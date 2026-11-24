@@ -94,9 +94,12 @@
 | [tool-command-helper.md](docs/tool-command-helper.md) | 脚本插件示例:TS command-helper + 注入 ada:shell |
 | [tool-text-helper.md](docs/tool-text-helper.md) | 唯一文件工具:text-helper(TS)+ ada:fs 读写/编辑/搜索/列目录 |
 | [tool-shell-helper.md](docs/tool-shell-helper.md) | TS 工具插件:shell-helper + ada:shell.exec(含 moejs/bridge 扩展) |
+| [tool-http-helper.md](docs/tool-http-helper.md) | TS 工具插件:http-helper(http_request + http_search)+ node:http/node:zlib/ada:secrets |
+| [tool-plugin-helper.md](docs/tool-plugin-helper.md) | TS 工具插件:plugin-helper(清单体检 / 生成 TS 插件骨架 / 改 preset) |
 | [tool-memory-helper.md](docs/tool-memory-helper.md) | TS 长期记忆:memory-helper + ada:fs/node:crypto/Intl.Segmenter |
 | [tool-tool-helper.md](docs/tool-tool-helper.md) | Go 工具插件:tool-helper 的 tool_find / tool_exec |
 | [node-compat.md](docs/node-compat.md) | Node 内置模块兼容层:node:fs/path/os/events/util 等 |
+| [env-file.md](docs/env-file.md) | 环境变量文件(.env):加载位置、优先级、语法与安全边界 |
 | [adr/0001](docs/adr/0001-deferred-m5-scope.md) | ADR:OS 级沙箱与真实桌面窗口延期(复议 2027-01-15) |
 | [adr/0002](docs/adr/0002-host-budget-exception.md) | ADR:host 层代码预算例外 |
 | [adr/0003](docs/adr/0003-handler-context-and-timeout-gate.md) | ADR:监听器 ctx 与 waterfall 超时闸门 |
