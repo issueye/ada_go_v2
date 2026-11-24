@@ -35,7 +35,7 @@ const p = path.join("/workspace", "out.txt")
 | `node:querystring` | `platform/jsrt/nodemods` | Node 形状子集 |
 | `node:string_decoder` | `platform/jsrt/nodemods` | 仅 UTF-8 |
 | `node:process` | `platform/jsrt/nodemods` | `cwd()` 固定 `/workspace`;`env` 为空;`exit` 抛错 |
-| `node:crypto` | `platform/jsrt/nodemods` | 仅 `createHash("sha256")`/`randomBytes`/`randomUUID`;`update` 只收字符串;随机源是宿主 `crypto/rand` |
+| `node:crypto` | `platform/jsrt/nodemods` | `createHash`/`createHmac`(md5/sha1/sha256/sha384/sha512)、`pbkdf2`/`pbkdf2Sync`、`randomBytes`/`randomFill`/`randomFillSync`/`randomInt`/`randomUUID`、`timingSafeEqual`;输入收 string/Buffer/Uint8Array;随机源是宿主 `crypto/rand`(§5.3) |
 | `node:zlib` | `platform/jsrt/nodemods` | 同步 `gzipSync`/`gunzipSync`/`deflateSync`/`inflateSync`/`deflateRawSync`/`inflateRawSync`/`unzipSync`;无流式接口与 brotli |
 | `node:child_process` | `platform/jsrt/nodemods` | 只有 `execFile`/`execFileSync`;经 shell seam、无 shell;`cwd` 限 `/workspace` |
 | `node:http` / `node:https` | `platform/jsrt/nodemods` | 同步客户端:`request`/`get`/`ClientRequest`/`IncomingMessage`;无 `createServer` |
@@ -199,6 +199,32 @@ zlib 校验失败)一律抛错,不返回近似结果。
 - `cwd` 必须在 `/workspace` 下;`options.shell` 与 `options.env` 拒绝;
 - 命令超时、取消、沙箱与审计由 shell 实现/策略负责。
 
+## 5.3 `node:crypto` 的边界
+
+已实现的是**能由宿主安全、无状态地完成**的部分:
+
+| 能力 | 形态 | 说明 |
+|---|---|---|
+| 摘要 | `createHash(alg).update(...).digest(enc)` | `md5`/`sha1`/`sha256`/`sha384`/`sha512`;`"sha-256"` 这类写法会被归一 |
+| HMAC | `createHmac(alg, key)` | 同上算法;key/data 收 string 与 Buffer/Uint8Array |
+| KDF | `pbkdf2`(回调)/`pbkdf2Sync` | 迭代次数 1..10,000,000、派生长度 1..1024;异步版在宿主 goroutine 算,不卡事件循环 |
+| 随机 | `randomBytes`/`randomFillSync`/`randomFill`/`randomInt`/`randomUUID` | 源是 `crypto/rand`;单次 ≤ 64 KiB |
+| 比较 | `timingSafeEqual` | 长度不同直接抛 `ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH`(与 Node 一致) |
+| 查询 | `getHashes` | 返回支持列表 |
+
+**不实现**,并且不是「以后再补一句」:
+
+- 非对称加密与签名(RSA/ECDSA/Ed25519)、证书(X509)、`createVerify`/`createSign`:
+  需要宿主的密钥生命周期与 PKI,超出「无状态计算」的范围;
+- `createCipheriv`/`createDecipheriv`:它们是**有状态流**(可多次 `update`),
+  需要跨调用句柄(与 `node:fs` 的 `open/read/write` 同一类问题);
+- `webcrypto`/`subtle`、`generateKeyPair`、`scrypt`(后者可以用 PBKDF2 或 Go 插件替代)。
+
+需要这些能力时请写 Go 插件(同进程、无跨边界),而不是用近似实现冒充密码学正确。
+
+边界:跨边界只传 base64(不传二进制对象);单次输入 ≤ 8 MiB;算法白名单在 JS 侧校验,
+未知算法抛 `ERR_CRYPTO_INVALID_DIGEST`。
+
 ## 6. 测试
 
 ```powershell
@@ -207,6 +233,7 @@ go test ./platform/jsrt
 go test ./platform/jsrt -run 'Await|Timer|Loop'   # 事件循环(见 event-loop.md)
 go test ./platform/jsrt -run 'NodeFSExt'          # node:fs 补齐 API 的三形态与错误码
 go test ./platform/jsrt -run 'TestNodeTimers|TestNodeStream|TestNodeReadline|TestNodePerfHooks|TestNodeTty'
+go test ./platform/jsrt -run 'TestNodeCrypto'     # 摘要/HMAC/PBKDF2 向量与随机、定长比较
 ```
 
 `TestNodeBuiltins` 覆盖:

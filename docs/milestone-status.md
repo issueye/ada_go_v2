@@ -2,7 +2,7 @@
 
 > 本文件把里程碑验收项映射到**实现位置、证据命令与已知边界**。口径来源:
 > [plugin-kernel-design.md](plugin-kernel-design.md) §17、AGENTS §10。
-> 最近更新:2026-11-24(572 个 Test + 5 个 Benchmark;不做 v1 插件迁移)。
+> 最近更新:2026-11-24(575 个 Test + 5 个 Benchmark;不做 v1 插件迁移)。
 >
 > 执行层在 2026-11-24 接入**调用边界驱动的事件循环**(`await`/`fs.promises`/`setTimeout 调用内生效),
 > 见 [event-loop.md](event-loop.md) 与 [ADR 0014](adr/0014-call-scoped-event-loop.md);后台常驻定时器仍不支持。

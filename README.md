@@ -137,7 +137,7 @@ v2 把「插件」从**被调用的函数袋**升级成**可编排的作用域�
 ## 当前状态:M1 内核 + M2 执行层 + M3 装配 + M4 编排 + M4.5 Agent Core 第一刀 + M5 安全与宿主
 
 ```powershell
-go test -race -count=1 -timeout 300s ./...   # 572 个 Test + 5 个 Benchmark
+go test -race -count=1 -timeout 300s ./...   # 575 个 Test + 5 个 Benchmark
 go test ./platform/jsrt -run 'Await|Timer|Loop'  # 事件循环:await / fs.promises / 定时器作用域
 go run ./cmd/ada-demo                        # 依赖门控 + 级联重载演示
 pwsh scripts/guard.ps1                       # 门禁:词汇/依赖/gofmt/build/vet/staticcheck/race/交叉编译/预算

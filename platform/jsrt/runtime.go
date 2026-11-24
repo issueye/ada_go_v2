@@ -469,13 +469,28 @@ func (r *Runtime) load() error {
 			return fmt.Errorf("jsrt: 注入 __adaHost.net 失败: %w", err)
 		}
 	}
-	// 哈希与随机数与策略无关(不读写文件、不发请求),与 node:path 同级默认安装。
-	// node:crypto 模块只把这些能力包成 Node 形状,跨边界仍然是字符串。
-	if err := hostObj.SetProp(realm, realm.KeyFromGoString("sha256"), raw.Function("sha256", 1, r.nativeSHA256(raw))); err != nil {
-		return fmt.Errorf("jsrt: 注入 __adaHost.sha256 失败: %w", err)
+	// 哈希/HMAC/PBKDF2/随机数与策略无关(不读写文件、不发请求),与 node:path 同级默认安装。
+	// node:crypto 模块只把这些能力包成 Node 形状,跨边界仍然是 base64 字符串。
+	cryptoObj := realm.NewObject()
+	cryptoNatives := []struct {
+		name  string
+		arity int
+		fn    moejs.NativeFunc
+	}{
+		{"hash", 2, r.nativeCryptoHash(raw)},
+		{"hmac", 3, r.nativeCryptoHMAC(raw)},
+		{"pbkdf2", 5, r.nativeCryptoPBKDF2(raw)},
+		{"pbkdf2Async", 5, r.nativeCryptoPBKDF2Async(raw)},
+		{"randomBytes", 1, r.nativeCryptoRandomBytes(raw)},
+		{"timingSafeEqual", 2, r.nativeCryptoTimingSafeEqual(raw)},
 	}
-	if err := hostObj.SetProp(realm, realm.KeyFromGoString("randomHex"), raw.Function("randomHex", 1, r.nativeRandomHex(raw))); err != nil {
-		return fmt.Errorf("jsrt: 注入 __adaHost.randomHex 失败: %w", err)
+	for _, item := range cryptoNatives {
+		if err := cryptoObj.SetProp(realm, realm.KeyFromGoString(item.name), raw.Function(item.name, item.arity, item.fn)); err != nil {
+			return fmt.Errorf("jsrt: 注入 __adaHost.crypto.%s 失败: %w", item.name, err)
+		}
+	}
+	if err := hostObj.SetProp(realm, realm.KeyFromGoString("crypto"), engine.ObjectValue(cryptoObj)); err != nil {
+		return fmt.Errorf("jsrt: 注入 __adaHost.crypto 失败: %w", err)
 	}
 	// 压缩与解压同样与策略无关:它不碰文件、不发请求,只是把字节换一种表示。
 	// 解压的输出上限在 nativeZlib 里,避免 zip bomb 在 JS heap 里展开。
